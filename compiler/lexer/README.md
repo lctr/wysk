@@ -3,6 +3,7 @@
 This library encompasses the lexical analysis phase of the compiler's front end.
 
 # Lexical Syntax
+The following describes the kinds of lexemes recognized by the lexer. Note that not *all* of the left-hand-side lexeme kinds correspond to their own lexical token when lexing source input.
 
 ```
 Program := (Lexeme | Whitespace)*
