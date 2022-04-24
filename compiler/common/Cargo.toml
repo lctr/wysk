@@ -7,5 +7,5 @@ edition = "2021"
 
 [dependencies]
 # itertools = "0.10.2"
-wy_failure = { path = "../failure" }
+# wy_failure = { path = "../failure" }
 serde = { version = "1", features = ["derive"] }
