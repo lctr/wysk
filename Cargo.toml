@@ -1,0 +1,9 @@
+[workspace]
+members = [
+    "compiler/driver"
+]
+exclude = ["language/*"]
+
+
+[profile.dev]
+opt-level = 2
