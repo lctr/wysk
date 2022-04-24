@@ -2,8 +2,10 @@ use std::collections::HashMap;
 use std::mem;
 use std::sync::{Arc, Mutex};
 
-// use wy_common::newtypes;
-
+/// Key used to reference stored strings. When a string is interened, a
+/// `Symbol` is returned, which can then be used to retrieve the original
+/// string representation. This helps reduce the footprint of data structures
+/// containing *immutable* strings like variable names, string literals, etc.
 #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Hash)]
 pub struct Symbol(u32);
 
