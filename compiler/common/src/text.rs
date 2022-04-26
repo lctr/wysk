@@ -33,10 +33,6 @@ where
 /// automatically recorded in doc comments for each enum variant.
 #[macro_export]
 macro_rules! strenum {
-    // TODO: factor out dependency for associativity?
-    (L) => {Assoc::L};
-    (R) => {Assoc::R};
-    (N) => {Assoc::N};
     (
         $opk:ident :: $(
             $name:ident
@@ -77,7 +73,7 @@ macro_rules! strenum {
     };
     (ident $t:tt) => {$t};
     (# $t:tt $($ts:tt)*) => {
-        1  $( + strenum!(# $ts) )*
+        1  $( + $crate::strenum!(# $ts) )*
     };
     (# $t:tt) => { 1 };
     (#) => { 0 };
@@ -139,51 +135,6 @@ macro_rules! strenum {
                         s.into()
                     })+
                 }
-            }
-        }
-    };
-    (each
-        $id:ident
-        $is_kind:ident ::
-        $(
-            $(
-                $name:ident
-                $lit:literal
-            )+
-            @ $prec:literal $assoc:ident
-        )+
-    ) => {
-        strenum! {
-            $id
-            $is_kind ::
-            $(
-                $(
-                    $name
-                    $lit
-                )+
-            )+
-        }
-
-        #[allow(unused)]
-        impl $id {
-            pub fn get_prec(&self) -> usize {
-                match self {
-                    $($($id::$name => {$prec})+)+
-                }
-            }
-
-            pub fn get_assoc(&self) -> Assoc {
-                match self {
-                    $($($id::$name => {strenum!($assoc)})+)+
-                }
-            }
-
-            pub fn is_left_assoc(&self) -> bool {
-                matches!(self.get_assoc(), strenum!(L))
-            }
-
-            pub fn is_right_assoc(&self) -> bool {
-                matches!(self.get_assoc(), strenum!(R))
             }
         }
     };
