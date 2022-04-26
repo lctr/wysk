@@ -1,6 +1,7 @@
+
 [workspace]
 members = [
-    "compiler/driver"
+    "compiler/driver",
 ]
 exclude = ["language/*"]
 
