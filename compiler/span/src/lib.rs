@@ -160,6 +160,48 @@ impl Span {
         poss.sort_unstable();
         Span(poss[0], poss[3])
     }
+
+    /// Given a `Span` and some character `c`, returns a new `Span` with the
+    /// same starting point and a new endpoint resulting from subtracting the
+    /// UTF8 length of `c` from the `Span`s end. If the `Span` does not range
+    /// over enough bytes (e.g., the resulting span would have the same start
+    /// and end), the same `Span` is returned unchanged.
+    ///
+    /// This should generally be avoided except in the case of cleaning up
+    /// source code comments with trailing/unnecessary boundary character(s).
+    pub fn shrink_right(self, c: char) -> Self {
+        let Span(start @ Pos(a), Pos(b)) = self;
+        let len = c.len_utf8() as u32;
+        if a.abs_diff(b) > len
+        /* && b > len */
+        {
+            let diff = b - len;
+            if a < diff {
+                return Span(start, Pos(diff));
+            }
+        }
+        self
+    }
+
+    /// Analogous to the `Span::shink_right` method, but instead of subtracting
+    /// the number of bytes from the `Span`'s endpoint, the number of bytes are
+    /// *added* to the *starting* point of the `Span`.
+    ///
+    /// This should generally be avoided except in the case of cleaning up
+    /// source code comments with trailing/unnecessary boundary character(s).
+    pub fn shrink_left(self, c: char) -> Self {
+        let Span(Pos(a), end @ Pos(b)) = self;
+        let len = c.len_utf8() as u32;
+        if a.abs_diff(b) > len
+        /* && a + len < b */
+        {
+            let sum = a + len;
+            if sum < b {
+                return Span(Pos(sum), end);
+            }
+        };
+        self
+    }
 }
 
 impl Dummy for Span {
