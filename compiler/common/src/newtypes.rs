@@ -18,21 +18,10 @@ macro_rules! variants {
     };
 }
 
-// Simplify generating newtype definitions and implementations (predominantly for numeric indexing purposes)
+// Simplify generating newtype definitions and implementations
+// (predominantly for numeric indexing purposes)
 #[macro_export]
 macro_rules! newtype {
-    // generalize?
-    // ( |$tipo:ty| in $name:ident | $($ts:tt)* ) => {
-    //     #[derive(Copy, Clone, PartialEq, Eq, Hash)]
-    //     pub struct $name($tipo);
-    //     impl $name {
-    //         pub fn new(xs: $tipo) -> Self { Self(xs) }
-    //     }
-    //     $crate::newtype!{ $name => $tipo }
-    //     $(
-    //         $crate::newtype!{ $name |$tipo| $ts }
-    //     )*
-    // };
     // Repeated macro invocations are separated by curly braces
     // Additionally, comments before/above the curly braces are
     // applied to the entire macro invocation
@@ -46,7 +35,8 @@ macro_rules! newtype {
         $($(#[$com:meta])+)?
         $tipo:ident in $name:ident
         $($(#[$coms2:meta])+)?
-        | $($ts:tt)* ) => {
+        | $($ts:tt)*
+    ) => {
         $crate::newtype!{ $($(#[$com])+)? $name => $tipo }
         $($(#[$coms2])+)?
         $(
@@ -358,7 +348,6 @@ macro_rules! newtype {
                 Self(self.0 + rhs.0)
             }
         }
-        // $crate::newtype! { $name (+) }
         impl std::ops::Add<$tipo> for $name {
             type Output = Self;
             fn add(self, rhs: $tipo) -> Self::Output {
@@ -367,11 +356,10 @@ macro_rules! newtype {
         }
     };
     ($name:ident |$tipo:ty| (+ $rhs:ty |$x:ident| $y:expr)) => {
-        // $crate::newtype! { $name (+) }
         impl std::ops::Add<$rhs> for $name {
             type Output = Self;
             fn add(self, rhs: $rhs) -> Self::Output {
-                Self(self.0 + (|$x:ident| $y)(rhs))
+                Self(self.0 + (|$x: $rhs| $y)(rhs))
             }
         }
     };
@@ -383,11 +371,11 @@ macro_rules! newtype {
             }
         }
     };
-    ($name:ident |$tipo:ty| (+= $rhs:ident)) => {
-        $crate::newtype! { $name |$tipo| (+) }
+    ($name:ident |$tipo:ty| (+= $rhs:ty |$x:ident| $y:expr)) => {
+        $crate::newtype! { $name |$tipo| (+ $rhs (|$x| $y)(rhs)) }
         impl std::ops::AddAssign<$ty> for $name {
             fn add_assign(&mut self, rhs: $ty) {
-                self.0 += rhs as $tipo;
+                self.0 += (|$x: $rhs| $y)(rhs)
             }
         }
     };
