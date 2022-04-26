@@ -1,11 +1,11 @@
-use std::ops::{Add, AddAssign};
-
 use wy_common::newtype;
 
 newtype! {
     { u32 in Row | Show Usize Deref (+=) (-) }
     { u32 in Col | Show Usize Deref (+=) (-) }
-    { u32 in Pos | Show Usize Deref (+=) (-) }
+    { u32 in Pos | Show Usize Deref (+=) (-)
+        (+= char |rhs| rhs.len_utf8() as u32)
+    }
 }
 
 impl<'t> std::ops::Index<Row> for std::str::Lines<'t> {
@@ -86,20 +86,6 @@ impl Dummy for Col {
 
     fn partial_dummy(&self) -> bool {
         self.is_dummy()
-    }
-}
-
-impl Add<char> for Pos {
-    type Output = Self;
-
-    fn add(self, rhs: char) -> Self::Output {
-        Pos(self.0 + rhs.len_utf8() as u32)
-    }
-}
-
-impl AddAssign<char> for Pos {
-    fn add_assign(&mut self, rhs: char) {
-        self.0 += rhs.len_utf8() as u32
     }
 }
 
