@@ -22,6 +22,7 @@ impl<'t> std::ops::Index<Row> for std::str::Lines<'t> {
     }
 }
 
+/// Public interface for identifying invalid (tracking-related) values.
 pub trait Dummy
 where
     Self: Sized + PartialEq,
@@ -36,6 +37,7 @@ where
     fn partial_dummy(&self) -> bool;
 }
 
+/// Public interface for dealing with `Span`s.
 pub trait WithSpan {
     fn get_pos(&self) -> Pos;
 
