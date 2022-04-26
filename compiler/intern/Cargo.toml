@@ -8,5 +8,4 @@ edition = "2021"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 wy_common = { path = "../common" }
-internment = "0.5"
 lazy_static = "1.4.0"
