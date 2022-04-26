@@ -9,7 +9,8 @@ pub use toml::Value;
 type List<S = String> = Vec<S>;
 type MaybeList<S = String> = Option<List<S>>;
 
-/// The entire `manifest.toml` file
+/// The entire `manifest.toml` file. Parametrized over a `stringy`
+/// type in order to allow for flexibility with interned symbols.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Manifest<S = String>
 where
