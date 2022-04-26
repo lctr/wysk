@@ -1,0 +1,17 @@
+[package]
+name = "wy_driver"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+wy_common = { path = "../common" }
+wy_failure = { path = "../failure" }
+wy_intern = { path = "../intern" }
+wy_span = { path = "../span" }
+wy_lexer = { path = "../lexer" }
+wy_syntax = { path = "../syntax" }
+wy_parser = { path = "../parser" }
+wy_session = { path = "../session" }
+wy_tarjan = { path = "../graph" }
