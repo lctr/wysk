@@ -8,25 +8,19 @@ newtype! {
     { u32 in Pos | Show Usize Deref (+=) (-) }
 }
 
-impl Add<char> for Pos {
-    type Output = Self;
+impl<'t> std::ops::Index<Row> for std::str::Lines<'t> {
+    type Output = str;
 
-    fn add(self, rhs: char) -> Self::Output {
-        Pos(self.0 + rhs.len_utf8() as u32)
+    fn index(&self, index: Row) -> &Self::Output {
+        let row = index.as_usize();
+        for (r, s) in self.clone().enumerate() {
+            if r == row {
+                return s;
+            }
+        }
+        ""
     }
 }
-
-impl AddAssign<char> for Pos {
-    fn add_assign(&mut self, rhs: char) {
-        self.0 += rhs.len_utf8() as u32
-    }
-}
-
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Span(pub Pos, pub Pos);
-
-#[derive(Clone, Copy, Debug, Hash)]
-pub struct Spanned<T>(pub T, pub Span);
 
 pub trait Dummy
 where
@@ -40,22 +34,6 @@ where
         self == &Self::DUMMY
     }
     fn partial_dummy(&self) -> bool;
-}
-
-impl Dummy for Row {
-    const DUMMY: Self = Self::ZERO;
-
-    fn partial_dummy(&self) -> bool {
-        self.is_zero()
-    }
-}
-
-impl Dummy for Col {
-    const DUMMY: Self = Self::MAX;
-
-    fn partial_dummy(&self) -> bool {
-        self.is_dummy()
-    }
 }
 
 pub trait WithSpan {
@@ -76,44 +54,57 @@ pub trait WithSpan {
     }
 }
 
-pub trait Layout {
+pub trait WithLoc {
     fn get_loc(&self) -> Loc;
     fn get_row(&self) -> Row {
-        Layout::get_loc(self).row
+        WithLoc::get_loc(self).row
     }
     fn get_col(&self) -> Col {
-        Layout::get_loc(self).col
+        WithLoc::get_loc(self).col
+    }
+    fn with_loc<F, X>(&mut self, mut f: F) -> Located<X>
+    where
+        F: FnMut(&mut Self) -> X,
+    {
+        let start = WithLoc::get_loc(self);
+        let x = f(self);
+        let end = WithLoc::get_loc(self);
+        Located(x, Location { start, end })
     }
 }
 
-impl Pos {
-    pub fn dummy() -> Pos {
-        Pos::ZERO
-    }
+impl Dummy for Row {
+    const DUMMY: Self = Self::ZERO;
 
-    pub fn is_dummy(&self) -> bool {
+    fn partial_dummy(&self) -> bool {
         self.is_zero()
     }
+}
 
-    /// Returns the number of bytes spanned by a UTF8 encoded character.
-    pub fn len_utf8(c: char) -> Self {
-        Self(c.len_utf8() as u32)
-    }
+impl Dummy for Col {
+    const DUMMY: Self = Self::MAX;
 
-    pub fn as_u32(self) -> u32 {
-        *self
-    }
-
-    pub fn strlen<S: AsRef<str>>(string: S) -> Self {
-        Self(string.as_ref().len() as u32)
+    fn partial_dummy(&self) -> bool {
+        self.is_dummy()
     }
 }
 
-impl WithSpan for Pos {
-    fn get_pos(&self) -> Pos {
-        *self
+impl Add<char> for Pos {
+    type Output = Self;
+
+    fn add(self, rhs: char) -> Self::Output {
+        Pos(self.0 + rhs.len_utf8() as u32)
     }
 }
+
+impl AddAssign<char> for Pos {
+    fn add_assign(&mut self, rhs: char) {
+        self.0 += rhs.len_utf8() as u32
+    }
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Span(pub Pos, pub Pos);
 
 impl std::fmt::Display for Span {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -216,13 +207,12 @@ impl Dummy for Span {
     }
 }
 
+#[derive(Clone, Copy, Debug, Hash)]
+pub struct Spanned<T>(pub T, pub Span);
+
 impl<T> Spanned<T> {
     pub fn new(item: T, span: Span) -> Self {
         Self(item, span)
-    }
-
-    pub fn join<U>(self, rhs: Spanned<U>) -> Spanned<(T, U)> {
-        Spanned((self.0, rhs.0), Span(self.1 .0, rhs.1 .1))
     }
 
     pub fn as_tuple(self) -> (T, Span) {
@@ -230,11 +220,7 @@ impl<T> Spanned<T> {
     }
 
     #[inline]
-    pub fn item(&self) -> &T {
-        &self.0
-    }
-
-    pub fn into_inner(self) -> T {
+    pub fn item(self) -> T {
         self.0
     }
 
@@ -249,12 +235,12 @@ impl<T> Spanned<T> {
 
     /// Given a span, returns a new span containing the minimum `Pos` as the
     /// starting point and the maximum `Pos` as the ending point.
-    pub fn union(&self, other: &Span) -> Self
+    pub fn union(&self, other: Span) -> Self
     where
         T: Clone,
     {
         let Spanned(t, Span(a1, a2)) = self.clone();
-        let Span(b1, b2) = *other;
+        let Span(b1, b2) = other;
         let mut ss = [a1, a2, b1, b2];
         ss.sort();
         Spanned(t, Span(ss[0], ss[3]))
@@ -281,13 +267,42 @@ where
     }
 }
 
-impl Layout for Loc {
+impl Pos {
+    pub fn dummy() -> Pos {
+        Pos::ZERO
+    }
+
+    pub fn is_dummy(&self) -> bool {
+        self.is_zero()
+    }
+
+    /// Returns the number of bytes spanned by a UTF8 encoded character.
+    pub fn len_utf8(c: char) -> Self {
+        Self(c.len_utf8() as u32)
+    }
+
+    pub fn as_u32(self) -> u32 {
+        *self
+    }
+
+    pub fn strlen<S: AsRef<str>>(string: S) -> Self {
+        Self(string.as_ref().len() as u32)
+    }
+}
+
+impl WithSpan for Pos {
+    fn get_pos(&self) -> Pos {
+        *self
+    }
+}
+
+impl WithLoc for Loc {
     fn get_loc(&self) -> Loc {
         *self
     }
 }
 
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Loc {
     pub row: Row,
     pub col: Col,
@@ -302,20 +317,19 @@ impl Default for Loc {
     }
 }
 
-impl Dummy for Loc {
-    /// Dummy `Position` for situations in which the only requirement
-    /// is the existence of a `Position`. Useful as an intermediate value.
-    ///
-    /// Note: dummy values can be identified by having a `row` value
-    /// of `Row::ZERO` or a `col` value of `u32::MAX`, while `Position`
-    /// has a default (and starting) `row` value of `Row::ONE`.
-    const DUMMY: Self = Self {
-        row: Row::ZERO,
-        col: Col::MAX,
-    };
+impl std::fmt::Display for Loc {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.is_dummy() {
+            write!(f, "(?:?)")
+        } else {
+            write!(f, "{}:{}", self.row, self.col)
+        }
+    }
+}
 
-    fn partial_dummy(&self) -> bool {
-        self.row.is_dummy() || self.col.is_dummy()
+impl std::fmt::Debug for Loc {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "line {}, column {}", self.row.0, self.col.0)
     }
 }
 
@@ -388,27 +402,20 @@ impl Loc {
     }
 }
 
-impl std::fmt::Display for Loc {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.is_dummy() {
-            write!(f, "(?:?)")
-        } else {
-            write!(f, "{}:{}", self.row, self.col)
-        }
-    }
-}
+impl Dummy for Loc {
+    /// Dummy `Position` for situations in which the only requirement
+    /// is the existence of a `Position`. Useful as an intermediate value.
+    ///
+    /// Note: dummy values can be identified by having a `row` value
+    /// of `Row::ZERO` or a `col` value of `u32::MAX`, while `Position`
+    /// has a default (and starting) `row` value of `Row::ONE`.
+    const DUMMY: Self = Self {
+        row: Row::ZERO,
+        col: Col::MAX,
+    };
 
-impl<'t> std::ops::Index<Row> for std::str::Lines<'t> {
-    type Output = str;
-
-    fn index(&self, index: Row) -> &Self::Output {
-        let row = index.as_usize();
-        for (r, s) in self.clone().enumerate() {
-            if r == row {
-                return s;
-            }
-        }
-        ""
+    fn partial_dummy(&self) -> bool {
+        self.row.is_dummy() || self.col.is_dummy()
     }
 }
 
@@ -480,6 +487,39 @@ impl Dummy for Location {
             || self.end.is_dummy()
             || self.start.row > self.end.row
             || self.start.col > self.end.col
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Located<T>(pub T, pub Location);
+
+impl<T> Located<T> {
+    pub fn new(item: T, location: Location) -> Self {
+        Self(item, location)
+    }
+
+    pub fn as_tuple(self) -> (T, Location) {
+        (self.0, self.1)
+    }
+
+    pub fn item(self) -> T {
+        self.0
+    }
+
+    pub fn location(&self) -> Location {
+        self.1
+    }
+
+    pub fn map<U, F>(self, mut f: F) -> Located<U>
+    where
+        F: FnMut(T) -> U,
+    {
+        Located(f(self.0), self.1)
+    }
+
+    pub fn union(self, other: Location) -> Self {
+        let Located(t, location) = self;
+        Located(t, location.union(&other))
     }
 }
 
