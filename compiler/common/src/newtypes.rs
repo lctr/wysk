@@ -372,7 +372,7 @@ macro_rules! newtype {
         }
     };
     ($name:ident |$tipo:ty| (+= $rhs:ty |$x:ident| $y:expr)) => {
-        $crate::newtype! { $name |$tipo| (+ $rhs (|$x| $y)(rhs)) }
+        $crate::newtype! { $name |$tipo| (+ $rhs |$x| $y) }
         impl std::ops::AddAssign<$rhs> for $name {
             fn add_assign(&mut self, rhs: $rhs) {
                 self.0 += (|$x: $rhs| $y)(rhs)
