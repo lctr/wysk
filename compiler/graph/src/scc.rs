@@ -319,7 +319,7 @@ impl<'a, T> Tarjan<'a, T> {
     }
 }
 
-pub fn strong_conn_comps<T>(graph: &Graph<T>) -> Vec<Scc> {
+pub fn graph_sccs<T>(graph: &Graph<T>) -> Vec<Scc> {
     Tarjan::from_graph(graph).components()
 }
 
@@ -336,7 +336,7 @@ mod test {
         graph.connect(node_1, node_2);
         graph.connect(node_2, node_1);
         graph.connect(node_2, node_3);
-        let connections = strong_conn_comps(&graph);
+        let connections = graph_sccs(&graph);
 
         println!("{:?}", &connections);
 
@@ -357,7 +357,7 @@ mod test {
         graph.connect(node_2, node_3);
         graph.connect(node_3, node_4);
         graph.connect(node_4, node_2);
-        let connections = strong_conn_comps(&graph);
+        let connections = graph_sccs(&graph);
 
         assert_eq!(connections.len(), 1);
         assert_eq!(*connections[0], vec![node_4, node_3, node_2, node_1]);
