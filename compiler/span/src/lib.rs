@@ -3,7 +3,7 @@ use wy_common::newtype;
 newtype! {
     { u32 in Row | Show Usize Deref (+=) (-) }
     { u32 in Col | Show Usize Deref (+=) (-) }
-    { u32 in Pos | Show Usize Deref (+=) (-)
+    { u32 in BytePos | Show Usize Deref (+=) (-)
         (+= char |rhs| rhs.len_utf8() as u32)
     }
 }
@@ -39,7 +39,7 @@ where
 
 /// Public interface for dealing with `Span`s.
 pub trait WithSpan {
-    fn get_pos(&self) -> Pos;
+    fn get_pos(&self) -> BytePos;
 
     fn as_index(&self) -> usize {
         self.get_pos().as_usize()
@@ -57,7 +57,7 @@ pub trait WithSpan {
 }
 
 pub trait WithLoc {
-    fn get_loc(&self) -> Loc;
+    fn get_loc(&self) -> Coord;
     fn get_row(&self) -> Row {
         WithLoc::get_loc(self).row
     }
@@ -92,7 +92,7 @@ impl Dummy for Col {
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Span(pub Pos, pub Pos);
+pub struct Span(pub BytePos, pub BytePos);
 
 impl std::fmt::Display for Span {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -101,11 +101,11 @@ impl std::fmt::Display for Span {
 }
 
 impl Span {
-    pub fn new(start: impl Into<Pos>, end: impl Into<Pos>) -> Self {
+    pub fn new(start: impl Into<BytePos>, end: impl Into<BytePos>) -> Self {
         Self(start.into(), end.into())
     }
 
-    pub fn tuple(self) -> (Pos, Pos) {
+    pub fn tuple(self) -> (BytePos, BytePos) {
         (self.0, self.1)
     }
 
@@ -113,15 +113,15 @@ impl Span {
         (self.1 - self.0).as_usize()
     }
 
-    pub fn start(&self) -> Pos {
+    pub fn start(&self) -> BytePos {
         self.0
     }
 
-    pub fn end(&self) -> Pos {
+    pub fn end(&self) -> BytePos {
         self.1
     }
 
-    pub fn begin<X: WithSpan>(start: Pos) -> impl FnMut(X) -> Span {
+    pub fn begin<X: WithSpan>(start: BytePos) -> impl FnMut(X) -> Span {
         move |x: X| Span(start, x.get_pos())
     }
 
@@ -149,14 +149,14 @@ impl Span {
     /// This should generally be avoided except in the case of cleaning up
     /// source code comments with trailing/unnecessary boundary character(s).
     pub fn shrink_right(self, c: char) -> Self {
-        let Span(start @ Pos(a), Pos(b)) = self;
+        let Span(start @ BytePos(a), BytePos(b)) = self;
         let len = c.len_utf8() as u32;
         if a.abs_diff(b) > len
         /* && b > len */
         {
             let diff = b - len;
             if a < diff {
-                return Span(start, Pos(diff));
+                return Span(start, BytePos(diff));
             }
         }
         self
@@ -169,14 +169,14 @@ impl Span {
     /// This should generally be avoided except in the case of cleaning up
     /// source code comments with trailing/unnecessary boundary character(s).
     pub fn shrink_left(self, c: char) -> Self {
-        let Span(Pos(a), end @ Pos(b)) = self;
+        let Span(BytePos(a), end @ BytePos(b)) = self;
         let len = c.len_utf8() as u32;
         if a.abs_diff(b) > len
         /* && a + len < b */
         {
             let sum = a + len;
             if sum < b {
-                return Span(Pos(sum), end);
+                return Span(BytePos(sum), end);
             }
         };
         self
@@ -184,7 +184,7 @@ impl Span {
 }
 
 impl Dummy for Span {
-    const DUMMY: Self = Self(Pos::ZERO, Pos::ZERO);
+    const DUMMY: Self = Self(BytePos::ZERO, BytePos::ZERO);
 
     fn is_dummy(&self) -> bool {
         self.0.is_dummy() && self.1.is_dummy() || (self.0 >= self.1)
@@ -255,9 +255,9 @@ where
     }
 }
 
-impl Pos {
-    pub fn dummy() -> Pos {
-        Pos::ZERO
+impl BytePos {
+    pub fn dummy() -> BytePos {
+        BytePos::ZERO
     }
 
     pub fn is_dummy(&self) -> bool {
@@ -278,25 +278,25 @@ impl Pos {
     }
 }
 
-impl WithSpan for Pos {
-    fn get_pos(&self) -> Pos {
+impl WithSpan for BytePos {
+    fn get_pos(&self) -> BytePos {
         *self
     }
 }
 
-impl WithLoc for Loc {
-    fn get_loc(&self) -> Loc {
+impl WithLoc for Coord {
+    fn get_loc(&self) -> Coord {
         *self
     }
 }
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Loc {
+pub struct Coord {
     pub row: Row,
     pub col: Col,
 }
 
-impl Default for Loc {
+impl Default for Coord {
     fn default() -> Self {
         Self {
             row: Row::ONE,
@@ -305,7 +305,7 @@ impl Default for Loc {
     }
 }
 
-impl std::fmt::Display for Loc {
+impl std::fmt::Display for Coord {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.is_dummy() {
             write!(f, "(?:?)")
@@ -315,13 +315,13 @@ impl std::fmt::Display for Loc {
     }
 }
 
-impl std::fmt::Debug for Loc {
+impl std::fmt::Debug for Coord {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "line {}, column {}", self.row.0, self.col.0)
     }
 }
 
-impl Loc {
+impl Coord {
     pub fn new() -> Self {
         Self::default()
     }
@@ -329,10 +329,10 @@ impl Loc {
     /// Increments the `col` field by 1 and, for the char given,
     /// returns a `BytePos` containing the number of bytes in the utf8
     /// encoding of that character.
-    pub fn incr_column(&mut self, ch: char) -> Pos {
+    pub fn incr_column(&mut self, ch: char) -> BytePos {
         let len = ch.len_utf8() as u32;
         self.col += Col::ONE;
-        Pos(len)
+        BytePos(len)
     }
 
     /// Resets the column value in the `col` to 0. This occurs when
@@ -344,11 +344,11 @@ impl Loc {
     /// Increments the `row` fields by 1, resetting the `col`
     /// field to `0`. Like with `incr_column`, this returns the number
     /// of bytes read.
-    pub fn incr_row(&mut self) -> Pos {
+    pub fn incr_row(&mut self) -> BytePos {
         // self.pos += 1;
         self.row += Row::ONE;
         self.reset_col();
-        Pos('\n'.len_utf8() as u32)
+        BytePos('\n'.len_utf8() as u32)
     }
 
     /// Since we always begin on a `row` value of 1, we can easily tell whether
@@ -390,7 +390,7 @@ impl Loc {
     }
 }
 
-impl Dummy for Loc {
+impl Dummy for Coord {
     /// Dummy `Position` for situations in which the only requirement
     /// is the existence of a `Position`. Useful as an intermediate value.
     ///
@@ -415,8 +415,8 @@ impl Dummy for Loc {
 /// values).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Location {
-    pub start: Loc,
-    pub end: Loc,
+    pub start: Coord,
+    pub end: Coord,
 }
 
 impl Location {
@@ -431,11 +431,11 @@ impl Location {
         rows.sort();
         cols.sort();
         Location {
-            start: Loc {
+            start: Coord {
                 row: rows[0],
                 col: cols[0],
             },
-            end: Loc {
+            end: Coord {
                 row: rows[3],
                 col: cols[3],
             },
@@ -458,16 +458,16 @@ impl Location {
 impl Default for Location {
     fn default() -> Self {
         Self {
-            start: Loc::default(),
-            end: Loc::default(),
+            start: Coord::default(),
+            end: Coord::default(),
         }
     }
 }
 
 impl Dummy for Location {
     const DUMMY: Self = Self {
-        start: Loc::DUMMY,
-        end: Loc::DUMMY,
+        start: Coord::DUMMY,
+        end: Coord::DUMMY,
     };
 
     fn partial_dummy(&self) -> bool {

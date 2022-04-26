@@ -6,7 +6,7 @@ use std::{iter::Peekable, num::ParseIntError};
 use wy_common::strenum;
 use wy_intern::symbol::{self, Symbol};
 pub use wy_span::{
-    Col, Loc, Located, Location, Pos, Row, Span, Spanned, WithLoc,
+    BytePos, Col, Coord, Located, Location, Row, Span, Spanned, WithLoc,
 };
 
 /// A character iterator that tracks byte position as well as row (=line) and
@@ -14,8 +14,8 @@ pub use wy_span::{
 #[derive(Clone, Debug)]
 pub struct Source<'t> {
     pub(crate) src: &'t str,
-    pub(crate) pos: Pos,
-    pub(crate) loc: Loc,
+    pub(crate) pos: BytePos,
+    pub(crate) loc: Coord,
     chars: Peekable<Chars<'t>>,
 }
 
@@ -24,16 +24,16 @@ impl<'t> Source<'t> {
         Self {
             src,
             chars: src.chars().peekable(),
-            pos: Pos::ZERO,
-            loc: Loc::new(),
+            pos: BytePos::ZERO,
+            loc: Coord::new(),
         }
     }
 
-    pub fn get_pos(&self) -> Pos {
+    pub fn get_pos(&self) -> BytePos {
         self.pos
     }
 
-    pub fn get_loc(&self) -> Loc {
+    pub fn get_loc(&self) -> Coord {
         self.loc
     }
 
@@ -81,7 +81,7 @@ impl<'t> Source<'t> {
 
     /// Given an initial `Pos` *start*, returns the span generated from the
     /// *start* to the current `Pos`.
-    pub fn span_from(&self, start: Pos) -> Span {
+    pub fn span_from(&self, start: BytePos) -> Span {
         Span(start, self.get_pos())
     }
 
@@ -97,7 +97,7 @@ impl<'t> Source<'t> {
 
     /// Given an initial `Loc` *start*, returns the `Location` generated
     /// from the *start* to the current `Loc`.
-    pub fn location_from(&self, start: Loc) -> Location {
+    pub fn location_from(&self, start: Coord) -> Location {
         Location {
             start,
             end: self.get_loc(),
@@ -586,3 +586,18 @@ impl PartialEq<Lexeme> for Token {
         &self.lexeme == other
     }
 }
+
+//----ERRORS (maybe move to `Failure` library?---------------------
+/// * unknown char -- no rules applicable
+/// * invalid integer prefix
+/// * invalid number: multiple dots found, like "1.2.3"
+/// * invalid number: terminated with dot, like "3."
+/// * invalid number: terminated with exponent, like "3e"
+/// * invalid number: terminated in exponent sign, like "3e+"
+/// * invalid number:
+/// * non-terminated character lexeme
+/// * invalid character escape
+/// * unexpected end of input
+/// * non-terminated comment (?)
+/// * non-terminated string lexeme (?)
+pub struct LexError;

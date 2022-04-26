@@ -1,8 +1,8 @@
-use token::{Base};
+use token::Base;
 use comment::{LineKind, Comment};
 pub use token::{Keyword, Lexeme, Literal, Source, Token};
 use wy_intern::symbol;
-pub use wy_span::{Loc, Span, Spanned, Location, Located};
+pub use wy_span::{Coord, Span, Spanned, Location, Located};
 
 pub mod token;
 pub mod comment;
@@ -27,7 +27,7 @@ pub mod comment;
 /// `Iteratorcollect::<Vec<_>>` method.
 #[derive(Clone, Debug)]
 pub struct Lexer<'t> {
-    pub locs: Vec<Loc>,
+    pub locs: Vec<Coord>,
     stack: Vec<Token>,
     source: Source<'t>,
     pub comments: Vec<Comment>
