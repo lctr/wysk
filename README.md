@@ -38,3 +38,9 @@ Below are some of the things I'm hoping to implement.
 - [ ] Implement spineless tagless G-machine (STG)
 - [ ] Add support for LLVM 
 - [ ] Implement compiler interface 
+
+## Some reading
+* [[1992] Simon Peyton Jones. *Implementing lazy functional languages on stock hardware: the Spineless Tagless G-machine*](https://www.microsoft.com/en-us/research/wp-content/uploads/1992/04/spineless-tagless-gmachine.pdf)
+* [[2005] Daan Leijen. *Extensible records with scoped labels*](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/scopedlabels.pdf)
+* [[2010] The Haskell Community. *The Haskell 2010 report*](https://www.haskell.org/definition/haskell2010.pdf)
+* [[2013] Susan B. Horwitz. *UW CS704 notes*](https://pages.cs.wisc.edu/~horwitz/CS704-NOTES/)
