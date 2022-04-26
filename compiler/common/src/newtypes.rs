@@ -394,6 +394,14 @@ macro_rules! newtype {
             }
         }
     };
+    ($name:ident |$tipo:ty| (- $rhs:ty |$x:ident| $y:expr)) => {
+        impl std::ops::Sub<$rhs> for $name {
+            type Output = Self;
+            fn add(self, rhs: $rhs) -> Self::Output {
+                Self(self.0 - (|$x: $rhs| $y)(rhs))
+            }
+        }
+    };
     ($name:ident |$tipo:ty| (-=)) => {
         $crate::newtype! { $name |$tipo| (-) }
         impl std::ops::SubAssign for $name {
@@ -402,11 +410,11 @@ macro_rules! newtype {
             }
         }
     };
-    ($name:ident |$tipo:ty| (-= $rhs:ty)) => {
-        $crate::newtype! { $name |$tipo| (-) }
-        impl std::ops::SubAssign for $name {
-            fn sub_assign(&mut self, rhs: $rhs) {
-                if rhs.0 < self.0 { self.0 -= rhs.0 };
+    ($name:ident |$tipo:ty| (-= $rhs:ty |$x:ident| $y:expr)) => {
+        $crate::newtype! { $name |$tipo| (- $rhs |$x| $y) }
+        impl std::ops::SubAssign<$rhs> for $name {
+            fn add_assign(&mut self, rhs: $rhs) {
+                self.0 -= (|$x: $rhs| $y)(rhs)
             }
         }
     };
@@ -440,11 +448,11 @@ macro_rules! newtype {
             }
         }
     };
-    ($name:ident |$tipo:ty| (%= $rhs:ident)) => {
-        $crate::newtype! { $name |$tipo| (%) }
-        impl std::ops::RemAssign<$ty> for $name {
-            fn rem_assign(&mut self, rhs: $ty) {
-                self.0 %= rhs as $tipo;
+    ($name:ident |$tipo:ty| (%= $rhs:ty |$x:ident| $y:expr)) => {
+        $crate::newtype! { $name |$tipo| (% $rhs |$x| $y) }
+        impl std::ops::AddAssign<$rhs> for $name {
+            fn add_assign(&mut self, rhs: $rhs) {
+                self.0 %= (|$x: $rhs| $y)(rhs)
             }
         }
     };
