@@ -146,6 +146,11 @@ impl Span {
         move |x: X| Span(start, x.get_pos())
     }
 
+    /// Returns a `Span` as a `Range<usize>`; used to index string slices using
+    /// the byte positions within a span. Namely, a span `Span(a, b)` must be
+    /// converted into a range `a'..b'` (where `a'` and `b'` are the `usize`
+    /// values corresponding to the byte positions held by `a` and `b`,
+    /// respectively) in order to index a subslice from an `&str`.
     pub fn range(&self) -> std::ops::Range<usize> {
         (self.start().as_usize())..(self.end().as_usize())
     }
