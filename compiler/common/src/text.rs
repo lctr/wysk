@@ -7,13 +7,10 @@ pub fn lower_latin_alphabet() -> [char; 26] {
 
 /// Generate a textual representation of a variable not bound to a specific name.
 /// This is useful when generating type variables whose actual *names* only matter when displayed to the user.
-pub fn display_var<N>(n: N) -> String
-where
-    usize: From<N>,
-{
+pub fn display_var(n: u32) -> String {
     let azs = lower_latin_alphabet();
     let mut buf = String::new();
-    let mut tmp = usize::from(n);
+    let mut tmp = n as usize;
     let lim = azs.len();
     let mut ct = 0;
     loop {
