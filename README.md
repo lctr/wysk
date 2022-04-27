@@ -46,4 +46,5 @@ The following may not necessarily be directly involved within the development of
 * [[2010] The Haskell Community. *The Haskell 2010 report*](https://www.haskell.org/definition/haskell2010.pdf)
 * [[2013] Susan B. Horwitz. *UW CS704 notes*](https://pages.cs.wisc.edu/~horwitz/CS704-NOTES/)
 * [[2013] Dunfield and Krishnaswami. *Complete and easy bidirectional typechecking for higher-rank polymorphism*](https://research.cs.queensu.ca/home/jana/papers/bidir/)
+* [[2015] Stephen Diehl. *Write you a Haskell*](http://dev.stephendiehl.com/fun/WYAH.pdf)
 * [[2020] Serrano, Have, Jones, Vytiniotis. *A Quick Look at Impredicativity*](https://www.microsoft.com/en-us/research/uploads/prod/2020/01/quick-look.pdf)
