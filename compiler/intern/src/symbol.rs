@@ -153,7 +153,7 @@ impl<S: Symbolic> std::ops::Index<S> for Lexicon {
 
 // Instantiating a thread local string interner
 #[macro_export]
-macro_rules! strings {
+macro_rules! local_lexicon {
     ($name:ident) => {
         thread_local! {
             /// A single global (thread local) handle to a single Lexicon.
