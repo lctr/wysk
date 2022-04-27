@@ -19,10 +19,9 @@ Below are some of the things I'm hoping to implement.
 - [x] Thread-safe handwritten string interner.
 - [x] Separate lexeme and token definitions to minimize footprint and facilitate error reporting
 - [x] Modify lexer to depend on byte positions rather than character indices
-- [ ] Design module-friendly and polymorphic AST to facilitate later simplification and semantic analysis phases
+- [x] Design module-friendly and polymorphic AST to facilitate later simplification and semantic analysis phases
 - [ ] Implement parser to allow for code-reuse in later syntactic analysis
 - [ ] Implement post-parse pass to reflect user-defined operator precedence and associativity (either from definitions within the same module or from dependencies)
-- [ ] Implement documentation generation and integrate with doc comments
 - [ ] Implement support for (hygienic) macros in lexing and parsing
 - [ ] Improve lexer error reporting to include context
 - [ ] Unify error handling into its own library
@@ -36,8 +35,9 @@ Below are some of the things I'm hoping to implement.
 - [ ] Implement REPL as bytecode interpreter 
 - [ ] Implement primitives in Rust/C along with stdlib/prelude
 - [ ] Implement spineless tagless G-machine (STG)
-- [ ] Add support for LLVM 
 - [ ] Implement compiler interface 
+- [ ] Add support for LLVM 
+- [ ] Implement documentation generation and integrate with doc comments
 
 ## Some reading
 The following may not necessarily be directly involved within the development of this compiler, but have proven nonetheless to be valuable sources of information.
