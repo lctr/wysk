@@ -46,7 +46,7 @@ macro_rules! newtype {
     ($($(#[$com:meta])+)? $name:ident => $tipo:ty) => {
         $($(#[$com])+)?
         #[derive(
-            Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Default
+            Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord
         )]
         pub struct $name($tipo);
 
