@@ -424,9 +424,28 @@ impl Lexeme {
         matches!(self, Lexeme::Infix(_))
     }
 
+    /// Extracting the `Symbol` stored by a given `Lexeme`, if it contains one.
+    /// This is to avoid having to pattern match over a lexeme for its `Symbol`
+    /// when it is already known that a `Lexeme` contains a `Symbol`.
+    #[inline]
+    pub fn symbol(&self) -> Option<Symbol> {
+        match self {
+            Self::Lower(s)
+            | Self::Upper(s)
+            | Self::Infix(s)
+            | Self::Lit(Literal::Str(s)) => Some(*s),
+            _ => None,
+        }
+    }
+
     #[inline]
     pub fn is_kw(&self) -> bool {
         matches!(self, Lexeme::Kw(_))
+    }
+
+    #[inline]
+    pub fn is_lit(&self) -> bool {
+        matches!(self, Lexeme::Lit(..))
     }
 
     #[inline]
@@ -563,6 +582,97 @@ impl std::fmt::Display for Lexeme {
     }
 }
 
+/// Enumeration used by error reporting within the parser to specify expected
+/// lexeme kinds without relying on the data held by specific instances of
+/// lexemes. This isn't to be used on its own within error reporting, but as a
+/// component of the more general error-reporting types used in order to
+/// generate accurate and descriptive messages.
+///
+/// Additionally, `LexKind`s make a stronger distinction between `Lexeme`s than
+/// the general `Lexeme` type. This can be seen with the `Delim` variants, which
+/// correspond to lexemes expected in specific (positional) contexts such as
+/// `Lexeme::ParenL` (a `LeftDelim`) vs `Lexeme::ParenR` (a `RightDelim`).
+///
+/// For example, if we expect a constructor (i.e., an identifier beginning with
+/// an uppercase letter) and we don't get one, we don't want to have to fill a
+/// `Lexeme` instance with a dummy value.
+///
+/// In the event a specific `Lexeme` is expected, the `Specified` variant is
+/// used.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum LexKind {
+    Upper,
+    Lower,
+    Infix,
+    Punct,
+    LeftDelim,
+    RightDelim,
+    Keyword,
+    Literal,
+    Number,
+    Character,
+    Specified(Lexeme),
+}
+
+impl From<Lexeme> for LexKind {
+    fn from(lexeme: Lexeme) -> Self {
+        match lexeme {
+            Lexeme::Underline
+            | Lexeme::Tilde
+            | Lexeme::Lambda
+            | Lexeme::At
+            | Lexeme::Pound
+            | Lexeme::Equal
+            | Lexeme::Comma
+            | Lexeme::Semi
+            | Lexeme::Dot
+            | Lexeme::Dot2
+            | Lexeme::Colon
+            | Lexeme::Colon2
+            | Lexeme::ArrowL
+            | Lexeme::ArrowR
+            | Lexeme::FatArrow
+            | Lexeme::Pipe => Self::Punct,
+            Lexeme::ParenL | Lexeme::BrackL | Lexeme::CurlyL => Self::LeftDelim,
+            Lexeme::ParenR | Lexeme::BrackR | Lexeme::CurlyR => {
+                Self::RightDelim
+            }
+            Lexeme::Kw(_) => Self::Keyword,
+            Lexeme::Upper(_) => Self::Upper,
+            Lexeme::Lower(_) => Self::Lower,
+            Lexeme::Infix(_) => Self::Infix,
+            Lexeme::Lit(_) => Self::Literal,
+            Lexeme::Unknown | Lexeme::Eof => Self::Specified(lexeme),
+        }
+    }
+}
+
+// impl<T> From<T> for LexKind where T:
+
+impl std::fmt::Display for LexKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LexKind::Upper => {
+                write!(f, "identifier beginning with an uppercase letter")
+            }
+            LexKind::Lower => {
+                write!(f, "identifier beginning with a lowercase letter")
+            }
+            LexKind::Infix => {
+                write!(f, "infix or identifier surrounded by backticks")
+            }
+            LexKind::Punct => write!(f, "punctuation"),
+            LexKind::LeftDelim => write!(f, "left delimiter"),
+            LexKind::RightDelim => write!(f, "right delimiter"),
+            LexKind::Keyword => write!(f, "keyword"),
+            LexKind::Literal => write!(f, "literal"),
+            LexKind::Number => write!(f, "number"),
+            LexKind::Character => write!(f, "character"),
+            LexKind::Specified(lexeme) => write!(f, "the lexeme `{}`", lexeme),
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Token {
     pub lexeme: Lexeme,
@@ -644,8 +754,8 @@ macro_rules! lexpat {
     (~ [$t:tt]) => {
         Some(lexpat!{[$t]})
     };
-    (maybe [$t0:tt] $([$ts:tt])+) => {
-        Some(lexpat!{[$t0]} $(| lexpat!{[$ts]})+)
+    (maybe [$t0:tt] $([$ts:tt])*) => {
+        Some(Token { lexeme: (lexpat!{[$t0]} $(| lexpat!{[$ts]})*), .. })
     };
     ($self:ident on [$t:tt$($t2:tt)?]) => {{
         matches!($self.peek(), lexpat!(some [$t$($t2)?]))
@@ -716,6 +826,9 @@ macro_rules! lexpat {
     };
     ([class]) => {
         Lexeme::Kw(Keyword::Class)
+    };
+    ([impl]) => {
+        Lexeme::Kw(Keyword::Impl)
     };
     ([infixl]) => {
         Lexeme::Kw(Keyword::InfixL)
