@@ -614,6 +614,26 @@ pub enum LexKind {
     Specified(Lexeme),
 }
 
+impl From<Keyword> for LexKind {
+    fn from(_: Keyword) -> Self {
+        LexKind::Keyword
+    }
+}
+
+impl From<Literal> for LexKind {
+    fn from(lit: Literal) -> Self {
+        match lit {
+            Literal::Byte(_)
+            | Literal::Int(_)
+            | Literal::Nat(_)
+            | Literal::Float(_)
+            | Literal::Double(_) => Self::Number,
+            Literal::Char(_) => Self::Character,
+            Literal::Str(_) => Self::Literal,
+        }
+    }
+}
+
 impl From<Lexeme> for LexKind {
     fn from(lexeme: Lexeme) -> Self {
         match lexeme {
@@ -646,8 +666,6 @@ impl From<Lexeme> for LexKind {
         }
     }
 }
-
-// impl<T> From<T> for LexKind where T:
 
 impl std::fmt::Display for LexKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
