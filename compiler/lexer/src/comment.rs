@@ -11,9 +11,9 @@ use wy_span::Span;
 ///
 /// The comment markers listed above are NOT included in the spans capturing
 /// the content of the commented lines. Therefore, commented lines such as
-/// ```ws
-/// ... ~~ this here is a thing
-///     ~~ that I want to talk about
+/// ```wysk
+/// ~~ this here is a thing
+/// ~~ that I want to talk about
 /// ```
 /// would capture spans beginning with `this` for the first line and ending at
 /// the `thing`.
@@ -101,7 +101,7 @@ pub enum LineKind {
     /// Note that unlike markdown, the line should begin with `~~<X>` for some
     /// language id `X`, followed by the code to be embedded and then closed
     /// with `~~;` *on a new line*, e.g.,
-    /// ```ws
+    /// ```wysk
     /// ~~> This a constant function with no arguments
     /// ~~| and is analogous to the following code in `Haskell``
     /// ~~<haskell>
@@ -109,7 +109,7 @@ pub enum LineKind {
     /// ~~| main = ()
     /// ~~;
     /// ```
-    /// ```
+    /// ```wysk
     /// fn main :: IO () = ()
     /// ```
     Embeded(SyntaxId),

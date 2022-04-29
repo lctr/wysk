@@ -506,20 +506,15 @@ impl<'t> Lexer<'t> {
     /// which is idiomatically expected to be found on the next line
     /// 
     /// Below we see an example of all the doc flags listed above in use:
-    /// ```ws
+    /// ```wysk
     /// ~~> This would be the beginning of a paragraph descibing the entity 
     /// ~~| described by the source code following this doc comment block.
     /// ~~| Notice how `~~|` is used as a *line continuation*, and hence 
     /// ~~| will *only* render a single whitespace character ` ` *before* 
     /// ~~| and *after* its contents. Notice that this block documents the 
     /// ~~| function `foo` below.
-    /// ```
-    // using haskell purely for the synax highlighting
-    /// ```haskell
     /// fn foo :: a -> (a, a)
     /// | x = (x, x)
-    /// ```
-    /// ```ws
     /// ~~: This doc comment here would be grouped with the above doc 
     /// ~~| comments for the item `foo`.
     /// ~~| To show embedded code within doc comments, we will show below 
