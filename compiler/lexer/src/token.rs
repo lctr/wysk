@@ -211,6 +211,7 @@ strenum! { Keyword is_keyword ::
 
     InfixL "infixl"
     InfixR "infixr"
+    Infix "infix"
 
     Module "module"
     Import "import"
@@ -419,6 +420,11 @@ impl Lexeme {
     }
 
     #[inline]
+    pub fn is_infix(&self) -> bool {
+        matches!(self, Lexeme::Infix(_))
+    }
+
+    #[inline]
     pub fn is_kw(&self) -> bool {
         matches!(self, Lexeme::Kw(_))
     }
@@ -585,6 +591,150 @@ impl PartialEq<Lexeme> for Token {
     fn eq(&self, other: &Lexeme) -> bool {
         &self.lexeme == other
     }
+}
+
+#[macro_export]
+macro_rules! lexpat {
+    ($self:ident on [<-]) => {
+        matches!($self.peek(), Some(Token { lexeme: Lexeme::ArrowL, .. }))
+    };
+    ([_]) => {
+        Lexeme::Undersline
+    };
+    ([:]) => {
+        Lexeme::Colon
+    };
+    ([::]) => {
+        Lexeme::Colon2
+    };
+    ([..]) => {
+        Lexeme::Dot2
+    };
+    ([.]) => {
+        Lexeme::Dot
+    };
+    ([,]) => {
+        Lexeme::Comma
+    };
+    ([;]) => {Lexeme::Semi};
+    ([parenL]) => {
+        Lexeme::ParenL
+    };
+    ([parenR]) => {
+        Lexeme::ParenR
+    };
+    ([brackL]) => {
+        Lexeme::BrackL
+    };
+    ([brackR]) => {
+        Lexeme::BrackR
+    };
+    ([curlyL]) => {
+        Lexeme::CurlyL
+    };
+    ([curlyR]) => {
+        Lexeme::CurlyR
+    };
+    (some [$ts:tt]) => {
+        Some(lexpat!{[$ts]})
+    };
+    (~[$t:tt] $(~[$ts:tt])+) => {
+        Some(lexpat!([$t]) $(| lexpat!($ts))+)
+    };
+    (~ [$t:tt]) => {
+        Some(lexpat!{[$t]})
+    };
+    (maybe [$t0:tt] $([$ts:tt])+) => {
+        Some(lexpat!{[$t0]} $(| lexpat!{[$ts]})+)
+    };
+    ($self:ident on [$t:tt$($t2:tt)?]) => {{
+        matches!($self.peek(), lexpat!(some [$t$($t2)?]))
+    }};
+    ($self:ident on [$t:tt] $(| [$ts:tt])+) => {{
+        matches!($self.peek(), lexpat!(~[$t]) $(| lexpat!(~[$ts]))+)
+    }};
+    (? $lexeme:ident [$t:tt]) => {
+        matches!($lexeme, lexpat!([$t]))
+    };
+    (? $lexeme:ident [$t:tt] $(| [$r:tt])* ) => {
+        lexpat!(? $lexeme [$t]) $(|| lexpat!(? $lexeme [$r]))*
+    };
+    ([eof]) => {
+        Lexeme::Eof
+    };
+    ([lit]) => {
+        Lexeme::Lit(_)
+    };
+    ([op]) => {
+        Lexeme::Infix(_)
+    };
+    ([var]) => (
+        Lexeme::Lower(_)
+    );
+    ([Var]) => (
+        Lexeme::Upper(_)
+    );
+    ([let]) => {
+        Lexeme::Kw(Keyword::Let)
+    };
+    ([in]) => {
+        Lexeme::Kw(Keyword::In)
+    };
+    ([where]) => {
+        Lexeme::Kw(Keyword::Where)
+    };
+    ([if]) => {
+        Lexeme::Kw(Keyword::If)
+    };
+    ([then]) => {
+        Lexeme::Kw(Keyword::Then)
+    };
+    ([else]) => {
+        Lexeme::Kw(Keyword::Else)
+    };
+    // ([match]) => {Lexeme::Kw(Keyword::Match)};
+    ([case]) => {
+        Lexeme::Kw(Keyword::Case)
+    };
+    ([of]) => {
+        Lexeme::Kw(Keyword::Of)
+    };
+    ([do]) => {
+        Lexeme::Kw(Keyword::Do)
+    };
+    ([fn]) => {
+        Lexeme::Kw(Keyword::Fn)
+    };
+    ([data]) => {
+        Lexeme::Kw(Keyword::Data)
+    };
+    ([type]) => {
+        Lexeme::Kw(Keyword::Type)
+    };
+    ([with]) => {
+        Lexeme::Kw(Keyword::With)
+    };
+    ([class]) => {
+        Lexeme::Kw(Keyword::Class)
+    };
+    ([infixl]) => {
+        Lexeme::Kw(Keyword::InfixL)
+    };
+    ([infixr]) => {
+        Lexeme::Kw(Keyword::InfixR)
+    };
+    ([infix]) => {
+        Lexeme::Kw(Keyword::Infix)
+    };
+    ([module]) => {
+        Lexeme::Kw(Keyword::Module)
+    };
+    ([qualified]) => {
+        Lexeme::Kw(Keyword::Qualified)
+    };
+    ([hiding]) => {
+        Lexeme::Kw(Keyword::Hiding)
+    };
 }
 
 //----ERRORS (maybe move to `Failure` library?---------------------
