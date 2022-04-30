@@ -12,4 +12,3 @@ wy_intern = { path = "../intern" }
 wy_failure = { path = "../failure" }
 wy_span = { path = "../span" }
 wy_lexer = { path = "../lexer" }
-lazy_static = "1.4.0"
