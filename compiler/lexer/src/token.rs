@@ -744,7 +744,36 @@ macro_rules! lexpat {
     ([,]) => {
         Lexeme::Comma
     };
-    ([;]) => {Lexeme::Semi};
+    ([;]) => {
+        Lexeme::Semi
+    };
+    ([|]) => {
+        Lexeme::Pipe
+    };
+    ([->]) => {
+        Lexeme::ArrowR
+    };
+    ([<-]) => {
+        Lexeme::ArrowL
+    };
+    ([=]) => {
+        Lexeme::Equal
+    };
+    ([=>]) => {
+        Lexeme::FatArrow
+    };
+    ([~]) => {
+        Lexeme::Tilde
+    };
+    ([@]) => {
+        Lexeme::At
+    };
+    ([#]) => {
+        Lexeme::Pound
+    };
+    ([lam]) => {
+        Lexeme::Lambda
+    };
     ([parenL]) => {
         Lexeme::ParenL
     };
@@ -764,13 +793,10 @@ macro_rules! lexpat {
         Lexeme::CurlyR
     };
     (some [$ts:tt]) => {
-        Some(lexpat!{[$ts]})
+        Some(Token { lexeme: lexpat!{[$ts]}, .. })
     };
-    (~[$t:tt] $(~[$ts:tt])+) => {
-        Some(lexpat!([$t]) $(| lexpat!($ts))+)
-    };
-    (~ [$t:tt]) => {
-        Some(lexpat!{[$t]})
+    (~[$t:tt] $([$ts:tt])*) => {
+        Some(Token { lexeme: lexpat!([$t]) $(| lexpat!([$ts]))*, .. })
     };
     (maybe [$t0:tt] $([$ts:tt])*) => {
         Some(Token { lexeme: (lexpat!{[$t0]} $(| lexpat!{[$ts]})*), .. })
@@ -787,6 +813,9 @@ macro_rules! lexpat {
     (? $lexeme:ident [$t:tt] $(| [$r:tt])* ) => {
         lexpat!(? $lexeme [$t]) $(|| lexpat!(? $lexeme [$r]))*
     };
+    ([??]) => {
+        Lexeme::Unknown
+    };
     ([eof]) => {
         Lexeme::Eof
     };
@@ -795,6 +824,9 @@ macro_rules! lexpat {
     };
     ([op]) => {
         Lexeme::Infix(_)
+    };
+    ([kw]) => {
+        Lexeme::Kw(_)
     };
     ([var]) => (
         Lexeme::Lower(_)
