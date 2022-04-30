@@ -2,7 +2,7 @@ use token::Base;
 use comment::{LineKind, Comment};
 pub use token::{Keyword, Lexeme, Literal, Source, Token};
 use wy_intern::symbol;
-use wy_span::WithLoc;
+use wy_span::{WithLoc, WithSpan, BytePos};
 pub use wy_span::{Coord, Span, Spanned, Location, Located};
 
 pub mod token;
@@ -38,6 +38,17 @@ pub struct Lexer<'t> {
 impl<'t> WithLoc for Lexer<'t> {
     fn get_loc(&self) -> Coord {
         self.source.get_loc()
+    }
+}
+
+impl<'t> WithSpan for Lexer<'t> {
+    fn get_pos(&self) -> BytePos {
+        if let Some(ref tok) = self.current {
+            // since we've already got the next token in our `current` field, should we return the beginning or end of that token?
+            tok.span.start()
+        } else { 
+            self.source.get_pos() 
+        }
     }
 }
 
