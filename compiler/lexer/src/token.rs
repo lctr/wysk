@@ -503,7 +503,7 @@ impl Lexeme {
     }
 
     #[inline]
-    pub fn beginst_pat(&self) -> bool {
+    pub fn begins_pat(&self) -> bool {
         matches!(
             self,
             Lexeme::Upper(_)
@@ -727,7 +727,7 @@ macro_rules! lexpat {
         matches!($self.peek(), Some(Token { lexeme: Lexeme::ArrowL, .. }))
     };
     ([_]) => {
-        Lexeme::Undersline
+        Lexeme::Underline
     };
     ([:]) => {
         Lexeme::Colon
