@@ -22,6 +22,7 @@ Below are some of the things I'm hoping to implement.
 - [x] Design module-friendly and polymorphic AST to facilitate later simplification and semantic analysis phases
 - [ ] Implement parser to allow for code-reuse in later syntactic analysis
 - [x] Implement post-parse pass to reflect user-defined operator precedence and associativity (either from definitions within the same module or from dependencies)
+- [ ] Implement identifier renaming pass to identify name clashes and generate unique names for entities involved
 - [ ] Implement support for (hygienic) macros in lexing and parsing
 - [ ] Improve lexer error reporting to include context
 - [ ] Unify error handling into its own library
