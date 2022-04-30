@@ -601,6 +601,7 @@ impl std::fmt::Display for Lexeme {
 /// used.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum LexKind {
+    Identifier,
     Upper,
     Lower,
     Infix,
@@ -670,6 +671,9 @@ impl From<Lexeme> for LexKind {
 impl std::fmt::Display for LexKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            LexKind::Identifier => {
+                write!(f, "identifier beginning with either and uppercase or lowercase letter")
+            }
             LexKind::Upper => {
                 write!(f, "identifier beginning with an uppercase letter")
             }
@@ -796,7 +800,7 @@ macro_rules! lexpat {
         Some(Token { lexeme: lexpat!{[$ts]}, .. })
     };
     (~[$t:tt] $([$ts:tt])*) => {
-        Some(Token { lexeme: lexpat!([$t]) $(| lexpat!([$ts]))*, .. })
+        Some(Token { lexeme: (lexpat!([$t]) $(| lexpat!([$ts]))*), .. })
     };
     (maybe [$t0:tt] $([$ts:tt])*) => {
         Some(Token { lexeme: (lexpat!{[$t0]} $(| lexpat!{[$ts]})*), .. })
