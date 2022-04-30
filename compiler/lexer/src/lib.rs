@@ -2,6 +2,7 @@ use token::Base;
 use comment::{LineKind, Comment};
 pub use token::{Keyword, Lexeme, Literal, Source, Token};
 use wy_intern::symbol;
+use wy_span::WithLoc;
 pub use wy_span::{Coord, Span, Spanned, Location, Located};
 
 pub mod token;
@@ -30,7 +31,14 @@ pub struct Lexer<'t> {
     pub locs: Vec<Coord>,
     stack: Vec<Token>,
     source: Source<'t>,
-    pub comments: Vec<Comment>
+    pub comments: Vec<Comment>,
+    pub current: Option<Token>,
+}
+
+impl<'t> WithLoc for Lexer<'t> {
+    fn get_loc(&self) -> Coord {
+        self.source.get_loc()
+    }
 }
 
 impl<'t> Lexer<'t> {
@@ -39,7 +47,33 @@ impl<'t> Lexer<'t> {
             locs: Vec::new(),
             stack: Vec::new(),
             source: Source::new(src),
-            comments: Vec::new()
+            comments: Vec::new(),
+            current: None
+        }
+    }
+
+    pub fn src_len(&self) -> usize {
+        self.source.src.len()
+    }
+
+    pub fn peek(&mut self) -> Option<&Token> {
+        match self.current {
+            Some(ref t) => Some(t),
+            None => {
+                let token = self.token(); 
+                self.current.replace(token); 
+                self.current.as_ref()
+            }
+        }
+    }
+
+    pub fn bump(&mut self) -> Token {
+        match self.current.take() {
+            Some(token) => token,
+            None => { 
+                let Spanned(lexeme, span) = self.source.spanned(|_| Lexeme::Eof); 
+                Token { lexeme, span }
+            },
         }
     }
 
@@ -570,9 +604,13 @@ impl<'t> Iterator for Lexer<'t> {
     type Item = Token;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.token() {
-            t if t.lexeme.is_eof() => None,
-            t => Some(t),
+        match self.current.take() {
+            Some(t) => Some(t),
+            None => match self.token() {
+                t if t.lexeme.is_eof() => None,
+                t => Some(t),
+
+            }
         }
     }
 }
