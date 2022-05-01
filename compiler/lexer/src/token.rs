@@ -724,6 +724,88 @@ impl PartialEq<Lexeme> for Token {
     }
 }
 
+pub trait Lexlike<Tok = Token, Lex = Lexeme> {
+    fn cmp_lex(&self, lex: &Lex) -> bool;
+    fn cmp_tok(&self, tok: &Tok) -> bool;
+
+    fn lex_cmp<T>(&self, lexeme: T) -> bool
+    where
+        T: PartialEq<Tok>,
+        Tok: PartialEq<T>,
+        Lex: From<T>,
+    {
+        self.cmp_lex(&Lex::from(lexeme))
+    }
+}
+
+impl<F> Lexlike for F
+where
+    F: Fn(Lexeme) -> bool,
+{
+    fn cmp_lex(&self, lex: &Lexeme) -> bool {
+        (self)(*lex)
+    }
+
+    fn cmp_tok(&self, tok: &Token) -> bool {
+        (self)(tok.lexeme)
+    }
+}
+
+impl Lexlike for Ident {
+    fn cmp_lex(&self, lex: &Lexeme) -> bool {
+        match (self, lex) {
+            (Ident::Upper(s), Lexeme::Upper(t))
+            | (Ident::Lower(s), Lexeme::Upper(t))
+            | (Ident::Infix(s), Lexeme::Upper(t)) => s == t,
+            _ => false,
+        }
+    }
+
+    fn cmp_tok(&self, tok: &Token) -> bool {
+        matches!(tok.lexeme, Lexeme::Upper(s) | Lexeme::Lower(s) | Lexeme::Infix(s) if s == self.get_symbol())
+    }
+}
+
+impl Lexlike for Keyword {
+    fn cmp_lex(&self, lex: &Lexeme) -> bool {
+        self == lex
+    }
+
+    fn cmp_tok(&self, tok: &Token) -> bool {
+        self == &tok.lexeme
+    }
+}
+
+impl Lexlike for Literal {
+    fn cmp_lex(&self, lex: &Lexeme) -> bool {
+        self == lex
+    }
+
+    fn cmp_tok(&self, tok: &Token) -> bool {
+        self == &tok.lexeme
+    }
+}
+
+impl Lexlike for Lexeme {
+    fn cmp_lex(&self, lex: &Lexeme) -> bool {
+        self == lex
+    }
+
+    fn cmp_tok(&self, tok: &Token) -> bool {
+        self == &tok.lexeme
+    }
+}
+
+impl Lexlike for Token {
+    fn cmp_lex(&self, lex: &Lexeme) -> bool {
+        &self.lexeme == lex
+    }
+
+    fn cmp_tok(&self, tok: &Token) -> bool {
+        self == tok
+    }
+}
+
 #[macro_export]
 macro_rules! lexpat {
     ($self:ident on [<-]) => {
