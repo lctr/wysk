@@ -498,7 +498,6 @@ impl Lexeme {
                 | Lexeme::BrackL
                 | Lexeme::Upper(_)
                 | Lexeme::Lower(_)
-                | Lexeme::Infix(_)
         )
     }
 
