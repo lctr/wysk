@@ -118,8 +118,8 @@ where
         Ok(())
     }
     fn visit_pat(&mut self, pat: &Pattern<Id>) -> Result<(), Err> {
-        if let Pattern::<Id>::Con(_, pats)
-        | Pattern::<Id>::Lst(pats)
+        if let Pattern::<Id>::Dat(_, pats)
+        | Pattern::<Id>::Vec(pats)
         | Pattern::<Id>::Tup(pats) = pat
         {
             for pat in pats {
@@ -149,7 +149,7 @@ where
                 self.visit_expr(ex)?;
             }
             Statement::Predicate(ex) => self.visit_expr(ex)?,
-            Statement::DoLet(bnds) => {
+            Statement::JustLet(bnds) => {
                 for binding in bnds {
                     self.visit_binding(binding)?;
                 }
@@ -165,7 +165,10 @@ where
         }
         for fundefs in &module.fundefs {
             for arm in &fundefs.defs {
-                self.visit_binding(&arm)?
+                if let Some(pred) = &arm.pred {
+                    self.visit_expr(pred)?;
+                }
+                self.visit_expr(&arm.body)?;
             }
         }
         Ok(())
@@ -261,8 +264,8 @@ where
         Ok(())
     }
     fn visit_pat_mut(&mut self, pat: &mut Pattern<Id>) -> Result<(), Err> {
-        if let Pattern::<Id>::Con(_, pats)
-        | Pattern::<Id>::Lst(pats)
+        if let Pattern::<Id>::Dat(_, pats)
+        | Pattern::<Id>::Vec(pats)
         | Pattern::<Id>::Tup(pats) = pat
         {
             for pat in pats {
@@ -293,7 +296,7 @@ where
             Statement::Predicate(expr) => {
                 self.visit_expr_mut(expr)?;
             }
-            Statement::DoLet(bindings) => {
+            Statement::JustLet(bindings) => {
                 for binding in bindings {
                     self.visit_binding_mut(binding)?;
                 }
@@ -309,12 +312,15 @@ where
         {
             self.visit_binding_mut(binding)?;
         }
-        for binding in module
+        for arm in module
             .fundefs
             .iter_mut()
             .flat_map(|decl| decl.defs.iter_mut())
         {
-            self.visit_binding_mut(binding)?;
+            if let Some(pred) = &mut arm.pred {
+                self.visit_expr_mut(pred)?;
+            };
+            self.visit_expr_mut(&mut arm.body)?;
         }
 
         Ok(())
@@ -327,7 +333,7 @@ where
 {
     match pat {
         Pattern::Var(id) => f(id),
-        Pattern::Con(_, pats) => {
+        Pattern::Dat(_, pats) => {
             pats.iter().for_each(|pat| var_pat_vars(pat, |id| f(id)))
         }
         _ => {}
