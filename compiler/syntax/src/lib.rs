@@ -376,16 +376,16 @@ pub enum Expression<Id = Ident> {
     /// testing for integer parity, then the following list expression would
     /// generate a list of the results of applying `f` to each even integer
     /// between `0` and `10` (not-inclusive).
-    /// ```haskell
+    /// ```wysk
     ///     [ f x | x <- [0..10], even x ]
     /// ```
     /// In fact, the above expression would be equivalent to
-    /// ```haskell
+    /// ```wysk
     ///     map f (filter even [0..10])
     /// ```
     /// and can be generalized to the following (inefficient) `let` expression,
     /// where we use `f`
-    /// ```haskell
+    /// ```wysk
     /// let f :: a -> b
     ///     | a' = ...
     ///     g :: a -> Bool
@@ -396,10 +396,6 @@ pub enum Expression<Id = Ident> {
     ///     | (a:as) -> h as
     /// in ...
     /// ```
-    ///
-    /// In particular, we can view a list comprehension as syntactic sugar
-    /// for
-    ///
     List(Box<Expression<Id>>, Vec<Statement<Id>>),
     Dict(Record<Expression<Id>, Id>),
     Lambda(Pattern<Id>, Box<Expression<Id>>),
@@ -470,7 +466,7 @@ pub enum Pattern<Id = Ident> {
     /// Describes a list formed with cons operator infix syntax, e.g.,
     /// `(a:b:c)`. Note that *as a pattern*, this *must* occur within
     /// parentheses, as *operator fixities are not observed in patterns*.
-    Lnk(Box<[Pattern<Id>]>),
+    Lnk(Box<[Pattern<Id>; 2]>),
     At(Id, Box<Pattern<Id>>),
     Or(Vec<Pattern<Id>>),
     Rec(Record<Pattern<Id>, Id>),
