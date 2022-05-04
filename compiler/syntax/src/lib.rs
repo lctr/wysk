@@ -1,15 +1,13 @@
+use wy_common::Map;
+use wy_intern::symbol::{self, Symbol};
+use wy_lexer::Literal;
+
 pub mod fixity;
 pub mod tipo;
 pub mod visit;
 
-use std::rc::Rc;
-
-use tipo::*;
-use wy_common::{text, Map};
-use wy_intern::symbol::Symbol;
-use wy_lexer::Literal;
-
 use fixity::*;
+use tipo::*;
 
 // TODO: documentation; potential split-up of definitions into separate files?
 
@@ -53,21 +51,22 @@ impl Ident {
     }
 
     pub fn minus_sign() -> Self {
-        Self::Infix(wy_intern::intern_once("-"))
+        Self::Infix(symbol::intern_once("-"))
     }
 }
 
 wy_common::newtype!({ u64 in Uid | Show (+= usize |rhs| rhs as u64) });
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct Program<Id = Ident> {
-    pub modules: Vec<Module<Id>>,
+    pub module: Module<Id>,
+    pub fixities: FixityTable,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Module<Id = Ident> {
-    pub modname: Id,
-    pub imports: Vec<ImportDecl<Id>>,
+pub struct Module<Id = Ident, Uid = Id> {
+    pub modname: Uid,
+    pub imports: Vec<ImportSpec<Id>>,
     pub datatys: Vec<DataDecl<Id>>,
     pub classes: Vec<ClassDecl<Id>>,
     pub implems: Vec<InstDecl<Id>>,
@@ -76,9 +75,25 @@ pub struct Module<Id = Ident> {
     pub aliases: Vec<AliasDecl<Id>>,
 }
 
+impl Default for Module {
+    fn default() -> Self {
+        Self {
+            modname: Ident::Upper(symbol::intern_once("Main")),
+            imports: vec![],
+            datatys: vec![],
+            classes: vec![],
+            implems: vec![],
+            fundefs: vec![],
+            infixes: vec![],
+            aliases: vec![],
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ImportDecl<Id = Ident> {
+pub struct ImportSpec<Id = Ident> {
     pub name: Id,
+    pub qualified: bool,
     pub rename: Option<Id>,
     pub hidden: bool,
     pub imports: Vec<Import<Id>>,
@@ -86,8 +101,10 @@ pub struct ImportDecl<Id = Ident> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Import<Id = Ident> {
+    /// Infix imports
+    Operator(Id),
     Function(Id),
-    /// Type imports: type only, no type constructors
+    /// Type imports: type and class only, no type constructors
     Abstract(Id),
     /// Data type imports that include *all* of their constructors
     Total(Id),
@@ -110,9 +127,7 @@ impl<Id> FixityDecl<Id> {
     }
 }
 
-impl<Id: Copy + Eq + std::hash::Hash> From<&[FixityDecl<Id>]>
-    for FixityTable<Id>
-{
+impl<Id: Copy + Eq + std::hash::Hash> From<&[FixityDecl<Id>]> for FixityTable<Id> {
     fn from(fixity_decls: &[FixityDecl<Id>]) -> Self {
         Self(
             fixity_decls
@@ -125,6 +140,22 @@ impl<Id: Copy + Eq + std::hash::Hash> From<&[FixityDecl<Id>]>
     }
 }
 
+///
+/// ```wysk
+/// ~~        `name` `poly`
+/// ~~           V   /
+/// data |A a| Foo a
+/// ~~    ^^^
+/// ~~   `ctxt`
+///     = Bar a
+/// ~~    ^^^^^
+/// ~~   `vnts[0]`
+///     | Baz a (Foo a)
+/// ~~    ^^^^^^^^^^^^^
+/// ~~   `vnts[1]`
+///     with (B, C, D);
+/// ~~       ^^^^^^^^
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DataDecl<Id = Ident> {
     pub name: Id,
@@ -134,11 +165,22 @@ pub struct DataDecl<Id = Ident> {
     pub with: Vec<Id>,
 }
 
+impl<Id> DataDecl<Id> {
+    pub fn enumer_tags(mut self) -> Self {
+        let mut i = 0;
+        for Variant { tag, .. } in self.vnts.iter_mut() {
+            *tag = Tag(i);
+            i += 1;
+        }
+        self
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Variant<Id = Ident> {
     pub name: Id,
     pub args: Vec<Type<Id>>,
-    // pub tag: Tag,
+    pub tag: Tag,
     pub arity: Arity,
 }
 
@@ -167,6 +209,7 @@ pub struct NewtypeDecl<Id = Ident> {
     pub poly: Vec<Tv>,
     pub ctor: Id,
     pub tipo: Type<Id>,
+    pub dict: Option<(Id, Signature)>,
     pub with: Vec<Id>,
 }
 
@@ -216,8 +259,8 @@ pub struct InstDecl<Id = Ident> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FnDecl<Id = Ident> {
     pub name: Id,
-    pub defs: Vec<Binding<Id>>,
     pub sign: Option<Signature<Id>>,
+    pub defs: Vec<Match<Id>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -397,18 +440,37 @@ pub enum Statement<Id = Ident> {
     Generator(Pattern<Id>, Expression<Id>),
     // <EXPR>
     Predicate(Expression<Id>),
+    // `let` without the `in`;
     // let (<ID> <PAT>* = <EXPR>)+
-    DoLet(Vec<Binding<Id>>),
+    JustLet(Vec<Binding<Id>>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Pattern<Id = Ident> {
+    /// Describes the wildcard pattern and is written `_`. Since it is a
+    /// wildcard pattern, it matches against *any* pattern.
     Wild,
+    /// Describes a named wildxard pattern and syntactically corresponds to *any
+    /// lowercase-initial identifier*. The pattern `a` is a `Var` pattern and
+    /// can be rewritten as the `At` pattern `a @ _`, so it follows that this
+    /// pattern matches against *any* pattern, but *also* introduces a
+    /// *binding* between the identifier and the element being matched on.
     Var(Id),
+    /// Describes a literal as a pattern and is the one variant of patterns with
+    /// specific restrictions.
     Lit(Literal),
-    Con(Id, Vec<Pattern<Id>>),
+    /// Describes the pattern formed by a data constructor and its arguments
+    /// (data). In particular, the data constructor *must* be an
+    /// uppercase-initial identifier.
+    Dat(Id, Vec<Pattern<Id>>),
     Tup(Vec<Pattern<Id>>),
-    Lst(Vec<Pattern<Id>>),
+    /// Describes a list formed with array-like bracket syntax, e.g.,
+    /// `[a, b, c]`. Syntactic sugar for lists.
+    Vec(Vec<Pattern<Id>>),
+    /// Describes a list formed with cons operator infix syntax, e.g.,
+    /// `(a:b:c)`. Note that *as a pattern*, this *must* occur within
+    /// parentheses, as *operator fixities are not observed in patterns*.
+    Lnk(Box<[Pattern<Id>]>),
     At(Id, Box<Pattern<Id>>),
     Or(Vec<Pattern<Id>>),
     Rec(Record<Pattern<Id>, Id>),
@@ -417,13 +479,13 @@ pub enum Pattern<Id = Ident> {
 
 impl<Id> Pattern<Id> {
     pub const UNIT: Self = Self::Tup(vec![]);
-    pub const NIL: Self = Self::Lst(vec![]);
+    pub const NIL: Self = Self::Vec(vec![]);
     pub const VOID: Self = Self::Rec(Record::VOID);
     pub fn is_unit(&self) -> bool {
         matches!(self, Self::Tup(vs) if vs.is_empty())
     }
     pub fn is_null(&self) -> bool {
-        matches!(self, Self::Lst(vs) if vs.is_empty())
+        matches!(self, Self::Vec(vs) if vs.is_empty())
     }
     pub fn is_void(&self) -> bool {
         matches!(self, Self::Rec(Record::Anon(vs)) if vs.is_empty())
