@@ -121,22 +121,6 @@ impl Lexicon {
     }
 }
 
-impl Extend<String> for Lexicon {
-    fn extend<T: IntoIterator<Item = String>>(&mut self, iter: T) {
-        for s in iter.into_iter() {
-            self.intern(&*s);
-        }
-    }
-}
-
-impl<'t> Extend<&'t str> for Lexicon {
-    fn extend<T: IntoIterator<Item = &'t str>>(&mut self, iter: T) {
-        for s in iter.into_iter() {
-            self.intern(s);
-        }
-    }
-}
-
 impl Default for Lexicon {
     fn default() -> Self {
         Self::with_capacity(Self::BASE_CAPACITY)
