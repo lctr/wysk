@@ -155,6 +155,14 @@ impl<Id> Type<Id> {
         matches!(self, Self::Fun(..))
     }
 
+    pub fn un_app(&self) -> Option<(&Self, &Self)> {
+        if let Type::App(c, d) = self {
+            Some((c.as_ref(), d.as_ref()))
+        } else {
+            None
+        }
+    }
+
     /// Returns `true` if the type is a single type constructor with arity 0.
     pub fn is_nullary(&self) -> bool {
         match self {
@@ -260,6 +268,8 @@ impl<Id> Type<Id> {
             .collect()
     }
 
+    /// FIXME: e -> f -> C currently returning a -> a -> C
+    ///
     /// Takes all the type variables in a type, re-ordering them all
     /// and applying fresh names according to the new (normalized)
     /// ordering.
@@ -277,9 +287,7 @@ impl<Id> Type<Id> {
     {
         match self {
             Type::Var(a) => {
-                if let Some((_u, v)) =
-                    self.enumerate().into_iter().find(|(u, _)| u == a)
-                {
+                if let Some((_u, v)) = self.enumerate().into_iter().find(|(u, _)| u == a) {
                     Ok(Self::Var(v))
                 } else {
                     Err(Self::Var(*a))
@@ -321,9 +329,7 @@ impl<Id> Type<Id> {
                         let field = match c {
                             Field::Rest => Field::Rest,
                             Field::Key(k) => Field::Key(*k),
-                            Field::Entry(k, ty) => {
-                                ty.normalize().map(|t| Field::Entry(*k, t))?
-                            }
+                            Field::Entry(k, ty) => ty.normalize().map(|t| Field::Entry(*k, t))?,
                         };
                         acc.push(field);
                         Ok(acc)
@@ -331,11 +337,10 @@ impl<Id> Type<Id> {
                 }
 
                 match rec {
-                    Record::Anon(fields) => {
-                        reduce(fields).map(|fs| Type::Rec(Record::Anon(fs)))
+                    Record::Anon(fields) => reduce(fields).map(|fs| Type::Rec(Record::Anon(fs))),
+                    Record::Data(con, fields) => {
+                        reduce(fields).map(|fs| Type::Rec(Record::Data(*con, fs)))
                     }
-                    Record::Data(con, fields) => reduce(fields)
-                        .map(|fs| Type::Rec(Record::Data(*con, fs))),
                 }
             }
             Type::App(x, y) => {
@@ -363,28 +368,9 @@ impl<Id> Type<Id> {
     /// processed to match the type used to represent identifiers. However,
     /// unlike the list constructor, which is used for *all* lists, tuples
     /// require a new constructor depending on the number of type components
-    /// held. Thus it follows that, in order to reconstruct the type constructor
-    /// for a tuple, two ingredients are necessary: the *number* of components
-    /// in the tuple type expected, as well as a closure mapping the internal
-    /// `Symbol` to the `Id` type representing identifiers.
-    ///
-    /// Notice that there are some further caveats:
-    /// * `()` does *not* have a constructor.
-    /// * `(a)` is equivalent to `a` *`(a, a)` is formed by the constructor
-    /// `(,)`
-    /// * `(a_1, a_2, ..., a_n)` is formed by the constructor consisting of `n -
-    ///   1` commas.
-    ///
-    /// Because of the aforementioned caveats, it follows that the numeric
-    /// argument to this method corresponds to the number of type components *to
-    /// be added* to the standard tuple containing `2` types. Thus, for a given
-    /// integer `n`, this will return the constructor for a tuple containing *n
-    /// + 2* elements.
-    ///
-    /// An easy way to remember this is to remember that the integer provided
-    /// *directly* corresponds to the number of *extra commas* in the resulting
-    /// string representation of the constructor. This means that providing `0`
-    /// will return the (polymorphic) constructor for 2-tuples.
+    /// held. Namely, the constructor for a tuple with `N` elements is the
+    /// lexeme formed by combining `N - 1` commas and surrounding them in
+    /// parentheses.
     pub fn n_tuple_id(commas: usize, mut f: impl FnMut(Symbol) -> Id) -> Id {
         let ntup = (1..(2 + commas)).map(|_| ',').collect::<String>();
         f(wy_intern::intern_once(&*ntup))
@@ -451,9 +437,7 @@ impl<T, Id> Record<T, Id> {
     /// variant to a `Record::Data` variant and vice-versa.
     pub fn map<F, U, V>(self, mut f: F) -> Record<V, U>
     where
-        F: FnMut(
-            (Option<Id>, Vec<Field<T, Id>>),
-        ) -> (Option<U>, Vec<Field<V, U>>),
+        F: FnMut((Option<Id>, Vec<Field<T, Id>>)) -> (Option<U>, Vec<Field<V, U>>),
     {
         match self {
             Record::Anon(fields) => {
