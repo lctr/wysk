@@ -8,6 +8,20 @@ newtype! {
     }
 }
 
+impl Row {
+    /// Returns the number of digits in the contained numeric value. Used
+    /// primarily in error reporting for text alignnment purposes.
+    pub fn strlen(&self) -> u32 {
+        let mut n = self.0;
+        let mut ct = 1;
+        while n > 1 {
+            n /= 10;
+            ct += 1;
+        }
+        ct
+    }
+}
+
 impl<'t> std::ops::Index<Row> for std::str::Lines<'t> {
     type Output = str;
 
@@ -475,6 +489,28 @@ impl Dummy for Location {
             || self.end.is_dummy()
             || self.start.row > self.end.row
             || self.start.col > self.end.col
+    }
+}
+
+impl std::ops::Index<Location> for String {
+    type Output = str;
+
+    fn index(&self, index: Location) -> &Self::Output {
+        let s = self.char_indices();
+        let mut start = 0;
+        let mut end = 0;
+        for (p, c) in s {
+            if p < index.start.col.as_usize() {
+                start += c.len_utf8();
+            } else if p == index.start.col.as_usize() {
+                end = start + c.len_utf8();
+            } else if p < index.end.col.as_usize() {
+                end += c.len_utf8()
+            } else {
+                break;
+            }
+        }
+        &self.as_str()[start..end]
     }
 }
 
