@@ -5,6 +5,8 @@ use wy_intern::symbol;
 use wy_span::{WithLoc, WithSpan, BytePos};
 pub use wy_span::{Coord, Span, Spanned, Location, Located};
 
+use crate::token::LexError;
+
 pub mod token;
 pub mod comment;
 
@@ -37,7 +39,11 @@ pub struct Lexer<'t> {
 
 impl<'t> WithLoc for Lexer<'t> {
     fn get_loc(&self) -> Coord {
-        self.source.get_loc()
+        if let Some(coord) = self.locs.last() {
+            *coord
+        } else {
+            self.source.get_loc()
+        }
     }
 }
 
@@ -68,17 +74,24 @@ impl<'t> Lexer<'t> {
     }
 
     pub fn peek(&mut self) -> Option<&Token> {
-        match self.current {
-            Some(ref t) => Some(t),
-            None => {
-                let token = self.token(); 
-                self.current.replace(token); 
-                self.current.as_ref()
+        // if !self.stack.is_empty() { 
+        //     Some(&self.stack[0]) 
+        // } else {
+            match self.current {
+                Some(ref t) => Some(t),
+                None => {
+                    let token = self.token();
+                    self.current.replace(token); 
+                    self.current.as_ref()
+                }
             }
-        }
+        // }
     }
 
     pub fn bump(&mut self) -> Token {
+        // if let Some(tok) = self.stack.pop() {
+        //     return tok
+        // }
         match self.current.take() {
             Some(token) => token,
             None => { 
@@ -89,6 +102,7 @@ impl<'t> Lexer<'t> {
     }
 
     pub fn is_done(&mut self) -> bool {
+        matches!(&self.current, Some(Token { lexeme: Lexeme::Eof, ..})) ||
         self.stack.is_empty()
             && (self.source.is_done())
     }
@@ -102,8 +116,6 @@ impl<'t> Lexer<'t> {
 
         if let Some(t) = self.stack.pop() {
             t
-        } else if self.is_done() {
-            lex_eof(self)
         } else {
             self.source.eat_whitespace();
             if let Some(c) = self.source.peek().copied() {
@@ -226,7 +238,71 @@ impl<'t> Lexer<'t> {
     }
 
     fn backtick(&mut self) -> Token {
-        todo!()
+        let start = self.source.get_pos();
+        self.source.next();
+        match self.source.peek().copied() {
+            Some(c) if is_ident_start(c) => {
+                let start = self.get_pos();
+                match self.identifier(c) {
+                    Token { lexeme: Lexeme::Lower(sym), span } => {
+                        if self.source.on_char('`') {
+                            self.source.next();
+                            Token { 
+                                lexeme: Lexeme::Infix(sym), 
+                                span
+                            }
+                        } else {
+                            match self.source.peek() {
+                                Some(_) => {
+                                    let (sp, _) = self.source.eat_while(|c| c != '`');
+                                    Token { lexeme: Lexeme::Unknown(LexError::InvalidInfix), span: Span(start, sp.end())}
+                                }
+                                None => {
+                                    let span = self.source.span_from(start);
+                                    self.stack.push(Token { 
+                                        lexeme: Lexeme::Eof,
+                                        span
+                                    });
+                                    Token { lexeme: Lexeme::Unknown(LexError::UnterminatedInfix), span }
+                                }
+                            }
+                        }
+                    }
+                    _token => {
+                        let (sp, _loc) = self.source.eat_while(|c| c != '`');
+                        let span = Span(start, sp.end());
+                        
+                        Token { lexeme: if self.source.on_char('`') {
+                            self.source.next();
+                            Lexeme::Unknown(LexError::InvalidInfix)
+                        } else { Lexeme::Eof 
+                        }, span }
+                    }
+                }
+            }
+            Some('`') => {
+                self.source.next();
+                Token { lexeme: Lexeme::Unknown(LexError::EmptyInfix), span: Span(start, self.source.get_pos())}
+            } 
+            Some(_) => {
+                let (sp, _loc) = self.source.eat_while(|c| c != '`');
+                let span = Span(start, sp.end());
+                
+                Token { 
+                    span,
+                    lexeme: if self.source.on_char('`') {
+                        self.source.next();
+                        Lexeme::Unknown(LexError::InvalidInfix)
+                    } else { 
+                        Lexeme::Eof 
+                    }, 
+                }
+            }
+            None => Token { 
+                lexeme: Lexeme::Unknown(LexError::UnterminatedInfix), 
+                span: self.source.span_from(start)
+            }
+        }
     }
 
     fn string(&mut self) -> Token {
@@ -259,13 +335,16 @@ impl<'t> Lexer<'t> {
                 buf.push(c);
             }
         }
+        let span = Span(start, self.source.get_pos());
         if !terminated {
-            // TODO: report non-terminated string (instead of unexpected eof??)
-            todo!()
+            Token { 
+                lexeme: Lexeme::Unknown(LexError::UnterminatedString), 
+                span 
+            }
         } else {
-            let span = Span(start, self.source.get_pos());
+            let sym = symbol::intern_once(buf.as_str());
             Token {
-                lexeme: Lexeme::Lit(Literal::Str(symbol::intern_once(buf.as_str()))),
+                lexeme: Lexeme::Lit(Literal::Str(sym)),
                 span,
             }
         }
@@ -372,7 +451,7 @@ impl<'t> Lexer<'t> {
                             &self.source[span]
                         );
                         return Token {
-                            lexeme: Lexeme::Unknown,
+                            lexeme: Lexeme::Unknown(LexError::MissingExponent),
                             span,
                         };
                     }
@@ -385,7 +464,7 @@ impl<'t> Lexer<'t> {
                     self.source.get_loc(),
                     &self.source[Span(span.0, end)]);
                     return Token {
-                        lexeme: Lexeme::Unknown,
+                        lexeme: Lexeme::Unknown(LexError::MissingIntegral),
                         span,
                     };
                 }
@@ -414,7 +493,7 @@ impl<'t> Lexer<'t> {
                                     "Invalid number `{}`",
                                     &self.source[span]
                                 );
-                                Lexeme::Unknown
+                                Lexeme::Unknown(LexError::MalformedNumber)
                             }),
                             span,
                         };
@@ -440,7 +519,7 @@ impl<'t> Lexer<'t> {
             }
         }
         .map(Lexeme::Lit)
-        .unwrap_or_else(|| Lexeme::Unknown);
+        .unwrap_or_else(|| Lexeme::Unknown(LexError::MalformedNumber));
         Token { lexeme, span }
     }
 
@@ -452,7 +531,7 @@ impl<'t> Lexer<'t> {
             .ok()
             .map(Literal::Int)
             .map(Lexeme::Lit)
-            .unwrap_or_else(|| Lexeme::Unknown);
+            .unwrap_or_else(|| Lexeme::Unknown(LexError::MalformedNumber));
         Token { lexeme, span }
     }
 
@@ -497,7 +576,7 @@ impl<'t> Lexer<'t> {
             }
         } else {
             Token {
-                lexeme: Lexeme::Unknown,
+                lexeme: Lexeme::Tilde,
                 span,
             }
         }
@@ -602,12 +681,16 @@ impl<'t> Lexer<'t> {
         todo!()
     }
 
-    pub fn get_source(&'t self) -> &'t Source {
+    pub fn get_source(&'t self) -> &Source {
         &self.source
     }
 
     pub fn get_source_mut(&'t mut self) -> &'t mut Source {
         &mut self.source
+    }
+
+    pub fn write_to_string(&self, buf: &mut String) {
+        buf.push_str(self.source.src);
     }
 }
 
@@ -744,7 +827,7 @@ mod test {
         assert_eq!(lexer.token().lexeme, Lexeme::Lower(a));
         assert_eq!(lexer.token().lexeme, Lexeme::Dot2);
         assert_eq!(lexer.token().lexeme, Lexeme::Lower(b));
-        assert_eq!(lexer.token().lexeme, Lexeme::Unknown);
+        assert_eq!(lexer.token().lexeme, Lexeme::Unknown(LexError::MissingIntegral));
         assert_eq!(lexer.token().lexeme, Lexeme::Eof);
     }
 
@@ -754,9 +837,9 @@ mod test {
         // also testing for tilde-related lexemes, since a tilde can be 
         // found in either the single tilde lexeme, as comment markers, OR 
         // as *ONE OF* the characters in an infix
-        let source = r#"\ \\ \> = == : ~{ im ignored!!! }~ :: ~ . .. ~> ~|"#;
+        let source = r#"\ \\ \> = == : ~{ im ignored!!! }~ :: ~ . .. ~> ~| `boop`"#;
         let mut lexer = Lexer::new(source);
-        let [lamr, lam2, eq2, tarrow, tpipe] = intern_many([r#"\>"#, r#"\\"#, "==", "~>", "~|"]);
+        let [lamr, lam2, eq2, tarrow, tpipe, boop] = intern_many([r#"\>"#, r#"\\"#, "==", "~>", "~|", "boop"]);
         let expected = [
             (Lambda, "\\"), 
             (Infix(lam2), "\\\\"),
@@ -770,6 +853,7 @@ mod test {
             (Dot2, ".."), 
             (Infix(tarrow), "~>"), 
             (Infix(tpipe), "~|"),
+            (Infix(boop), "boop"),
             (Eof, "")];
         lexer.by_ref().zip(expected).for_each(|(token, (lexeme, txt))| {
             assert_eq!(token.lexeme, lexeme);

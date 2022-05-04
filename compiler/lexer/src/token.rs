@@ -751,21 +751,6 @@ where
     }
 }
 
-impl Lexlike for Ident {
-    fn cmp_lex(&self, lex: &Lexeme) -> bool {
-        match (self, lex) {
-            (Ident::Upper(s), Lexeme::Upper(t))
-            | (Ident::Lower(s), Lexeme::Upper(t))
-            | (Ident::Infix(s), Lexeme::Upper(t)) => s == t,
-            _ => false,
-        }
-    }
-
-    fn cmp_tok(&self, tok: &Token) -> bool {
-        matches!(tok.lexeme, Lexeme::Upper(s) | Lexeme::Lower(s) | Lexeme::Infix(s) if s == self.get_symbol())
-    }
-}
-
 impl Lexlike for Keyword {
     fn cmp_lex(&self, lex: &Lexeme) -> bool {
         self == lex
