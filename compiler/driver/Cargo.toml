@@ -14,4 +14,5 @@ wy_lexer = { path = "../lexer" }
 wy_syntax = { path = "../syntax" }
 wy_parser = { path = "../parser" }
 wy_session = { path = "../session" }
+wy_check = { path = "../check" }
 wy_graph = { path = "../graph" }
