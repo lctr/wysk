@@ -5,9 +5,7 @@ use std::{iter::Peekable, num::ParseIntError};
 // use serde::{Deserialize, Serialize};
 use wy_common::strenum;
 use wy_intern::symbol::{self, Symbol};
-pub use wy_span::{
-    BytePos, Col, Coord, Located, Location, Row, Span, Spanned, WithLoc,
-};
+pub use wy_span::{BytePos, Col, Coord, Located, Location, Row, Span, Spanned, WithLoc, WithSpan};
 
 /// A character iterator that tracks byte position as well as row (=line) and
 /// column locations.
@@ -19,6 +17,18 @@ pub struct Source<'t> {
     chars: Peekable<Chars<'t>>,
 }
 
+impl<'t> WithLoc for Source<'t> {
+    fn get_loc(&self) -> Coord {
+        self.loc
+    }
+}
+
+impl<'t> WithSpan for Source<'t> {
+    fn get_pos(&self) -> BytePos {
+        self.pos
+    }
+}
+
 impl<'t> Source<'t> {
     pub fn new(src: &'t str) -> Self {
         Self {
@@ -27,6 +37,10 @@ impl<'t> Source<'t> {
             pos: BytePos::ZERO,
             loc: Coord::new(),
         }
+    }
+
+    pub fn string(&self) -> String {
+        self.src.to_string()
     }
 
     pub fn get_pos(&self) -> BytePos {
@@ -187,6 +201,12 @@ impl<'t> std::ops::Index<Span> for Source<'t> {
         } else {
             &self.src[start..end]
         }
+    }
+}
+
+impl<'t> From<Source<'t>> for String {
+    fn from(src: Source<'t>) -> Self {
+        src.src.to_string()
     }
 }
 
@@ -389,7 +409,7 @@ pub enum Lexeme {
     Lower(Symbol),
     Infix(Symbol),
     Lit(Literal),
-    Unknown, // TODO: integrate lexeme errors
+    Unknown(LexError),
     Eof,
 }
 
@@ -430,10 +450,9 @@ impl Lexeme {
     #[inline]
     pub fn symbol(&self) -> Option<Symbol> {
         match self {
-            Self::Lower(s)
-            | Self::Upper(s)
-            | Self::Infix(s)
-            | Self::Lit(Literal::Str(s)) => Some(*s),
+            Self::Lower(s) | Self::Upper(s) | Self::Infix(s) | Self::Lit(Literal::Str(s)) => {
+                Some(*s)
+            }
             _ => None,
         }
     }
@@ -450,12 +469,12 @@ impl Lexeme {
 
     #[inline]
     pub fn is_eof(&self) -> bool {
-        self == &Lexeme::Eof
+        matches!(self, Lexeme::Eof)
     }
 
     #[inline]
     pub fn is_unknown(&self) -> bool {
-        self == &Lexeme::Unknown
+        matches!(self, Lexeme::Unknown(..))
     }
 
     #[inline]
@@ -467,9 +486,7 @@ impl Lexeme {
     pub fn expr_kw(&self) -> bool {
         matches!(
             self,
-            Lexeme::Kw(
-                Keyword::Let | Keyword::Case | Keyword::If | Keyword::Do
-            )
+            Lexeme::Kw(Keyword::Let | Keyword::Case | Keyword::If | Keyword::Do)
         )
     }
 
@@ -491,14 +508,16 @@ impl Lexeme {
 
     #[inline]
     pub fn begins_expr(&self) -> bool {
-        matches!(
-            self,
-            Lexeme::Lambda
-                | Lexeme::ParenL
-                | Lexeme::BrackL
-                | Lexeme::Upper(_)
-                | Lexeme::Lower(_)
-        )
+        self.expr_kw()
+            || matches!(
+                self,
+                Lexeme::Lambda
+                    | Lexeme::ParenL
+                    | Lexeme::BrackL
+                    | Lexeme::Upper(_)
+                    | Lexeme::Lower(_)
+                    | Lexeme::Lit(_)
+            )
     }
 
     #[inline]
@@ -511,6 +530,14 @@ impl Lexeme {
                 | Lexeme::ParenL
                 | Lexeme::BrackL
                 | Lexeme::Underline
+        )
+    }
+
+    #[inline]
+    pub fn begins_ty(&self) -> bool {
+        matches!(
+            self,
+            Lexeme::Upper(_) | Lexeme::Lower(_) | Lexeme::ParenL | Lexeme::BrackL // | Lexeme::CurlyL
         )
     }
 }
@@ -548,35 +575,35 @@ impl PartialEq<Token> for Lexeme {
 impl std::fmt::Display for Lexeme {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Lexeme::Underline => write!(f, "[Underline] `_`"),
-            Lexeme::Tilde => write!(f, "[Tilde] `~`"),
-            Lexeme::Lambda => write!(f, "[Lambda] `\\`"),
-            Lexeme::At => write!(f, "[At] `@`"),
-            Lexeme::Pound => write!(f, "[Pound] `#`"),
-            Lexeme::Equal => write!(f, "[Equal] `=`"),
-            Lexeme::Comma => write!(f, "[Comma] `,`"),
-            Lexeme::Semi => write!(f, "[Semi] `;`"),
-            Lexeme::Dot => write!(f, "[Dot] `.`"),
-            Lexeme::Dot2 => write!(f, "[Dot2] `..`"),
-            Lexeme::Colon => write!(f, "[Colon] `:`"),
-            Lexeme::Colon2 => write!(f, "[Colon2] `::`"),
-            Lexeme::ArrowL => write!(f, "[ArrowL] `<-`"),
-            Lexeme::ArrowR => write!(f, "[ArrowR] `->`"),
-            Lexeme::FatArrow => write!(f, "[FatArrow] `=>`"),
-            Lexeme::Pipe => write!(f, "[Pipe] `|`"),
-            Lexeme::ParenL => write!(f, "[ParenL] `(`"),
-            Lexeme::ParenR => write!(f, "[ParenR] `)`"),
-            Lexeme::BrackL => write!(f, "[BrackL] `[`"),
-            Lexeme::BrackR => write!(f, "[BrackR] `]`"),
-            Lexeme::CurlyL => write!(f, "[CurlyL] `{}`", '{'),
-            Lexeme::CurlyR => write!(f, "[CurlyR] `{}`", '}'),
-            Lexeme::Kw(kw) => write!(f, "[Kw] `{}`", kw),
-            Lexeme::Upper(s) => write!(f, "[Upper] `{}`", s),
-            Lexeme::Lower(s) => write!(f, "[Lower] `{}`", s),
-            Lexeme::Infix(s) => write!(f, "[Infix] `{}`", s),
-            Lexeme::Lit(lit) => write!(f, "[Lit] `{}`", lit),
-            Lexeme::Unknown => write!(f, "[UNKNOWN]"),
-            Lexeme::Eof => write!(f, "[EOF]"),
+            Lexeme::Underline => write!(f, "_"),
+            Lexeme::Tilde => write!(f, "~"),
+            Lexeme::Lambda => write!(f, "\\"),
+            Lexeme::At => write!(f, "@"),
+            Lexeme::Pound => write!(f, "#"),
+            Lexeme::Equal => write!(f, "="),
+            Lexeme::Comma => write!(f, ","),
+            Lexeme::Semi => write!(f, ";"),
+            Lexeme::Dot => write!(f, "."),
+            Lexeme::Dot2 => write!(f, ".."),
+            Lexeme::Colon => write!(f, ":"),
+            Lexeme::Colon2 => write!(f, "::"),
+            Lexeme::ArrowL => write!(f, "<-"),
+            Lexeme::ArrowR => write!(f, "->"),
+            Lexeme::FatArrow => write!(f, "=>"),
+            Lexeme::Pipe => write!(f, "|"),
+            Lexeme::ParenL => write!(f, "("),
+            Lexeme::ParenR => write!(f, ")"),
+            Lexeme::BrackL => write!(f, "["),
+            Lexeme::BrackR => write!(f, "]"),
+            Lexeme::CurlyL => write!(f, "{}", '{'),
+            Lexeme::CurlyR => write!(f, "{}", '}'),
+            Lexeme::Kw(kw) => write!(f, "{}", kw),
+            Lexeme::Upper(s) => write!(f, "{}", s),
+            Lexeme::Lower(s) => write!(f, "{}", s),
+            Lexeme::Infix(s) => write!(f, "{}", s),
+            Lexeme::Lit(lit) => write!(f, "{}", lit),
+            Lexeme::Unknown(err) => write!(f, "<[INVALID]: {}>", err),
+            Lexeme::Eof => write!(f, "<[EOF]>"),
         }
     }
 }
@@ -654,15 +681,13 @@ impl From<Lexeme> for LexKind {
             | Lexeme::FatArrow
             | Lexeme::Pipe => Self::Punct,
             Lexeme::ParenL | Lexeme::BrackL | Lexeme::CurlyL => Self::LeftDelim,
-            Lexeme::ParenR | Lexeme::BrackR | Lexeme::CurlyR => {
-                Self::RightDelim
-            }
+            Lexeme::ParenR | Lexeme::BrackR | Lexeme::CurlyR => Self::RightDelim,
             Lexeme::Kw(_) => Self::Keyword,
             Lexeme::Upper(_) => Self::Upper,
             Lexeme::Lower(_) => Self::Lower,
             Lexeme::Infix(_) => Self::Infix,
             Lexeme::Lit(_) => Self::Literal,
-            Lexeme::Unknown | Lexeme::Eof => Self::Specified(lexeme),
+            Lexeme::Unknown(..) | Lexeme::Eof => Self::Specified(lexeme),
         }
     }
 }
@@ -671,7 +696,10 @@ impl std::fmt::Display for LexKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             LexKind::Identifier => {
-                write!(f, "identifier beginning with either and uppercase or lowercase letter")
+                write!(
+                    f,
+                    "identifier beginning with either and uppercase or lowercase letter"
+                )
             }
             LexKind::Upper => {
                 write!(f, "identifier beginning with an uppercase letter")
@@ -689,7 +717,7 @@ impl std::fmt::Display for LexKind {
             LexKind::Literal => write!(f, "literal"),
             LexKind::Number => write!(f, "number"),
             LexKind::Character => write!(f, "character"),
-            LexKind::Specified(lexeme) => write!(f, "the lexeme `{}`", lexeme),
+            LexKind::Specified(lexeme) => write!(f, "{}", lexeme),
         }
     }
 }
@@ -724,30 +752,70 @@ impl PartialEq<Lexeme> for Token {
     }
 }
 
+impl std::ops::Deref for Token {
+    type Target = Lexeme;
+
+    fn deref(&self) -> &Self::Target {
+        &self.lexeme
+    }
+}
+
+impl AsRef<Lexeme> for Token {
+    fn as_ref(&self) -> &Lexeme {
+        &self.lexeme
+    }
+}
+
+/// Public interface used to generalize (or alternatively, specify with greater
+/// detail) comparisons for type parameters `Tok` (which defaults to `Token`)
+/// and `Lex` (which defaults to `Lexeme`) types. This trait is generic in `Tok`
+/// and `Lex` to allow for extending existing functionality without specifically
+/// requiring the lexemes compared to be a concrete type.
+///
+/// For example, the `Tok`
+/// parameter may be set to `(X, T)` for some `T` that also implements this
+/// trait, allowing extra data `X` to be included with lexemes without requiring
+/// that extra data specifically be derived from a lexeme.
+///
+/// Since a `Lexeme` may contain
+/// derivative types, such as `Keyword` and `Literal` (all of which are
+/// comparable with `Token` and `Lexeme` types), this trait trivially extends
+/// this functionality to *non-derivative* types. A nontrivial example is that
+/// of types `F` that implement `FnMut(Lex) -> bool`, which allows for
+/// comparisons using predicates instead of just relying on `PartialEq`.
+///
+/// The idea behind this trait is to allow for greater ergonomics in applying
+/// predicates and in fact was inspired by the Rust `Pattern<'a>` trait (not to
+/// be confused with other types in the compiler named `Pattern`), which allows
+/// for comparison-based functionality on string slices using characters, other
+/// string slices, or character-valued predicates.
+///
+/// An example of a type that benefits from implementing this trait, but that
+/// isn't a derivative type of `Token` or `Lexeme`
 pub trait Lexlike<Tok = Token, Lex = Lexeme> {
     fn cmp_lex(&self, lex: &Lex) -> bool;
     fn cmp_tok(&self, tok: &Tok) -> bool;
 
-    fn lex_cmp<T>(&self, lexeme: T) -> bool
+    fn compare<T>(&self, item: T) -> bool
     where
         T: PartialEq<Tok>,
         Tok: PartialEq<T>,
         Lex: From<T>,
     {
-        self.cmp_lex(&Lex::from(lexeme))
+        self.cmp_lex(&Lex::from(item))
     }
 }
 
 impl<F> Lexlike for F
 where
-    F: Fn(Lexeme) -> bool,
+    F: Fn(&Lexeme) -> bool,
 {
     fn cmp_lex(&self, lex: &Lexeme) -> bool {
-        (self)(*lex)
+        (self)(lex)
     }
 
     fn cmp_tok(&self, tok: &Token) -> bool {
-        (self)(tok.lexeme)
+        (self)(&tok.lexeme)
     }
 }
 
@@ -788,6 +856,138 @@ impl Lexlike for Token {
 
     fn cmp_tok(&self, tok: &Token) -> bool {
         self == tok
+    }
+}
+
+/// Allow lexeme comparison with the results of calling a `peek` method
+/// analogous to that of `Peekable::<T>::peek`.
+impl<T> Lexlike for Option<&T>
+where
+    T: Lexlike,
+{
+    fn cmp_lex(&self, lex: &Lexeme) -> bool {
+        if let Some(t) = self {
+            t.cmp_lex(lex)
+        } else {
+            lex.is_eof()
+        }
+    }
+
+    fn cmp_tok(&self, tok: &Token) -> bool {
+        if let Some(t) = self {
+            t.cmp_tok(tok)
+        } else {
+            tok.lexeme.is_eof()
+        }
+    }
+}
+
+//----ERRORS (maybe move to `Failure` library?---------------------
+/// Flags used to denote invalid lexemes stemming from lexer failures.
+///
+/// The messages printed by this enum should answer the question "what
+/// happened?" such that the offending lexeme could naturally be quoted
+/// afterwards
+///
+/// The following cases are covered:
+/// * unknown char -- no rules applicable
+/// * invalid integer prefix
+/// * invalid number: multiple dots found, like "1.2.3"
+/// * invalid number: terminated with dot, like "3."
+/// * invalid number: terminated with exponent, like "3e"
+/// * invalid number: terminated in exponent sign, like "3e+"
+/// * invalid number:
+/// * non-terminated character lexeme
+/// * invalid character escape
+/// * unexpected end of input
+/// * non-terminated comment (?)
+/// * non-terminated string lexeme (?)
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum LexError {
+    /// Emitted when encountering a character that doesn't belong to any lexeme
+    /// kinds
+    Unsupported,
+    /// Emitted when an unsupported character is escaped in either string or
+    /// character literals
+    InvalidEscape,
+    /// Emitted when a character literal was not terminated, i.e., when a single
+    /// quote is missing its closing pair `'`
+    UnterminatedChar,
+    /// Emitted when encountering an EOF before a string literal is terminated,
+    /// i.e., when a double quote is missing its closing pair `"`
+    UnterminatedString,
+    /// Emitted when encountering a non-identifier character before a closing
+    /// backtick.
+    ///
+    /// Examples:
+    /// * invalid due to space:
+    ///
+    ///         `modulo`
+    /// * invalid due to non-lowercase-initial* identifier `#`:
+    ///
+    ///         `foo#`
+    /// * invalid, `<>` is already an infix:
+    ///
+    ///         `<>`
+    ///
+    ///
+    UnterminatedInfix,
+    /// Emitted when encountering a nondigit character (that isn't `b`, `B`,
+    /// `o`, `O`, `x`, or `X`) after (the initial) `0` in a number beginning
+    /// with `0`.
+    InvalidIntPrefix,
+    /// Emitted when encountering empty backticks, i.e., "``".
+    EmptyInfix,
+    /// Emitted when a non-lowercase initial identifier character is found
+    /// between backticks.
+    InvalidInfix,
+    /// Emitted when a numeric literal ends in a decimal.
+    ///
+    /// ### Examples:
+    /// * `3e`
+    /// * `5.4e+`
+    MissingExponent,
+    /// Emitted when a non-integer is found after the `e`, `+`, or `-` in a
+    /// numeric literal
+    ///
+    /// ### Examples:
+    /// * `210.`
+    MissingFractional,
+    /// Emitted when encountering a dot and then a number. Note that the string
+    /// `3.4.5` is lexed as `3.4` -> `.5`, where this error corresponds to `.5`
+    MissingIntegral,
+    /// Emitted when parsing a numeric literal to a Rust number fails
+    MalformedNumber,
+    /// Emitted when encountering the EOF after `~{` without a closing `}~`.
+    UnterminatedComment,
+}
+impl std::error::Error for LexError {}
+
+impl std::fmt::Display for LexError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LexError::Unsupported => write!(f, "found unsupported grapheme"),
+            LexError::InvalidEscape => write!(f, "invalid character escape"),
+            LexError::UnterminatedChar => write!(f, "unterminated character literal"),
+            LexError::UnterminatedString => write!(f, "unterminated string literal"),
+            LexError::UnterminatedInfix => write!(f, "unterminated backticks"),
+            LexError::InvalidIntPrefix => write!(f, "invalid integer prefix"),
+            LexError::EmptyInfix => write!(f, "no content between backticks"),
+            LexError::InvalidInfix => write!(
+                f,
+                "non-lowercase initial identifier character found between backticks"
+            ),
+            LexError::MissingExponent => {
+                write!(f, "scientific notation missing exponent in numeric literal")
+            }
+            LexError::MissingFractional => write!(
+                f,
+                "digits not found after decimal point in floating point number"
+            ),
+            LexError::MissingIntegral => write!(f, "decimal point found beginning numeric literal"),
+            LexError::MalformedNumber => write!(f, "malformed integer"),
+            LexError::UnterminatedComment => write!(f, "block comment not terminated"),
+        }
     }
 }
 
@@ -969,18 +1169,3 @@ macro_rules! lexpat {
         Lexeme::Kw(Keyword::Hiding)
     };
 }
-
-//----ERRORS (maybe move to `Failure` library?---------------------
-/// * unknown char -- no rules applicable
-/// * invalid integer prefix
-/// * invalid number: multiple dots found, like "1.2.3"
-/// * invalid number: terminated with dot, like "3."
-/// * invalid number: terminated with exponent, like "3e"
-/// * invalid number: terminated in exponent sign, like "3e+"
-/// * invalid number:
-/// * non-terminated character lexeme
-/// * invalid character escape
-/// * unexpected end of input
-/// * non-terminated comment (?)
-/// * non-terminated string lexeme (?)
-pub struct LexError;
