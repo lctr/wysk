@@ -275,15 +275,15 @@ mod test {
     /// - `(*) => (Assoc::Left, Prec(6))`
     /// - `(/) => (Assoc::Left, Prec(6))`
     ///
-    /// We will be testing the expression `a + b * (c / d)`
+    /// We will be testing the expression `a + b * (c - d)`
     ///
     ///
     /// | LABEL           | PARSED AS              |
     /// |-----------------|------------------------|
-    /// | INITIAL         | `a + (b * (c / d))`    |
-    /// | INITIAL AS SEXP | `(+ a (* b (/ c d)))`  |
-    /// | CORRECT         | `(a + b) * (c / d)`    |
-    /// | CORRECT SEXP    | `(* (+ a b) (/ c d))`  |
+    /// | INITIAL         | `a + (b * (c - d))`    |
+    /// | INITIAL AS SEXP | `(+ a (* b (- c d)))`  |
+    /// | CORRECT         | `(a + b) * (c - d)`    |
+    /// | CORRECT SEXP    | `(* (+ a b) (- c d))`  |
     ///
     #[test]
     fn test_fixity_correction() {
