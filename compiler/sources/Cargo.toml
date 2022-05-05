@@ -1,5 +1,5 @@
 [package]
-name = "wy_driver"
+name = "wy_sources"
 version = "0.1.0"
 edition = "2021"
 
@@ -10,10 +10,7 @@ wy_common = { path = "../common" }
 wy_failure = { path = "../failure" }
 wy_intern = { path = "../intern" }
 wy_span = { path = "../span" }
-wy_sources = { path = "../sources" }
-wy_lexer = { path = "../lexer" }
-wy_syntax = { path = "../syntax" }
-wy_parser = { path = "../parser" }
-wy_session = { path = "../session" }
-wy_check = { path = "../check" }
-wy_graph = { path = "../graph" }
+
+serde = { version = "1.0", features = ["derive"] }
+walkdir = "2.3.2"
+lazy_static = "1.4.0"
