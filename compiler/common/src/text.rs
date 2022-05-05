@@ -1,7 +1,7 @@
 pub fn lower_latin_alphabet() -> [char; 26] {
     [
-        'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n',
-        'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
+        'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r',
+        's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
     ]
 }
 
@@ -37,7 +37,7 @@ macro_rules! strenum {
         )+
     ) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash,
-            // serde::Serialize, serde::Deserialize
+            serde::Serialize, serde::Deserialize
         )]
         pub enum $opk {
             $(
