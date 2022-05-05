@@ -1,214 +1,10 @@
 use std::num::ParseFloatError;
-use std::str::Chars;
-use std::{iter::Peekable, num::ParseIntError};
+use std::num::ParseIntError;
 
 // use serde::{Deserialize, Serialize};
 use wy_common::strenum;
 use wy_intern::symbol::{self, Symbol};
 pub use wy_span::{BytePos, Col, Coord, Located, Location, Row, Span, Spanned, WithLoc, WithSpan};
-
-/// A character iterator that tracks byte position as well as row (=line) and
-/// column locations.
-#[derive(Clone, Debug)]
-pub struct Source<'t> {
-    pub(crate) src: &'t str,
-    pub(crate) pos: BytePos,
-    pub(crate) loc: Coord,
-    chars: Peekable<Chars<'t>>,
-}
-
-impl<'t> WithLoc for Source<'t> {
-    fn get_loc(&self) -> Coord {
-        self.loc
-    }
-}
-
-impl<'t> WithSpan for Source<'t> {
-    fn get_pos(&self) -> BytePos {
-        self.pos
-    }
-}
-
-impl<'t> Source<'t> {
-    pub fn new(src: &'t str) -> Self {
-        Self {
-            src,
-            chars: src.chars().peekable(),
-            pos: BytePos::ZERO,
-            loc: Coord::new(),
-        }
-    }
-
-    pub fn string(&self) -> String {
-        self.src.to_string()
-    }
-
-    pub fn get_pos(&self) -> BytePos {
-        self.pos
-    }
-
-    pub fn get_loc(&self) -> Coord {
-        self.loc
-    }
-
-    pub fn peek(&mut self) -> Option<&char> {
-        self.chars.peek()
-    }
-
-    /// Takes the character returned -- if any -- from calling the `peek`
-    /// method on the underlying character stream and updates the current byte
-    /// position in the `pos` field according to the number of bytes in said
-    /// character. Additionally updates the layout location, incremeenting the
-    /// `row` by 1 if encountering a line-feed `\n`, and otherwise incrementing
-    /// the `column` by 1. If there are no characters left, no side effects are
-    /// performed and `None` is returned.
-    pub fn next(&mut self) -> Option<char> {
-        if let Some(c) = self.chars.peek() {
-            self.pos += if c == &'\n' {
-                self.loc.incr_row()
-            } else {
-                self.loc.incr_column(*c)
-            };
-            self.chars.next()
-        } else {
-            None
-        }
-    }
-
-    /// Given a predicate, advances the iterator. Returns a boolean indicating
-    /// whether the predicate passed (and hence advanced the iterator).
-    pub fn next_if<F>(&mut self, f: F) -> bool
-    where
-        F: Fn(&char) -> bool,
-    {
-        if self.test_char(f) {
-            self.next();
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn is_done(&mut self) -> bool {
-        self.chars.peek().is_none()
-    }
-
-    /// Given an initial `Pos` *start*, returns the span generated from the
-    /// *start* to the current `Pos`.
-    pub fn span_from(&self, start: BytePos) -> Span {
-        Span(start, self.get_pos())
-    }
-
-    pub fn spanned<F, X>(&mut self, mut f: F) -> Spanned<X>
-    where
-        F: FnMut(&mut Self) -> X,
-    {
-        let start = self.get_pos();
-        let x = f(self);
-        let end = self.get_pos();
-        Spanned(x, Span(start, end))
-    }
-
-    /// Given an initial `Loc` *start*, returns the `Location` generated
-    /// from the *start* to the current `Loc`.
-    pub fn location_from(&self, start: Coord) -> Location {
-        Location {
-            start,
-            end: self.get_loc(),
-        }
-    }
-
-    pub fn located<F, X>(&mut self, mut f: F) -> Located<X>
-    where
-        F: FnMut(&mut Self) -> X,
-    {
-        let start = self.get_loc();
-        let x = f(self);
-        let end = self.get_loc();
-        Located(x, Location { start, end })
-    }
-
-    /// Advances the underlying iterator until a non-whitespace character is
-    /// encountered. Returns a span of byte positions corresponding to the
-    /// number of bytes consumed.
-    #[inline]
-    pub fn eat_whitespace(&mut self) -> (Span, Location) {
-        let start_pos = self.get_pos();
-        let start_loc = self.get_loc();
-        while matches!(self.peek(), Some(c) if c.is_whitespace()) {
-            self.next();
-        }
-        (
-            Span(start_pos, self.get_pos()),
-            Location {
-                start: start_loc,
-                end: self.get_loc(),
-            },
-        )
-    }
-
-    /// Consumes characters until encountering a whitespace. For use when
-    /// skipping the rest of a potential lexeme during a lexing error.
-    #[inline]
-    pub fn eat_until_whitespace(&mut self) -> (Span, Location) {
-        self.eat_while(|c| !c.is_whitespace())
-    }
-
-    /// Advance the underlying iterator as long as the given character
-    /// predicate holds true.
-    pub fn eat_while<F>(&mut self, mut f: F) -> (Span, Location)
-    where
-        F: FnMut(char) -> bool,
-    {
-        let start_pos = self.get_pos();
-        let start_loc = self.get_loc();
-        while matches!(self.peek(), Some(c) if f(*c)) {
-            self.next();
-        }
-        (self.span_from(start_pos), self.location_from(start_loc))
-    }
-
-    /// Identifies whether a given character matches that of the character
-    /// reference returned by peeking. This will *always* return false if no
-    /// more characters are left to be consumed.
-    pub fn on_char(&mut self, c: char) -> bool {
-        matches!(self.peek(), Some(ch) if ch == &c)
-    }
-
-    /// Identifies whether the character returned by `peek` satisfies a given
-    /// predicate.
-    pub fn test_char<F>(&mut self, f: F) -> bool
-    where
-        F: Fn(&char) -> bool,
-    {
-        matches!(self.peek().map(f), Some(true))
-    }
-}
-
-impl<'t> std::ops::Index<Span> for Source<'t> {
-    type Output = str;
-
-    fn index(&self, Span(a, b): Span) -> &Self::Output {
-        let len = self.src.len();
-        let start = a.as_usize();
-        let end = b.as_usize();
-        debug_assert!(start <= len && end <= len);
-        if start == end {
-            ""
-        } else if start > end {
-            // allow for inverted spans?
-            &self.src[end..start]
-        } else {
-            &self.src[start..end]
-        }
-    }
-}
-
-impl<'t> From<Source<'t>> for String {
-    fn from(src: Source<'t>) -> Self {
-        src.src.to_string()
-    }
-}
 
 strenum! { Keyword is_keyword ::
     Let "let"
@@ -439,9 +235,10 @@ impl Lexeme {
         matches!(self, Lexeme::Upper(_) | Lexeme::Lower(_) | Lexeme::Infix(_))
     }
 
+    /// NOTE: This includes `:`, even though it is lexed as a `Lexeme::Colon`
     #[inline]
     pub fn is_infix(&self) -> bool {
-        matches!(self, Lexeme::Infix(_))
+        matches!(self, Lexeme::Infix(_) | Lexeme::Colon)
     }
 
     /// Extracting the `Symbol` stored by a given `Lexeme`, if it contains one.
@@ -674,7 +471,6 @@ impl From<Lexeme> for LexKind {
             | Lexeme::Semi
             | Lexeme::Dot
             | Lexeme::Dot2
-            | Lexeme::Colon
             | Lexeme::Colon2
             | Lexeme::ArrowL
             | Lexeme::ArrowR
@@ -685,7 +481,7 @@ impl From<Lexeme> for LexKind {
             Lexeme::Kw(_) => Self::Keyword,
             Lexeme::Upper(_) => Self::Upper,
             Lexeme::Lower(_) => Self::Lower,
-            Lexeme::Infix(_) => Self::Infix,
+            Lexeme::Infix(_) | Lexeme::Colon => Self::Infix,
             Lexeme::Lit(_) => Self::Literal,
             Lexeme::Unknown(..) | Lexeme::Eof => Self::Specified(lexeme),
         }
@@ -748,7 +544,12 @@ impl PartialEq<Literal> for Token {
 
 impl PartialEq<Lexeme> for Token {
     fn eq(&self, other: &Lexeme) -> bool {
-        &self.lexeme == other
+        match (&self.lexeme, other) {
+            (Lexeme::Colon, Lexeme::Infix(s)) | (Lexeme::Infix(s), Lexeme::Colon) => {
+                *s == *symbol::CONS
+            }
+            (me, other) => me == other,
+        }
     }
 }
 
@@ -879,6 +680,19 @@ where
         } else {
             tok.lexeme.is_eof()
         }
+    }
+}
+
+impl<T> Lexlike for [T]
+where
+    T: Lexlike,
+{
+    fn cmp_lex(&self, lex: &Lexeme) -> bool {
+        self.iter().any(|t| t.cmp_lex(lex))
+    }
+
+    fn cmp_tok(&self, tok: &Token) -> bool {
+        self.iter().any(|t| t.cmp_tok(tok))
     }
 }
 
@@ -1093,7 +907,7 @@ macro_rules! lexpat {
         Lexeme::Lit(_)
     };
     ([op]) => {
-        Lexeme::Infix(_)
+        (Lexeme::Infix(_) | Lexeme::Colon)
     };
     ([kw]) => {
         Lexeme::Kw(_)

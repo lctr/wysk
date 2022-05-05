@@ -1,112 +1,21 @@
-use token::Base;
-use comment::{LineKind, Comment};
-pub use token::{Keyword, Lexeme, Literal, Source, Token};
-use wy_intern::symbol;
-use wy_span::{WithLoc, WithSpan, BytePos};
-pub use wy_span::{Coord, Span, Spanned, Location, Located};
+use wy_intern as intern;
+use wy_span as span;
 
-use crate::token::LexError;
+use intern::symbol;
+
+use span::{Coord, Span, Spanned, WithSpan};
+use token::Base;
+pub use token::{LexError, Keyword, Lexeme, Literal, Token};
+pub use stream::{Lexer, Source};
+
+use comment::{LineKind, Comment};
 
 pub mod token;
 pub mod comment;
+pub mod stream;
 
-/// An iterator that produces `Token`s for a given string slice and 
-/// functions as an interface between source text and parsing. 
-/// Comments are lexed but stored internally and don't produce any tokens.
-/// 
-/// Note that the `Lexer` does not record file-related information but 
-/// *does* track positional information (such as the current byte position 
-/// (and "layout" related informations such as line an column numbers) 
-/// within the source text stream). Therefore it follows that each separate 
-/// source *file* require a new instance of the `Lexer`. 
-/// 
-/// The `Lexer` may either be directly composed with another iterator, 
-/// allowing for functionality within a *single* pass. However, as the 
-/// `Lexer` implements `Iterator`, it is possible to use it as a 
-/// `Peekable<Lexer>>` for lookahead. Additionally, multiple passes could 
-/// also be executed by taking advantage of the free methods provided by 
-/// the `Iterator` trait such as `by_ref` and a pre-processing pass may be 
-/// implemented by first allocating a vector of `Token`'s using the 
-/// `Iteratorcollect::<Vec<_>>` method.
-#[derive(Clone, Debug)]
-pub struct Lexer<'t> {
-    pub locs: Vec<Coord>,
-    stack: Vec<Token>,
-    source: Source<'t>,
-    pub comments: Vec<Comment>,
-    pub current: Option<Token>,
-}
-
-impl<'t> WithLoc for Lexer<'t> {
-    fn get_loc(&self) -> Coord {
-        if let Some(coord) = self.locs.last() {
-            *coord
-        } else {
-            self.source.get_loc()
-        }
-    }
-}
-
-impl<'t> WithSpan for Lexer<'t> {
-    fn get_pos(&self) -> BytePos {
-        if let Some(ref tok) = self.current {
-            // since we've already got the next token in our `current` field, should we return the beginning or end of that token?
-            tok.span.start()
-        } else { 
-            self.source.get_pos() 
-        }
-    }
-}
 
 impl<'t> Lexer<'t> {
-    pub fn new(src: &'t str) -> Self {
-        Self {
-            locs: Vec::new(),
-            stack: Vec::new(),
-            source: Source::new(src),
-            comments: Vec::new(),
-            current: None
-        }
-    }
-
-    pub fn src_len(&self) -> usize {
-        self.source.src.len()
-    }
-
-    pub fn peek(&mut self) -> Option<&Token> {
-        // if !self.stack.is_empty() { 
-        //     Some(&self.stack[0]) 
-        // } else {
-            match self.current {
-                Some(ref t) => Some(t),
-                None => {
-                    let token = self.token();
-                    self.current.replace(token); 
-                    self.current.as_ref()
-                }
-            }
-        // }
-    }
-
-    pub fn bump(&mut self) -> Token {
-        // if let Some(tok) = self.stack.pop() {
-        //     return tok
-        // }
-        match self.current.take() {
-            Some(token) => token,
-            None => { 
-                let Spanned(lexeme, span) = self.source.spanned(|_| Lexeme::Eof); 
-                Token { lexeme, span }
-            },
-        }
-    }
-
-    pub fn is_done(&mut self) -> bool {
-        matches!(&self.current, Some(Token { lexeme: Lexeme::Eof, ..})) ||
-        self.stack.is_empty()
-            && (self.source.is_done())
-    }
-
     pub fn token(&mut self) -> Token {
         #[inline]
         fn lex_eof(this: &mut Lexer) -> Token {
@@ -766,6 +675,20 @@ mod test {
     use super::*;
 
     #[test]
+    fn test_peeking() {
+        let src = r#"fn 4..5 foo :: a -> b;"#;
+        let mut lexer = Lexer::new(src);
+        println!("first peek: {:?}", lexer.peek());
+        let mut i = 1;
+        while !lexer.is_done() {
+            i += 1;
+            println!("peek #{}: {:?}", i, lexer.peek());
+            println!("bump #{}: {}", i - 1, lexer.bump());
+            println!("post-bump peek #{}: {:?}", i - 1, lexer.peek());
+        };
+    }
+
+    #[test]
     fn test_lex_number() {
         let src = "123 0b11";
         let mut lexer = Lexer::new(src);
@@ -839,6 +762,7 @@ mod test {
         // as *ONE OF* the characters in an infix
         let source = r#"\ \\ \> = == : ~{ im ignored!!! }~ :: ~ . .. ~> ~| `boop`"#;
         let mut lexer = Lexer::new(source);
+        println!("collected: {:#?}", lexer.clone().collect::<Vec<_>>());
         let [lamr, lam2, eq2, tarrow, tpipe, boop] = intern_many([r#"\>"#, r#"\\"#, "==", "~>", "~|", "boop"]);
         let expected = [
             (Lambda, "\\"), 
