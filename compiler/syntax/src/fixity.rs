@@ -176,12 +176,10 @@ where
                                         (t_a, p_a) => {
                                             // TODO: what about mismatched associativities?
                                             // TODO: Error reporting!
-                                            return Err(FixityFail::AssocFail(
-                                                [
-                                                    (infix, this_assoc),
-                                                    (prev_op, prev_assoc),
-                                                ],
-                                            ));
+                                            return Err(FixityFail::AssocFail([
+                                                (infix, this_assoc),
+                                                (prev_op, prev_assoc),
+                                            ]));
                                         }
                                     }
                                 } else {
@@ -213,10 +211,7 @@ where
         }
     }
 
-    fn visit_expression(
-        &mut self,
-        expr: &mut Expression<Id>,
-    ) -> Result<(), FixityFail<Id>> {
+    fn visit_expression(&mut self, expr: &mut Expression<Id>) -> Result<(), FixityFail<Id>> {
         // walk_expr_mut(self, expr)
         use visit::*;
         Visitor(())
@@ -287,20 +282,15 @@ mod test {
     ///
     #[test]
     fn test_fixity_correction() {
-        let [a, b, c, d] = {
-            map_array(symbol::intern_many(["a", "b", "c", "d"]), Ident::Lower)
-        };
-        let [plus, minus, times, div] = {
-            map_array(symbol::intern_many(["+", "-", "*", "/"]), Ident::Infix)
-        };
+        let [a, b, c, d] = { map_array(symbol::intern_many(["a", "b", "c", "d"]), Ident::Lower) };
+        let [plus, minus, times, div] =
+            { map_array(symbol::intern_many(["+", "-", "*", "/"]), Ident::Infix) };
         let var = Expression::<Ident>::Ident;
         // a + b * c - d
         // (a + (b * (c - d)))
-        let og_expr =
-            ifx(var(a), plus, ifx(var(b), times, ifx(var(c), minus, var(d))));
+        let og_expr = ifx(var(a), plus, ifx(var(b), times, ifx(var(c), minus, var(d))));
         // (a + (b * c)) - d
-        let want_expr =
-            ifx(ifx(var(a), plus, ifx(var(b), times, var(c))), minus, var(d));
+        let want_expr = ifx(ifx(var(a), plus, ifx(var(b), times, var(c))), minus, var(d));
 
         // fixity decls for (+) and (-)
         let decls = [
