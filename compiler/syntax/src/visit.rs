@@ -28,7 +28,7 @@ where
 {
     fn visit_expr(&mut self, expr: &Expression<Id>) -> Result<(), Err> {
         match expr {
-            Expression::Ident(_) | Expression::Lit(_) => {}
+            Expression::Ident(_) | Expression::Lit(_) | Expression::Path(..) => {}
             Expression::Neg(e) => self.visit_expr(e.as_ref())?,
             Expression::Infix {
                 infix: _,
@@ -118,9 +118,8 @@ where
         Ok(())
     }
     fn visit_pat(&mut self, pat: &Pattern<Id>) -> Result<(), Err> {
-        if let Pattern::<Id>::Dat(_, pats)
-        | Pattern::<Id>::Vec(pats)
-        | Pattern::<Id>::Tup(pats) = pat
+        if let Pattern::<Id>::Dat(_, pats) | Pattern::<Id>::Vec(pats) | Pattern::<Id>::Tup(pats) =
+            pat
         {
             for pat in pats {
                 self.visit_pat(pat)?;
@@ -181,7 +180,7 @@ where
 {
     fn visit_expr_mut(&mut self, expr: &mut Expression<Id>) -> Result<(), Err> {
         match expr {
-            Expression::Ident(_) | Expression::Lit(_) => {}
+            Expression::Ident(_) | Expression::Lit(_) | Expression::Path(..) => {}
             Expression::Neg(ex) => {
                 self.visit_expr_mut(ex)?;
             }
@@ -264,9 +263,8 @@ where
         Ok(())
     }
     fn visit_pat_mut(&mut self, pat: &mut Pattern<Id>) -> Result<(), Err> {
-        if let Pattern::<Id>::Dat(_, pats)
-        | Pattern::<Id>::Vec(pats)
-        | Pattern::<Id>::Tup(pats) = pat
+        if let Pattern::<Id>::Dat(_, pats) | Pattern::<Id>::Vec(pats) | Pattern::<Id>::Tup(pats) =
+            pat
         {
             for pat in pats {
                 self.visit_pat_mut(pat)?;
@@ -274,10 +272,7 @@ where
         }
         Ok(())
     }
-    fn visit_binding_mut(
-        &mut self,
-        binding: &mut Binding<Id>,
-    ) -> Result<(), Err> {
+    fn visit_binding_mut(&mut self, binding: &mut Binding<Id>) -> Result<(), Err> {
         let Binding { arms, .. } = binding;
         for arm in arms {
             if let Some(pred) = &mut arm.pred {
@@ -333,9 +328,7 @@ where
 {
     match pat {
         Pattern::Var(id) => f(id),
-        Pattern::Dat(_, pats) => {
-            pats.iter().for_each(|pat| var_pat_vars(pat, |id| f(id)))
-        }
+        Pattern::Dat(_, pats) => pats.iter().for_each(|pat| var_pat_vars(pat, |id| f(id))),
         _ => {}
     }
 }

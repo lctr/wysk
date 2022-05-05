@@ -358,7 +358,31 @@ pub enum Declaration<Id = Ident> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Expression<Id = Ident> {
+    /// Identifier expressions; these can contain either *lowercase*-initial
+    /// identifiers (corresponding to values), *uppercase*-initial identifiers
+    /// (correstpondingo constructors), OR infix identifiers (corresponding to
+    /// infixes used in non-infix nodes).
+    ///
+    /// Note that *qualified* identifiers are parsed as `Path`s! This is because
+    /// `.` has record selection semantics, and namespaces are treated as
+    /// records. Thus, the expression `f x` contains two `Ident` nodes, while
+    /// the expression `F.x` contains a single `Path` node.
     Ident(Id),
+    /// A combination of identifiers. The first identifier, coined the `root` is
+    /// held separately from the rest, and it is *impossible* for a node of this
+    /// variety to have an empty vector of identifiers (called the `tail`).
+    ///
+    /// A path `A.b.c` is represented as `Path::(A, [b, c])`, where the `tail`
+    /// contains identifiers implicitly prefixed with a `.`.
+    ///
+    /// Path nodes are ultimately resolved to identifiers, and currently have
+    /// two semantic uses:
+    /// * identifier qualification; if a module `M` is
+    /// imported and qualified as `N`, and `f` is exported from `M`, then `M.f`
+    /// and `N.f` correspond to the same thing.
+    /// * record selection; if a record `r` has field `f`, then `r.f` is
+    ///   equivalent to the call `r f`
+    Path(Id, Vec<Id>),
     Lit(Literal),
     Neg(Box<Expression<Id>>),
     Infix {
@@ -425,6 +449,25 @@ impl<Id> Expression<Id> {
     pub fn is_empty_record(&self) -> bool {
         matches!(self, Self::Dict(Record::Anon(fs)|Record::Data(_, fs)) if fs.is_empty() )
     }
+
+    /// If an expression is a `Group` variant, return the inner node.
+    /// Otherwise, returns `Self`.
+    pub fn ungroup(self) -> Self {
+        match self {
+            Expression::Group(expr) => *expr,
+            expr => expr,
+        }
+    }
+
+    /// If an expression is a `Group` variant, return a reference to the inner
+    /// node. Otherwise, return a reference to `Self`.
+    pub fn ungroup_ref(&self) -> &Self {
+        match self {
+            Expression::Group(expr) => expr.as_ref(),
+            expr => expr,
+        }
+    }
+
     pub fn mk_app(head: Self, tail: Self) -> Self {
         Self::App(Box::new(head), Box::new(tail))
     }
