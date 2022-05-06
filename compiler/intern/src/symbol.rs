@@ -17,13 +17,27 @@ impl std::fmt::Display for Symbol {
 
 impl std::fmt::Debug for Symbol {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Symbol[{}] `{}`", self.0, self)
+        write!(f, "Symbol({}: `{}`)", self.0, self)
     }
 }
 
 impl Symbol {
-    pub fn get(&self) -> u32 {
+    pub fn as_u32(&self) -> u32 {
         self.0
+    }
+
+    pub fn as_usize(&self) -> usize {
+        self.0 as usize
+    }
+
+    /// Equivalent to simply calling a closure with this as that closure's
+    /// argument.
+    #[inline]
+    pub fn pure<X, F>(self, f: F) -> X
+    where
+        F: Fn(Self) -> X,
+    {
+        f(self)
     }
 
     pub fn display(self) -> String {
@@ -31,6 +45,16 @@ impl Symbol {
     }
 }
 
+/// If a given type *always* contains a single `Symbol`, i.e., if a type conveys
+/// "labeling" or has a semantic notion of a "name" stemming from textual data
+/// -- __and__ has had such data *interned* -- then the way to retrieve that
+/// identifying `Symbol` is via this trait.
+///
+/// In particular, the `Symbol` type corresponds to the *keys* the string
+/// interner uses to disambiguate stored string slices. Types encoding
+/// *identifiers*, for example, generally only have a single corresponding
+/// `Symbol`, which may easily be retrieved via the `Symbolic::get_symbol`
+/// method.
 pub trait Symbolic {
     fn get_symbol(&self) -> Symbol;
 }
@@ -91,16 +115,16 @@ impl Lexicon {
         id
     }
 
-    pub fn lookup<'a>(&'a self, id: Symbol) -> &'a str {
-        self.vec[id.get() as usize]
+    pub fn lookup(&self, id: Symbol) -> &str {
+        self.vec[id.as_u32() as usize]
     }
 
-    unsafe fn alloc(&mut self, symbol: &str) -> &'static str {
+    unsafe fn alloc(&mut self, string: &str) -> &'static str {
         let cap = self.buf.capacity();
-        if cap < self.buf.len() + symbol.len() {
+        if cap < self.buf.len() + string.len() {
             // just doubling isn't enough -- need to ensure the new string
             // actually fits
-            let new_cap = (cap.max(symbol.len()) + 1).next_power_of_two();
+            let new_cap = (cap.max(string.len()) + 1).next_power_of_two();
             let new_buf = String::with_capacity(new_cap);
             let old_buf = mem::replace(&mut self.buf, new_buf);
             self.all.push(old_buf);
@@ -108,7 +132,7 @@ impl Lexicon {
 
         let interned = {
             let start = self.buf.len();
-            self.buf.push_str(symbol);
+            self.buf.push_str(string);
             &self.buf[start..]
         };
 
@@ -135,6 +159,85 @@ impl<S: Symbolic> std::ops::Index<S> for Lexicon {
     }
 }
 
+pub fn intern_once<S: AsRef<str>>(s: S) -> Symbol {
+    match INTERNER.lock() {
+        Ok(mut guard) => guard.intern(s.as_ref()),
+        Err(poisoned) => {
+            eprintln!("{}", poisoned);
+            panic!("poisoned while interning `{}`", s.as_ref())
+        }
+    }
+}
+
+pub fn intern_all<S: AsRef<str>>(strings: impl Iterator<Item = S>) -> impl Iterator<Item = Symbol> {
+    match INTERNER.lock() {
+        Ok(mut guard) => strings.map(move |s| guard.intern(s.as_ref())),
+        Err(e) => {
+            eprintln!("{}", e);
+            panic!(
+                "poisoned while interning `{}`",
+                &strings
+                    .map(|s| s.as_ref().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }
+    }
+}
+
+pub fn intern_many<S: AsRef<str>, const N: usize>(strings: [S; N]) -> [Symbol; N] {
+    match INTERNER.lock() {
+        Ok(mut guard) => {
+            let mut syms = [Symbol(0); N];
+            for (i, s) in strings.into_iter().enumerate() {
+                syms[i] = guard.intern(s.as_ref());
+            }
+            syms
+        }
+        Err(e) => {
+            eprintln!("{}", e);
+            panic!(
+                "poisoned while interning `{:?}`",
+                &strings.iter().map(|s| s.as_ref()).collect::<Vec<_>>()
+            )
+        }
+    }
+}
+
+pub fn lookup<S: Symbolic>(sym: S) -> String {
+    match INTERNER.lock() {
+        Ok(guard) => guard.lookup(sym.get_symbol()).to_string(),
+        Err(e) => {
+            eprintln!("{}", e);
+            panic!("poisoned while looking up symbol `{:?}`", sym.get_symbol())
+        }
+    }
+}
+
+pub fn lookup_many<S: Symbolic>(syms: &[S]) -> Vec<String> {
+    match INTERNER.lock() {
+        Ok(guard) => syms
+            .into_iter()
+            .map(|s| guard.lookup(s.get_symbol()).to_string())
+            .collect(),
+        Err(e) => {
+            eprintln!("{}", e);
+            panic!(
+                "poisoned while looking up symbols `{:?}`",
+                syms.iter().map(|s| s.get_symbol()).collect::<Vec<_>>()
+            )
+        }
+    }
+}
+
+lazy_static::lazy_static! {
+    static ref INTERNER: Arc<Mutex<Lexicon>> = Arc::new(Mutex::new(Lexicon::default()));
+
+    pub static ref CONS: Symbol = intern_once(":");
+    pub static ref MINUS: Symbol = intern_once("-");
+    pub static ref ARROW: Symbol = intern_once("->");
+}
+
 // Instantiating a thread local string interner
 #[macro_export]
 macro_rules! local_lexicon {
@@ -155,9 +258,7 @@ macro_rules! local_lexicon {
             $name.with(|lexicon| lexicon.borrow_mut().intern(string))
         }
 
-        pub fn intern_many<'t>(
-            strings: &'t [&'t str],
-        ) -> Vec<(&'t str, Symbol)> {
+        pub fn intern_many<'t>(strings: &'t [&'t str]) -> Vec<(&'t str, Symbol)> {
             $name.with(|lexicon| {
                 let mut lex = lexicon.borrow_mut();
                 strings
@@ -174,9 +275,7 @@ macro_rules! local_lexicon {
         /// immutable borrow, which they cannot), the resulting `&str` is
         /// converted into an owned `String` and returned.
         pub fn lookup_once(sym: impl Symbolic) -> String {
-            $name.with(|lexicon| {
-                lexicon.borrow().lookup(sym.get_symbol()).into()
-            })
+            $name.with(|lexicon| lexicon.borrow().lookup(sym.get_symbol()).into())
         }
 
         /// Given a slice of elements of type `S` where `S` implements the
@@ -199,59 +298,8 @@ macro_rules! local_lexicon {
     };
 }
 
-lazy_static::lazy_static! {
-    static ref INTERNER: Arc<Mutex<Lexicon>> = Arc::new(Mutex::new(Lexicon::default()));
-}
-
-pub fn intern_once<S: AsRef<str>>(s: S) -> Symbol {
-    match INTERNER.lock() {
-        Ok(mut guard) => guard.intern(s.as_ref()),
-        Err(poisoned) => {
-            panic!("{}", poisoned)
-        }
-    }
-}
-
-pub fn intern_all<S: AsRef<str>>(strings: Vec<S>) -> Vec<Symbol> {
-    match INTERNER.lock() {
-        Ok(mut guard) => strings
-            .into_iter()
-            .map(|s| guard.intern(s.as_ref()))
-            .collect(),
-        Err(_) => todo!(),
-    }
-}
-pub fn intern_many<S: AsRef<str>, const N: usize>(
-    strings: [S; N],
-) -> [Symbol; N] {
-    match INTERNER.lock() {
-        Ok(mut guard) => {
-            let mut syms = [Symbol(0); N];
-            for (i, s) in strings.into_iter().enumerate() {
-                syms[i] = guard.intern(s.as_ref());
-            }
-            syms
-        }
-        Err(_) => todo!(),
-    }
-}
-
-pub fn lookup<S: Symbolic>(sym: S) -> String {
-    match INTERNER.lock() {
-        Ok(guard) => guard.lookup(sym.get_symbol()).to_string(),
-        Err(_) => todo!(),
-    }
-}
-
-pub fn lookup_many<S: Symbolic>(syms: &[S]) -> Vec<String> {
-    match INTERNER.lock() {
-        Ok(guard) => syms
-            .into_iter()
-            .map(|s| guard.lookup(s.get_symbol()).to_string())
-            .collect(),
-        Err(_) => todo!(),
-    }
-}
+pub struct Id<T>(T);
+// wy_common::generic!();
 
 #[cfg(test)]
 mod test {
