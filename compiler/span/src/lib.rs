@@ -1,8 +1,14 @@
 use wy_common::newtype;
 
 newtype! {
-    { u32 in Row | Show Usize Deref (+=) (-) }
-    { u32 in Col | Show Usize Deref (+=) (-) }
+    { u32 in Row | Show Usize Deref (+=) (-)
+        (+ usize |rhs| rhs as u32)
+        (- usize |rhs| rhs as u32)
+    }
+    { u32 in Col | Show Usize Deref (+=) (-)
+        (+ usize |rhs| rhs as u32)
+        (- usize |rhs| rhs as u32)
+    }
     { u32 in BytePos | Show Usize Deref (+=) (-)
         (+= char |rhs| rhs.len_utf8() as u32)
     }
@@ -14,7 +20,7 @@ impl Row {
     pub fn strlen(&self) -> u32 {
         let mut n = self.0;
         let mut ct = 1;
-        while n > 1 {
+        while n > 0 {
             n /= 10;
             ct += 1;
         }
@@ -438,10 +444,8 @@ impl Location {
     /// starting `Loc` contains the minimum `row` and `col` values, and the
     /// ending `Loc` contains the maximum `row` and `col` values.
     pub fn union(&self, other: &Self) -> Self {
-        let mut rows =
-            [self.start.row, self.end.row, other.start.row, other.end.row];
-        let mut cols =
-            [self.start.col, self.end.col, other.start.col, other.end.col];
+        let mut rows = [self.start.row, self.end.row, other.start.row, other.end.row];
+        let mut cols = [self.start.col, self.end.col, other.start.col, other.end.col];
         rows.sort();
         cols.sort();
         Location {
