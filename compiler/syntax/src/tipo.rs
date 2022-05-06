@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use wy_intern::Symbol;
 
-use crate::Ident;
+use crate::ident::Ident;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Default)]
 pub struct Tv(pub u32);
@@ -16,8 +16,13 @@ impl Tv {
         wy_common::text::display_var(self.0)
     }
 
-    fn from_symbol(sym: Symbol) -> Self {
-        Tv(sym.get())
+    pub fn from_symbol(sym: Symbol) -> Self {
+        Tv(sym.as_u32())
+    }
+
+    /// Lossfully coerces an identifier into a type variable.
+    pub fn from_ident(ident: Ident) -> Self {
+        Tv(ident.get_symbol().as_u32())
     }
 }
 
