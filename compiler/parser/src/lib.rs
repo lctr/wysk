@@ -1,159 +1,22 @@
 use std::rc::Rc;
 
-use lexer::*;
-use span::{Dummy, WithLoc, WithSpan};
-use syntax::{
+use token::*;
+use wy_lexer::*;
+use wy_span::{Dummy, WithLoc, WithSpan};
+use wy_syntax::{
     fixity::{Assoc, Fixity, FixityTable, Prec},
+    ident::Ident,
     tipo::{Field, Record, Tv, Type},
     AliasDecl, Alternative, Arity, Binding, ClassDecl, Context, DataDecl, Declaration, Expression,
-    FixityDecl, FnDecl, Ident, Import, ImportSpec, InstDecl, Match, Method, Module, Pattern,
-    Program, Signature, Statement, Tag, Variant,
+    FixityDecl, FnDecl, Import, ImportSpec, InstDecl, Match, Method, Module, Pattern, Program,
+    Signature, Statement, Tag, Variant,
 };
-use token::*;
 
-use wy_common as common;
-use wy_failure as failure;
-use wy_lexer as lexer;
-use wy_span as span;
-use wy_syntax as syntax;
+use wy_common::Deque;
 
-use common::Deque;
-use failure::*;
+pub mod error;
 
-/// Error messages provided by the `Parser`. A general message *should* have the
-/// following components:
-/// 1. What went wrong
-/// 2. Where it happened
-/// 3. What grammatical rule we unfulfilled*
-///
-/// For example, an "Expected" error message should follow the following layout:
-/// ```txt
-/// Unexpected token found while GRAMMAR_RULE. Expected EXPECTED but found
-/// TOKEN at COORD:
-///   => [PATH/ROW:COL]
-///         |
-///   [ROW] | <LINE_WITH_BAD_TOKEN> <BAD_TOKEN> ...
-///         |                       ^^^^^^^^^^^
-/// ```
-#[derive(Clone, PartialEq)]
-pub enum ParseError {
-    UnexpectedEof(SrcLoc, String),
-    Expected(SrcLoc, LexKind, Token, String),
-    InvalidLexeme(SrcLoc, Token, String),
-    InvalidPrec(SrcLoc, Token, String),
-    FixityExists(SrcLoc, Ident, Span, String),
-    BadContext(SrcLoc, Ident, Span, String),
-    Custom(SrcLoc, Token, &'static str, String),
-    Unbalanced {
-        srcloc: SrcLoc,
-        found: Token,
-        delim: Lexeme,
-        source: String,
-    },
-}
-
-impl ParseError {
-    pub fn srcloc(&self) -> &SrcLoc {
-        match self {
-            ParseError::UnexpectedEof(srcloc, ..)
-            | ParseError::Expected(srcloc, ..)
-            | ParseError::InvalidLexeme(srcloc, ..)
-            | ParseError::InvalidPrec(srcloc, ..)
-            | ParseError::FixityExists(srcloc, ..)
-            | ParseError::BadContext(srcloc, ..)
-            | ParseError::Custom(srcloc, ..)
-            | ParseError::Unbalanced { srcloc, .. } => srcloc,
-        }
-    }
-}
-
-impl std::fmt::Debug for ParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self)
-    }
-}
-
-impl std::fmt::Display for ParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Parse error: ")?;
-        let src = match self {
-            ParseError::UnexpectedEof(_srcloc, src) => write!(f, "unexpected EOF").map(|_| src),
-            ParseError::Expected(_, kind, found, src) => {
-                write!(f, "expected `{}`, but found `{}`", kind, &found.lexeme).map(|_| src)
-            }
-            ParseError::InvalidLexeme(_, b, src) => write!(
-                f,
-                "invalid lexeme `{}` found",
-                &Source::new(src.as_str())[b.span]
-            )
-            .map(|_| src),
-            ParseError::InvalidPrec(_, found, src) => write!(
-                f,
-                "expected a precedence value between 0 and 9, but found `{}`",
-                &found.lexeme
-            )
-            .map(|_| src),
-            ParseError::FixityExists(_, infix, _, src) => {
-                write!(f, "multiple fixities defined for `{}`", &infix).map(|_| src)
-            }
-            ParseError::Custom(_, found, msg, src) => {
-                write!(f, "unexpected token `{}` {}", found.lexeme, msg).map(|_| src)
-            }
-            ParseError::BadContext(_, id, span, src) => write!(
-                f,
-                "invalid token `{}` found while parsing type context on {}",
-                id, span
-            )
-            .map(|_| src),
-            ParseError::Unbalanced {
-                found,
-                delim,
-                source: src,
-                ..
-            } => write!(
-                f,
-                "found `{}` but expected closing delimiter `{}`",
-                found.lexeme, delim
-            )
-            .map(|_| src),
-        }?;
-        let srcloc = self.srcloc();
-        // Parse error: #{MESSAGE}
-        //   => #{PATH/TO/FILE}:#{ROW}:#{COL}
-        //           |
-        //  [#{ROW}] | #{LINE_CODE_BEFORE} #{LEXEME} #{FITTING_LINE_CODE_AFTER}
-        //                                 ^^^^^^^^^
-        let gutter = srcloc.gutter();
-        let underline = (0..srcloc.coord.col.as_usize())
-            .map(|_| ' ')
-            .chain(
-                (&src.lines()[srcloc.coord.row])
-                    .char_indices()
-                    .filter_map(|(b, c)| {
-                        let col = srcloc.coord.col.as_usize();
-                        if b < col {
-                            Some('-')
-                        } else if b >= col && !c.is_whitespace() {
-                            Some('^')
-                        } else {
-                            None
-                        }
-                    })
-                    .take_while(|c| !c.is_whitespace()),
-            )
-            .collect::<String>();
-        let line = &src.lines()[srcloc.coord.row];
-        write!(f, "\n{}=> {}\n", &gutter, &srcloc)?;
-        write!(f, "{}|\n", &gutter)?;
-        write!(f, "  [{}] | {}\n", srcloc.coord.row, line.trim())?;
-        write!(f, "{}| {}\n", &gutter, underline.trim())?;
-        Ok(())
-    }
-}
-
-impl std::error::Error for ParseError {}
-
-pub type Parsed<X> = Result<X, ParseError>;
+use error::*;
 
 pub trait Streaming {
     type Peeked: Lexlike;
@@ -508,7 +371,11 @@ impl<'t> Parser<'t> {
         expect!(self Lower)
     }
     fn expect_infix(&mut self) -> Parsed<Ident> {
-        expect!(self Infix)
+        if self.bump_on(Lexeme::Colon) {
+            Ok(Ident::cons_sign())
+        } else {
+            expect!(self Infix)
+        }
     }
     fn expect_literal(&mut self) -> Parsed<Literal> {
         let srcloc = self.get_srcloc();
@@ -535,11 +402,12 @@ type ModuleParser<'t> = Parser<'t>;
 impl<'t> ModuleParser<'t> {
     pub fn module(&mut self) -> Parsed<Module> {
         self.eat(Keyword::Module)?;
-        let modname = self.expect_upper()?;
+        let rootname = self.expect_upper()?;
+        let tailnames = self.many_while(|p| p.bump_on(Lexeme::Dot), Self::expect_upper)?;
         self.eat(Keyword::Where)?;
         let imports = self.many_while_on(Keyword::Import, Self::import_spec)?;
         let mut module = Module {
-            modname,
+            modname: (rootname, tailnames),
             imports,
             ..Default::default()
         };
@@ -630,7 +498,7 @@ impl<'t> ModuleParser<'t> {
         }
     }
 
-    fn parse(mut self) -> Parsed<Program> {
+    pub fn parse(mut self) -> Parsed<Program> {
         use Keyword::Import;
         Ok(Program {
             module: if lexpat!(self on [module]) {
@@ -642,6 +510,7 @@ impl<'t> ModuleParser<'t> {
                 module
             },
             fixities: self.fixities,
+            comments: self.lexer.comments,
         })
     }
 }
@@ -731,7 +600,7 @@ impl<'t> DeclParser<'t> {
         self.eat(Kw(Data))?;
 
         let ctxt = if self.peek_on(Pipe) {
-            self.delimited([Pipe, Comma, Pipe], Self::type_context)?
+            self.delimited([Pipe, Comma, Pipe], Self::ty_constraint)?
         } else {
             vec![]
         };
@@ -741,7 +610,7 @@ impl<'t> DeclParser<'t> {
             ctxt,
             poly: self.many_while(
                 |p| !lexpat!(p on [=] | [;]),
-                |p| p.expect_lower().map(|id| Tv(id.get_symbol().get())),
+                |p| p.expect_lower().map(Tv::from_ident),
             )?,
             vnts: vec![],
             with: vec![],
@@ -804,7 +673,7 @@ impl<'t> DeclParser<'t> {
         let name = self.expect_upper()?;
         let poly = self.many_while(
             |p| !p.peek_on(Equal),
-            |p| p.expect_lower().map(|id| Tv(id.get_symbol().get())),
+            |p| p.expect_lower().map(Tv::from_ident),
         )?;
         self.eat(Equal)?;
         let sign = self.total_signature()?;
@@ -813,11 +682,10 @@ impl<'t> DeclParser<'t> {
 
     fn class_decl(&mut self) -> Parsed<ClassDecl> {
         self.eat(Keyword::Class)?;
-        let ctxt = self.contexts()?;
+        let ctxt = self.ty_contexts()?;
         let name = self.expect_upper()?;
-        let poly = self.many_while_on(Lexeme::is_lower, |p| {
-            p.expect_lower().map(|id| Tv(id.get_symbol().get()))
-        })?;
+        let poly =
+            self.many_while_on(Lexeme::is_lower, |p| p.expect_lower().map(Tv::from_ident))?;
         self.eat(Lexeme::CurlyL)?;
         let mut defs = vec![];
         while !self.peek_on(Lexeme::CurlyR) {
@@ -842,9 +710,9 @@ impl<'t> DeclParser<'t> {
 
     fn inst_decl(&mut self) -> Parsed<InstDecl> {
         self.eat(Keyword::Impl)?;
-        let ctxt = self.contexts()?;
+        let ctxt = self.ty_contexts()?;
         let name = self.expect_upper()?;
-        let tipo = self.type_signature()?;
+        let tipo = self.ty_atom()?;
         self.eat(Lexeme::CurlyL)?;
         let mut defs = vec![];
         while !self.peek_on(Lexeme::CurlyR) {
@@ -869,7 +737,7 @@ impl<'t> Parser<'t> {
         let name = self.expect_upper()?;
         let mut args = vec![];
         while !(self.is_done() || lexpat!(self on [;] | [|] | [kw])) {
-            args.push(self.type_signature()?);
+            args.push(self.ty_node()?);
         }
         let arity = Arity::from_len(args.as_slice());
         Ok(Variant {
@@ -880,6 +748,10 @@ impl<'t> Parser<'t> {
         })
     }
 }
+
+// fn on_ty_start(parser: &mut Parser) -> bool {
+//     lexpat!(parser on [var][Var])
+// }
 
 // TYPES TODO: refactor to differentiate between TYPEs (type only) and
 // SIGNATURES (context + type)
@@ -894,21 +766,22 @@ impl<'t> TypeParser<'t> {
     /// any type constraints in a cast expression or in data declaration
     /// constructor arguments.
     fn total_signature(&mut self) -> Parsed<Signature> {
-        let ctxt = self.contexts()?;
-        let tipo = self.type_signature()?;
+        let ctxt = self.ty_contexts()?;
+        let tipo = self.ty_node()?;
         Ok(Signature { ctxt, tipo })
     }
 
-    fn contexts(&mut self) -> Parsed<Vec<Context>> {
-        let mut ctxt = vec![];
+    fn ty_contexts(&mut self) -> Parsed<Vec<Context>> {
         if lexpat!(self on [|]) {
-            ctxt = self.delimited(
+            let ctxt = self.delimited(
                 [Lexeme::Pipe, Lexeme::Comma, Lexeme::Pipe],
-                Self::type_context,
+                Self::ty_constraint,
             )?;
             self.ignore(Lexeme::FatArrow);
-        };
-        Ok(ctxt)
+            Ok(ctxt)
+        } else {
+            Ok(vec![])
+        }
     }
 
     /// A context is syntactically simple, yet restrictive, as it must be of the
@@ -936,13 +809,13 @@ impl<'t> TypeParser<'t> {
     /// and since the *actual* string representation of a type variable is
     /// itself irrelevant -- a type is *normalized* upon completion, such that a
     /// type `(uvw, xyz)` has its type variables remaped to `(a, b)`.
-    fn type_context(&mut self) -> Parsed<Context> {
+    fn ty_constraint(&mut self) -> Parsed<Context> {
         let class = self.expect_upper()?;
         let tyvar = self.expect_lower().map(|id| Tv::from(id.get_symbol()))?;
         Ok(Context { class, tyvar })
     }
 
-    fn type_signature(&mut self) -> Parsed<Type> {
+    fn ty_node(&mut self) -> Parsed<Type> {
         let col = self.get_col();
         let ty = self.ty_atom()?;
         if lexpat!(self on [->]) {
@@ -956,26 +829,23 @@ impl<'t> TypeParser<'t> {
     }
 
     fn maybe_ty_app(&mut self, head: Type) -> Parsed<Type> {
-        let on_ty = |p: &mut Self| lexpat!(p on [var]|[Var]|[parenL]|[brackL]|[curlyL]);
         match head {
             Type::Con(id, mut args) => {
                 args.extend(self.many_while_on(Lexeme::begins_ty, Self::ty_atom)?);
                 Ok(Type::Con(id, args))
             }
-            head => {
-                let mut args = vec![];
-                while on_ty(self) {
-                    args.push(self.ty_atom()?);
-                }
-                if args.is_empty() {
-                    Ok(head)
-                } else {
-                    args.into_iter()
-                        .rev()
-                        .map(Box::new)
-                        .fold(Ok(head), |a, c| a.map(|acc| Type::App(Box::new(acc), c)))
-                }
-            }
+            head => self
+                .many_while_on(Lexeme::begins_ty, Self::ty_atom)
+                .map(|args| {
+                    if args.is_empty() {
+                        head
+                    } else {
+                        args.into_iter()
+                            .rev()
+                            .map(Box::new)
+                            .fold(head, |a, c| Type::App(Box::new(a), c))
+                    }
+                }),
         }
     }
 
@@ -1017,8 +887,7 @@ impl<'t> TypeParser<'t> {
         use Lexeme::{ParenL, ParenR};
         self.eat(ParenL)?;
 
-        if self.peek_on(ParenR) {
-            self.bump();
+        if self.bump_on(ParenR) {
             return Ok(Type::UNIT);
         }
 
@@ -1052,7 +921,7 @@ impl<'t> TypeParser<'t> {
 
     fn tuple_ty(&mut self, head: Type) -> Parsed<Type> {
         use Lexeme::{Comma, ParenR};
-        self.delimited([Comma, Comma, ParenR], Self::type_signature)
+        self.delimited([Comma, Comma, ParenR], Self::ty_node)
             .map(|rest| {
                 let mut each = vec![head];
                 each.extend(rest);
@@ -1062,7 +931,7 @@ impl<'t> TypeParser<'t> {
 
     fn brack_ty(&mut self) -> Parsed<Type> {
         self.eat(Lexeme::BrackL)?;
-        let tipo = self.type_signature()?;
+        let tipo = self.ty_node()?;
         self.eat(Lexeme::BrackR)?;
         Ok(Type::Vec(Rc::new(tipo)))
     }
@@ -1072,7 +941,7 @@ impl<'t> TypeParser<'t> {
 
         Ok(Type::Rec(Record::Anon(
             self.delimited([CurlyL, Comma, CurlyR], |parse| {
-                parse.record_entry_ty(Self::type_signature)
+                parse.record_entry_ty(Self::ty_node)
             })?,
         )))
     }
@@ -1138,11 +1007,26 @@ impl<'t> PatParser<'t> {
             }
         }
 
-        if lexpat!(self on [|]) {
-            self.union_pattern(genpat)
-        } else if lexpat!(self on [::]) {
+        // TODO: refactor out `or` patterns so that: 1.) they are only
+        // recognized in grouped patterns for alternatives 2.) to stress (1), NO
+        // OR PATS IN LAMBDAS 3.) or-patterns will be desugared later anyway
+        //
+        // if lexpat!(self on [|]) {
+        //     self.union_pattern(genpat)
+        // } else
+
+        // TODO: restrict casts to grouped patterns only? so as to avoid
+        // the ambiguity in function types, e.g., in the case-expression `case
+        // EXPR of { PAT :: Foo -> Bar x; ... }` the alternative is semantically
+        // complete, but syntactically incomplete, as `PAT :: Foo -> Bar x`
+        // would be parsed as the pattern `PAT` being cast as having the type
+        // `Foo -> Bar x` before abruptly hitting the end of the entire
+        // alternative branch. Compare this with the unambiguous form `case EXPR
+        // of { (PAT :: Foo) -> x; ... }`, which is well-formed both
+        // semantically and syntactically
+        if lexpat!(self on [::]) {
             self.bump();
-            Ok(Pattern::Cast(Box::new(genpat), self.type_signature()?))
+            Ok(Pattern::Cast(Box::new(genpat), self.ty_node()?))
         } else {
             Ok(genpat)
         }
@@ -1279,27 +1163,32 @@ impl<'t> PatParser<'t> {
     }
 
     /// List cons patterns
-    /// [a, b, c] = a:b:c:[]
-    /// * (a : b)           ==> [a, b]
-    /// * (a:[])            ==> [a]
-    /// * (a:b:[c, d])      ==> [a, b, c, d]
-    /// * (a:b:(c:d))       ==> [a, b, [c, d]]
+    ///
+    /// *Identity:* `[a, b, c] = a:b:c:[] = (a:b:c)`
+    ///
+    /// * `(a : b)       <=> [a, b]`         (bc `[a, b] = a:[b] = a:b:[]`)
+    /// * `(a:[])        <=> [a]`            (bc `[a] = a:[]`)
+    /// * `(a:[b, c])    <=> [a, b, c]`      (bc `_:[c,d] = _:c:[d] = _:c:d:[]`)
+    /// * `(a:b:c:d)     <=> [a, b, c, d]`
+    /// * `(a:b:(c:d))   <=> [a, b, c, d]`   (bc right-associative)
+    /// * `((a:b):c:d)   <=> [[a, b], c, d]` (implies (a,b :: t) => c,d :: [t])
     fn cons_pattern(&mut self, head: Pattern) -> Parsed<Pattern> {
         let mut elems = vec![head];
-        while lexpat!(self on [:]) {
-            if lexpat!(self on [brackL]) {
-                match self.pattern()? {
-                    Pattern::Vec(xs) => {
-                        elems.extend(xs);
-                    }
-                    pat => elems.push(pat),
-                }
-                continue;
-            }
-            self.bump();
+        while self.bump_on(Lexeme::Colon) {
             elems.push(self.pattern()?);
         }
-        Ok(Pattern::Vec(elems))
+        elems.reverse();
+        elems
+            .into_iter()
+            .reduce(|a, c| Pattern::Lnk(Box::new(c), Box::new(a)))
+            .ok_or_else(|| {
+                ParseError::Custom(
+                    self.get_srcloc(),
+                    self.lookahead::<1>()[0],
+                    "after failure to reduce cons pattern",
+                    self.source_string(),
+                )
+            })
     }
 
     fn union_pattern(&mut self, first: Pattern) -> Parsed<Pattern> {
@@ -1354,8 +1243,10 @@ impl<'t> ExprParser<'t> {
         F: FnMut(&mut Self) -> Parsed<Expression>,
     {
         let head = f(self)?;
-        let args = self.many_while_on(Lexeme::begins_expr, f)?;
-        Ok(args.into_iter().fold(head, Expression::mk_app))
+        Ok(self
+            .many_while_on(Lexeme::begins_expr, f)?
+            .into_iter()
+            .fold(head, Expression::mk_app))
     }
 
     /// Applies a the given parser and, if encountering an operator, will
@@ -1385,7 +1276,7 @@ impl<'t> ExprParser<'t> {
         }
 
         if self.bump_on(Lexeme::Colon2) {
-            let tipo = self.type_signature()?;
+            let tipo = self.ty_node()?;
             Ok(Expression::Cast(Box::new(left), tipo))
         } else {
             Ok(left)
@@ -1430,7 +1321,7 @@ impl<'t> ExprParser<'t> {
     }
 
     fn identifier(&mut self) -> Parsed<Expression> {
-        match self.peek() {
+        let ident = match self.peek() {
             lexpat!(~[var]) => self.expect_lower(),
             lexpat!(~[Var]) => self.expect_upper(),
             _ => Err(ParseError::Expected(
@@ -1439,8 +1330,30 @@ impl<'t> ExprParser<'t> {
                 self.bump(),
                 self.source_string(),
             )),
+        }?;
+        if lexpat!(self on [.]) {
+            let tail = self.id_path_tail()?;
+            Ok(Expression::Path(ident, tail))
+        } else {
+            Ok(Expression::Ident(ident))
         }
-        .map(Expression::Ident)
+    }
+
+    fn id_path_tail(&mut self) -> Parsed<Vec<Ident>> {
+        self.many_while(
+            |p| p.bump_on(Lexeme::Dot) && p.peek_on(Lexeme::is_ident),
+            |p| match p.peek() {
+                Some(t) if t.is_lower() => p.expect_lower(),
+                Some(t) if t.is_upper() => p.expect_upper(),
+                Some(t) if t.is_infix() => p.expect_infix(),
+                _ => Err(ParseError::Expected(
+                    p.get_srcloc(),
+                    LexKind::Identifier,
+                    p.bump(),
+                    p.source_string(),
+                )),
+            },
+        )
     }
 
     fn paren_expr(&mut self) -> Parsed<Expression> {
@@ -1518,6 +1431,18 @@ impl<'t> ExprParser<'t> {
         }
     }
 
+    /// Syntactic sugar for generating a list of values based on an expression
+    /// and a list of satisfied statements. A list comprehension *must* contain
+    /// at least __one__ *generator* statement, i.e., a statement of the form
+    /// `PAT <- EXPR`. In the event the list of statements is *empty*, the
+    /// expression corresponding to each list element is only evaluated once,
+    /// and is identical (in value) to an array containing the single
+    /// expression.
+    ///
+    /// Note however, that the expression within the list may introduce new
+    /// bindings from the included list of statements. These bindings are scoped
+    /// list comprehension, and may shadow any outer free variables.
+    ///
     /// TODO: handle the following statement cases
     /// * a <- [1, 2]
     /// * [a, b] <- [1, 2]
@@ -1564,23 +1489,8 @@ impl<'t> ExprParser<'t> {
     fn lambda(&mut self) -> Parsed<Expression> {
         use Lexeme::{ArrowR, Lambda};
         self.eat(Lambda)?;
-        let mut pats = vec![];
-
-        while !(self.is_done() || !self.peek_on(ArrowR)) {
-            if self.peek_on(Lexeme::begins_pat) {
-                pats.push(self.pattern()?)
-            } else {
-                let srcloc = self.get_srcloc();
-                return Err(ParseError::InvalidLexeme(
-                    srcloc,
-                    self.bump(),
-                    self.source_string(),
-                ));
-            }
-        }
-
+        let pats = self.many_while_on(Lexeme::begins_pat, Self::pattern)?;
         self.eat(ArrowR)?;
-
         self.expression().map(|expr| {
             pats.into_iter()
                 .rev()
@@ -1637,6 +1547,11 @@ impl<'t> ExprParser<'t> {
         let name = self.binder_name()?;
 
         match self.peek() {
+            lexpat!(~[|]) => Ok(Binding {
+                name,
+                tipo: None,
+                arms: self.match_arms()?,
+            }),
             lexpat!(~[::]) => {
                 self.bump();
                 let tipo = self.total_signature()?;
@@ -1646,7 +1561,7 @@ impl<'t> ExprParser<'t> {
                     tipo: Some(tipo),
                 })
             }
-            lexpat!(~[=]) => {
+            lexpat!(maybe[=]) => {
                 self.bump();
                 let (body, wher) = self.binding_rhs()?;
                 let mut arms = vec![Match {
@@ -1667,6 +1582,8 @@ impl<'t> ExprParser<'t> {
                 tipo: None,
                 arms: self.match_arms()?,
             }),
+            // this shouldn't semantically be ok, BUT i need to check that this
+            // method isn't iterated over (instead of match arms)
             lexpat!(~[;]) => Ok(Binding {
                 name,
                 arms: vec![],
@@ -1681,10 +1598,16 @@ impl<'t> ExprParser<'t> {
         }
     }
 
+    /// *SIDE-EFFECT ALERT* this method will advance the parser to the next
+    /// token in the beginning of each iteration *if the current token matches*
+    /// the pipe `|`.
     fn match_arms(&mut self) -> Parsed<Vec<Match>> {
         use Lexeme::Pipe;
         self.many_while(
-            |parser| parser.bump_on(Pipe) || parser.peek_on(Lexeme::begins_pat),
+            |parser| {
+                parser.ignore(Pipe);
+                parser.peek_on(Lexeme::begins_pat)
+            },
             Self::match_arm,
         )
     }
@@ -1703,34 +1626,22 @@ impl<'t> ExprParser<'t> {
     }
 
     fn where_clause(&mut self) -> Parsed<Vec<Binding>> {
-        use Lexeme::Pipe;
-
-        if lexpat!(self on [where]) {
-            self.bump();
-            self.many_while(
-                |p| p.bump_on(Pipe) || p.peek_on(Lexeme::begins_pat),
-                Self::binding,
-            )
-        } else {
-            Ok(vec![])
-        }
+        use Keyword::Where;
+        use Lexeme::Comma;
+        let mut binds = vec![];
+        if self.bump_on(Where) {
+            binds.push(self.binding()?);
+            binds.extend(self.many_while(|p| p.bump_on(Comma), Self::binding)?);
+        };
+        Ok(binds)
     }
 
     fn let_expr(&mut self) -> Parsed<Expression> {
         use Keyword::{In, Let};
-        use Lexeme::{Kw, Pipe};
+        use Lexeme::{Comma, Kw};
         Ok(Expression::Let(
-            {
-                self.eat(Kw(Let))?;
-                self.many_while(
-                    |p| !p.peek_on(Kw(In)) && (p.bump_on(Pipe) || p.peek_on(Lexeme::begins_pat)),
-                    Self::binding,
-                )?
-            },
-            {
-                self.eat(Kw(In))?;
-                Box::new(self.expression()?)
-            },
+            self.delimited([Kw(Let), Comma, Kw(In)], Self::binding)?,
+            Box::new(self.expression()?),
         ))
     }
 
@@ -1765,12 +1676,12 @@ impl<'t> ExprParser<'t> {
 
         if lexpat!(self on [@]) {
             if let Pattern::Var(name) = pat {
-                let rhspat = self.pattern()?;
-                pat = Pattern::At(name, Box::new(rhspat))
+                pat = Pattern::At(name, Box::new(self.pattern()?))
             } else {
-                return Err(ParseError::InvalidLexeme(
+                return Err(ParseError::Custom(
                     self.get_srcloc(),
                     self.bump(),
+                    "can only follow simple variable patterns",
                     self.source_string(),
                 ));
             }
@@ -1785,237 +1696,37 @@ impl<'t> ExprParser<'t> {
 
         self.eat(Lexeme::ArrowR)?;
 
-        let body = self.expression()?;
-        let wher = self.where_clause()?;
         Ok(Alternative {
             pat,
             pred,
-            body,
-            wher,
+            body: self.expression()?,
+            wher: self.where_clause()?,
         })
     }
 
     fn cond_expr(&mut self) -> Parsed<Expression> {
-        use Keyword::{Else, If, Then};
-        use Lexeme::Kw;
-        let mut exprs: [Expression; 3] = [Expression::UNIT; 3];
-        for (i, kw) in [If, Then, Else].into_iter().enumerate() {
-            self.eat(Kw(kw))?;
-            exprs[i] = self.expression()?
-        }
+        self.eat(Keyword::If)?;
+        let cond = self.expression()?;
+        self.eat(Keyword::Then)?;
+        let pass = self.expression()?;
+        self.eat(Keyword::Else)?;
+        let fail = self.expression()?;
 
-        Ok(Expression::Cond(Box::new(exprs)))
+        Ok(Expression::Cond(Box::new([cond, pass, fail])))
     }
+}
+
+pub fn try_parse_file<P: AsRef<std::path::Path>>(
+    filepath: P,
+) -> Result<Program, Failure<ParseError>> {
+    let path = filepath.as_ref();
+    debug_assert_eq!("ws", path.extension().unwrap());
+    let content = std::fs::read_to_string(path)?;
+    Parser::new(content.as_str(), Some(path.to_owned()))
+        .parse()
+        .map_err(Failure::Err)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn infixed(left: Expression, infix: wy_intern::Symbol, right: Expression) -> Expression {
-        Expression::Infix {
-            infix: Ident::Infix(infix),
-            left: Box::new(left),
-            right: Box::new(right),
-        }
-    }
-
-    fn tuplex<const N: usize>(subexps: [Expression; N]) -> Expression {
-        Expression::Tuple(subexps.to_vec())
-    }
-
-    #[test]
-    fn test_infix_exprs() {
-        use Expression::Lit;
-        let [op1, op2, plus, times, minus, fun] =
-            wy_intern::intern_many(["<>", "><", "+", "*", "-", "fun"]);
-        let int = |n| Lit(Literal::Int(n));
-
-        let tests = [
-            (
-                "1 + 2 * 3 - 4",
-                infixed(
-                    int(1),
-                    plus,
-                    infixed(int(2), times, infixed(int(3), minus, int(4))),
-                ),
-            ),
-            (
-                "(1, 2, 3) <> (4, 5, 6) >< (7, 8, 9)",
-                infixed(
-                    tuplex([int(1), int(2), int(3)]),
-                    op1,
-                    infixed(
-                        tuplex([int(4), int(5), int(6)]),
-                        op2,
-                        tuplex([int(7), int(8), int(9)]),
-                    ),
-                ),
-            ),
-            (
-                "fun 1 2",
-                Expression::App(
-                    Box::new(Expression::App(
-                        Box::new(Expression::Ident(Ident::Lower(fun))),
-                        Box::new(int(1)),
-                    )),
-                    Box::new(int(2)),
-                ),
-            ),
-        ];
-
-        for (src, expected) in tests {
-            assert_eq!(Parser::from_str(src).expression().unwrap(), expected);
-        }
-
-        println!(
-            "{:#?}",
-            Parser::from_str(
-                r#"
-fn foo :: a -> (a, a)
-| x = (x, x)
-| _ = let some x y if x > y = Some (x, y) 
-    | x y = Some (y, x) in some 1 1
-"#
-            )
-            .function_decl()
-        )
-    }
-
-    #[test]
-    fn case_expr() {
-        let src = r#"
-case f x of {
-  A c -> c;
-  B d if c d -> h;
-  y -> y;
-}
-"#;
-        let [a, b, c, d, h, f, x, y] =
-            wy_intern::intern_many(["A", "B", "c", "d", "h", "f", "x", "y"]);
-        let expr = Parser::from_str(src).case_expr();
-        println!("{:#?}", &expr);
-        let expected = Expression::Case(
-            Box::new(Expression::App(
-                Box::new(Expression::Ident(Ident::Lower(f))),
-                Box::new(Expression::Ident(Ident::Lower(x))),
-            )),
-            vec![
-                Alternative {
-                    pat: Pattern::Dat(Ident::Upper(a), vec![Pattern::Var(Ident::Lower(c))]),
-                    pred: None,
-                    body: Expression::Ident(Ident::Lower(c)),
-                    wher: vec![],
-                },
-                Alternative {
-                    pat: Pattern::Dat(Ident::Upper(b), vec![Pattern::Var(Ident::Lower(d))]),
-                    pred: Some(Expression::App(
-                        Box::new(Expression::Ident(Ident::Lower(c))),
-                        Box::new(Expression::Ident(Ident::Lower(d))),
-                    )),
-                    body: Expression::Ident(Ident::Lower(h)),
-                    wher: vec![],
-                },
-                Alternative {
-                    pat: Pattern::Var(Ident::Lower(y)),
-                    pred: None,
-                    body: Expression::Ident(Ident::Lower(y)),
-                    wher: vec![],
-                },
-            ],
-        );
-        assert_eq!(expr, Ok(expected))
-    }
-
-    #[test]
-    fn test_pattern() {
-        let int = |n| Pattern::Lit(Literal::Int(n));
-        let [a, b, c, d] = wy_intern::intern_many(["a", "b", "c", "d"]);
-        let id = |s| Pattern::Var(Ident::Lower(s));
-        let pairs = [
-            ("(a, b)", Pattern::Tup(vec![id(a), id(b)])),
-            (
-                "(a:b:(c:d))",
-                Pattern::Vec(vec![id(a), id(b), Pattern::Vec(vec![id(c), id(d)])]),
-            ),
-            (
-                "a @ [1, 2, 3]",
-                Pattern::At(
-                    Ident::Lower(a),
-                    Box::new(Pattern::Vec(vec![int(1), int(2), int(3)])),
-                ),
-            ),
-            (
-                "(a:b:[c, d])",
-                Pattern::Vec(vec![id(a), id(b), id(c), id(d)]),
-            ),
-            ("(a:[])", Pattern::Vec(vec![id(a)])),
-        ];
-
-        for (s, x) in pairs {
-            assert_eq!(Parser::from_str(s).pattern(), Ok(x))
-        }
-    }
-
-    #[test]
-    fn test_module() {
-        let src = r#"
-module Prelude where
-
-data Bool = False | True 
-
-infixl 2 ||
-infixl 3 &&
-
-fn (||) :: Bool -> Bool -> Bool
-| True _ = True
-| False y = y
-
-fn (&&) :: Bool -> Bool -> Bool
-| True y = y
-| False _ = False
-
-fn any :: (a -> Bool) -> [a] -> Bool
-| f [] = False
-| f [x] = f x
-| f (x:xs) = f x || any f xs
-
-fn all :: (a -> Bool) -> [a] -> Bool
-| f [] = False
-| f [x] = f x
-| f (x:xs) = f x && all f xs
-
-fn not :: Bool -> Bool
-| True = False
-| False = True
-
-infix 4 == !=
-
-class Eq a {
-    (==) :: a -> a -> Bool;
-    (!=) :: a -> a -> Bool
-    | x y = not (x == y)
-}
-
-"#;
-        let parser = Parser::from_str(src);
-        println!("{:#?}", parser.parse());
-    }
-
-    #[test]
-    fn test_prelude_module() {
-        let src = include_str!("../../../language/prim.ws");
-        // let src = "-5";
-        // println!("{:?}", Parser::from_str(src).expression());
-        let result = Parser::from_str(src).module();
-
-        println!("{:#?}", result);
-        let mut parser = Parser::from_str(src);
-        for _ in 0..10 {
-            println!("{:?}", parser.get_loc());
-            println!("{:?}", parser.peek());
-            println!("{:?}", parser.get_loc());
-            println!("{:?}", parser.bump());
-        }
-    }
-}
+#[allow(unused)]
+mod test;
