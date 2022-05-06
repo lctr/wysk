@@ -1,59 +1,17 @@
 use wy_common::Map;
 use wy_intern::symbol::{self, Symbol};
-use wy_lexer::Literal;
+use wy_lexer::{comment::Comment, Literal};
 
 pub mod fixity;
+pub mod ident;
 pub mod tipo;
 pub mod visit;
 
 use fixity::*;
+use ident::*;
 use tipo::*;
 
 // TODO: documentation; potential split-up of definitions into separate files?
-
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
-pub enum Ident {
-    Upper(Symbol),
-    Lower(Symbol),
-    Infix(Symbol),
-}
-
-impl std::fmt::Debug for Ident {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Upper(arg0) => write!(f, "Upper({})", arg0),
-            Self::Lower(arg0) => write!(f, "Lower({})", arg0),
-            Self::Infix(arg0) => write!(f, "Infix({})", arg0),
-        }
-    }
-}
-
-impl std::fmt::Display for Ident {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.get_symbol())
-    }
-}
-
-impl Ident {
-    pub fn get_symbol(&self) -> Symbol {
-        match self {
-            Self::Upper(s) | Self::Lower(s) | Self::Infix(s) => *s,
-        }
-    }
-    pub fn is_upper(&self) -> bool {
-        matches!(self, Self::Upper(..))
-    }
-    pub fn is_lower(&self) -> bool {
-        matches!(self, Self::Lower(..))
-    }
-    pub fn is_infix(&self) -> bool {
-        matches!(self, Self::Infix(..))
-    }
-
-    pub fn minus_sign() -> Self {
-        Self::Infix(symbol::intern_once("-"))
-    }
-}
 
 wy_common::newtype!({ u64 in Uid | Show (+= usize |rhs| rhs as u64) });
 
@@ -61,11 +19,12 @@ wy_common::newtype!({ u64 in Uid | Show (+= usize |rhs| rhs as u64) });
 pub struct Program<Id = Ident> {
     pub module: Module<Id>,
     pub fixities: FixityTable,
+    pub comments: Vec<Comment>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Module<Id = Ident, Uid = Id> {
-    pub modname: Uid,
+    pub modname: (Uid, Vec<Uid>),
     pub imports: Vec<ImportSpec<Id>>,
     pub datatys: Vec<DataDecl<Id>>,
     pub classes: Vec<ClassDecl<Id>>,
@@ -78,7 +37,7 @@ pub struct Module<Id = Ident, Uid = Id> {
 impl Default for Module {
     fn default() -> Self {
         Self {
-            modname: Ident::Upper(symbol::intern_once("Main")),
+            modname: (Ident::Upper(symbol::intern_once("Main")), vec![]),
             imports: vec![],
             datatys: vec![],
             classes: vec![],
@@ -90,6 +49,20 @@ impl Default for Module {
     }
 }
 
+/// Describe the declared dependencies on other modules within a given module.
+/// Every import spec brings into scope the entities corresponding to the
+/// identifiers included.
+///
+/// When a module `A` imports entities from another module `B`, the items
+/// imported from `B` are brought into scope for module `A`. Additionally,
+/// module `A` will export by default imports from `B` unless the `ImportSpec`
+/// for imports from `B` has a `hidden` value of `true`.
+///
+/// The module from which items are imported from may be *qualified* and/or
+/// *renamed*. When a module is *qualified*, its imports are no longer
+/// accessible without prefixing the module name. When a module is *qualified*
+/// __and__ *renamed*, the module prefix necessary to access its imports is
+/// restricted to matching the new name only.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImportSpec<Id = Ident> {
     pub name: Id,
@@ -99,17 +72,58 @@ pub struct ImportSpec<Id = Ident> {
     pub imports: Vec<Import<Id>>,
 }
 
+impl<Id> ImportSpec<Id> {
+    pub fn get_imports(&self) -> &[Import<Id>] {
+        self.imports.as_slice()
+    }
+
+    pub fn infix_deps(&self) -> impl Iterator<Item = &Import<Id>> {
+        self.imports
+            .iter()
+            .filter(|imp| matches!(imp, Import::Operator(..)))
+    }
+}
+
+/// Describe the named entity to be imported. When contained by an `ImportSpec`,
+/// these imports may either be *public* if the `ImportSpec` has its `hidden`
+/// field set to `false`. Otherwise, the imports will become accessible through
+/// *multiple* namespaces. E.g., suppose module `A` imports the function `bar`,
+/// the data type `Baz` along with all of its constructors from the module `B`,
+/// and assume that the module `B` is not hidden. Then the function `bar` will
+/// be accessible via the identifiers `B.bar` and `bar`, as well as having the
+/// absolute path `A.B.bar`.
+///
+/// Note: At the parsing level, it is generally impossible to distinguish
+/// between type imports, type constructor imports, and class imports, as they
+/// all begin with uppercase letters. However, semantic context allows for bare
+/// patterns that *may* indicate the specific kind an import may be. The terms
+/// `Operator`, `Function`, `Abstract`, `Total`, and `Partial`
+/// * Type aliases are always `Abstract`
+///
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Import<Id = Ident> {
     /// Infix imports
     Operator(Id),
     Function(Id),
-    /// Type imports: type and class only, no type constructors
+    /// Importing a type (without any of its constructors) or a class (without
+    /// any of its methods).
     Abstract(Id),
     /// Data type imports that include *all* of their constructors
     Total(Id),
-    /// Data type imports that include only the specified constructors
+    /// Data type imports that include only the specified constructors, OR
     Partial(Id, Vec<Id>),
+}
+
+impl<Id> Import<Id> {
+    /// If the import corresponds to an infix operator, then return the
+    /// identifier wrapped in a `Some` variant. Otherwise, return `None`.
+    pub fn infix_id(&self) -> Option<&Id> {
+        if let Self::Operator(id) = self {
+            Some(id)
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -509,7 +523,7 @@ pub enum Pattern<Id = Ident> {
     /// Describes a list formed with cons operator infix syntax, e.g.,
     /// `(a:b:c)`. Note that *as a pattern*, this *must* occur within
     /// parentheses, as *operator fixities are not observed in patterns*.
-    Lnk(Box<[Pattern<Id>; 2]>),
+    Lnk(Box<Pattern<Id>>, Box<Pattern<Id>>),
     At(Id, Box<Pattern<Id>>),
     Or(Vec<Pattern<Id>>),
     Rec(Record<Pattern<Id>, Id>),
