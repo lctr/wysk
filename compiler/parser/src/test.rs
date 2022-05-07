@@ -223,10 +223,10 @@ fn test_types() {
 fn test_inst_decl() {
     let src = r#"
 impl |Eq a| Eq [a] {
-(==)
-| [] [] = True
-| (x:xs) (y:ys) = (x == y) && (xs == ys)
-| _ _ = False
+    (==)
+    | [] [] = True
+    | (x:xs) (y:ys) = (x == y) && (xs == ys)
+    | _ _ = False
 }
 "#;
     let program = Parser::from_str(src).inst_decl();
@@ -234,8 +234,49 @@ impl |Eq a| Eq [a] {
 }
 
 #[test]
+fn parse_imports() {
+    let src = r#"
+import A.thing.from.Somewhere @ A { foo, bar }
+| B.things.elsewhere @ B { baz }
+"#;
+    let program = Parser::from_str(src).imports();
+    let expected = with_vars!(
+        |A thing from Somewhere foo bar B things elsewhere baz| {
+        vec![ImportSpec {
+            name: Chain::new(Ident::Upper(A), vec![
+                Ident::Lower(thing),
+                Ident::Lower(from),
+                Ident::Upper(Somewhere)
+            ].into_iter().collect()),
+            qualified: false,
+            rename: Some(Ident::Upper(A)),
+            hidden: false,
+            imports: vec![
+                Import::Function(Ident::Lower(foo)),
+                Import::Function(Ident::Lower(bar))
+            ]},
+            ImportSpec {
+                name: Chain::new(
+                    Ident::Upper(B),
+                    vec![
+                        Ident::Lower(things),
+                        Ident::Lower(elsewhere)
+                    ].into_iter().collect()
+                ),
+                qualified: false,
+                rename: Some(Ident::Upper(B)),
+                hidden: false,
+                imports: vec![
+                    Import::Function(Ident::Lower(baz))
+                ].into_iter().collect()
+            }]
+    });
+    assert_eq!(Ok(expected), program)
+}
+
+#[test]
 fn parse_prim_module() {
-    let src = include_str!("../../../language/prim.ws");
+    let src = include_str!("../../../language/prim.wy");
     let result = Parser::from_str(src).parse();
 
     println!("{:#?}", result);
