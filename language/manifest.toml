@@ -1,0 +1,18 @@
+[package]
+name = "Tester"
+version = "0.0.1"
+license = "MIT"
+description = "A simple description"
+authors = ["Lictor Guzman"]
+keywords = ["wysk lang", "config", "example"]
+
+
+[workspace]
+members = []
+
+[dependencies]
+a_thing = "1"
+b_thing = { path = "../thingy" }
+c_thing = { repo = "https://website.com" }
+
+[dev-dependencies]
