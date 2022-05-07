@@ -176,7 +176,7 @@ class Functor f {
    ~~|   | u (_:xs) = u : go xs
    ~~| 
    ~~| assert <| 3 <\ "abc" == [3, 3, 3]
-   ~~| ````
+   ~~| ```
    (/>) :: b -> f a -> f b
    | x = map \> const
 }
