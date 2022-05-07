@@ -1,6 +1,7 @@
-use wy_common::Map;
+use wy_common::{deque, Map};
 use wy_intern::symbol::{self, Symbol};
-use wy_lexer::{comment::Comment, Literal};
+
+pub use wy_lexer::{comment::Comment, Literal};
 
 pub mod fixity;
 pub mod ident;
@@ -24,7 +25,7 @@ pub struct Program<Id = Ident> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Module<Id = Ident, Uid = Id> {
-    pub modname: (Uid, Vec<Uid>),
+    pub modname: Chain<Uid>,
     pub imports: Vec<ImportSpec<Id>>,
     pub datatys: Vec<DataDecl<Id>>,
     pub classes: Vec<ClassDecl<Id>>,
@@ -37,7 +38,7 @@ pub struct Module<Id = Ident, Uid = Id> {
 impl Default for Module {
     fn default() -> Self {
         Self {
-            modname: (Ident::Upper(symbol::intern_once("Main")), vec![]),
+            modname: Chain::new(Ident::Upper(symbol::intern_once("Main")), deque![]),
             imports: vec![],
             datatys: vec![],
             classes: vec![],
@@ -65,7 +66,7 @@ impl Default for Module {
 /// restricted to matching the new name only.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImportSpec<Id = Ident> {
-    pub name: Id,
+    pub name: Chain<Id>,
     pub qualified: bool,
     pub rename: Option<Id>,
     pub hidden: bool,

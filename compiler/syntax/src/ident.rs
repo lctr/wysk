@@ -1,3 +1,4 @@
+use wy_common::Deque;
 use wy_intern::symbol::{self, Symbol};
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
@@ -76,30 +77,37 @@ fn test_idents() {
     assert_eq!(tuples[4], Ident::Infix(symbol::intern_once(",,,,,")));
 }
 
-/// Single wrapper for the parts comprising an identifier path. A `Path`
-/// consists of a *root* identifier (or *head*) and a *tail* set of identifiers.
+/// Single wrapper for the parts comprising an identifier path (named `Chain` to
+/// avoid ambiguity/similarity with relevant `Path` type(s)). A `Chain`
+/// consists of a *root* identifier (or *head*) and a list of sequentially
+/// suffixed identifiers, i.e., a *tail* set of identifiers.
+///
 /// The *root* of an identifier path is the first identifier in a
-/// period-delimited chain of identifiers, and is modeled in a design similar to
-/// cons lists to allow for ergonomic conversion from simple identifiers
+/// period-delimited chain of identifiers. Additionally, a chain of identifiers
+/// may be *concatenated*.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Qualified<Id = Ident>(Id, Vec<Id>);
+pub struct Chain<Id = Ident>(Id, Deque<Id>);
 
-impl<Id> Qualified<Id> {
-    pub fn new(root: Id, tail: Vec<Id>) -> Self {
+impl<Id> Chain<Id> {
+    pub fn new(root: Id, tail: Deque<Id>) -> Self {
         Self(root, tail)
+    }
+
+    pub fn make_contiguous(&mut self) -> &mut [Id] {
+        self.1.make_contiguous()
     }
 
     pub fn root(&self) -> &Id {
         &self.0
     }
 
-    pub fn tail(&self) -> &[Id] {
-        &self.1[..]
+    pub fn tail(&self) -> impl Iterator<Item = &Id> {
+        self.1.iter()
     }
 
     /// Deconstructs into a tuple of its inner parts, returning a pair
     /// containing the root identifier along with a vector of tail identifiers.
-    pub fn parts(self) -> (Id, Vec<Id>) {
+    pub fn parts(self) -> (Id, Deque<Id>) {
         (self.0, self.1)
     }
 
@@ -126,7 +134,7 @@ impl<Id> Qualified<Id> {
         if ids.len() < 2 {
             None
         } else {
-            Some(Qualified(ids[0], ids[1..].iter().copied().collect()))
+            Some(Chain(ids[0], ids[1..].iter().copied().collect()))
         }
     }
 
@@ -136,16 +144,36 @@ impl<Id> Qualified<Id> {
     /// between head and tail identifiers, applying the given closure to *all*
     /// identifiers, with the only invariant being that the root identifier is
     /// the first identifier mapped.
-    pub fn map<F, Y>(self, mut f: F) -> Qualified<Y>
+    pub fn map<F, Y>(self, mut f: F) -> Chain<Y>
     where
         F: FnMut(Id) -> Y,
     {
-        let Qualified(x, xs) = self;
-        Qualified(f(x), xs.into_iter().map(f).collect())
+        let Chain(x, xs) = self;
+        Chain(f(x), xs.into_iter().map(f).collect())
     }
 }
 
-impl<Id> std::fmt::Display for Qualified<Id>
+impl<Id> Iterator for Chain<Id> {
+    type Item = Id;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.1.pop_front() {
+            Some(id) => Some(std::mem::replace(&mut self.0, id)),
+            None => None,
+        }
+    }
+}
+
+#[test]
+fn test_chain_iter() {}
+
+impl<Id> Extend<Id> for Chain<Id> {
+    fn extend<T: IntoIterator<Item = Id>>(&mut self, iter: T) {
+        self.1.extend(iter)
+    }
+}
+
+impl<Id> std::fmt::Display for Chain<Id>
 where
     Id: std::fmt::Display,
 {
