@@ -1,17 +1,22 @@
 #![allow(unused)]
 use super::*;
-use visit::{Visit, VisitError, VisitMut, Visitor};
+use visit::{Visit, VisitError, VisitMut};
 use wy_intern::symbol;
-/// IDEA: maybe instead of modifying the AST, what if we preprocessed lexemes to
-/// identify infix decls across files? effectively parsing only infix decls,
-/// building fixity-tables corresponding to each module?
-use wy_lexer;
 
+use wy_lexer::{self, LexError};
+
+/// Precedence are internally represented with values greater than declared in
+/// source code, differing by 1. This not only implies that the minimum
+/// precedence accepted -- written as 0 -- is *actually* 1, and the maximum --
+/// written 9 -- is actually *10*. This is to give us the freedom to define
+/// a precedence lower than defineable externally without having to rely on
+/// negative numbers.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Prec(pub u8);
 
 impl Prec {
     pub const ARROW: Self = Prec(0);
+    pub const CONS: Self = Prec(6);
     pub const MIN: Self = Prec(1);
     pub const MAX: Self = Prec(10);
 }
@@ -19,6 +24,20 @@ impl Prec {
 impl Default for Prec {
     fn default() -> Self {
         Self::MAX
+    }
+}
+
+impl std::str::FromStr for Prec {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.parse::<u8>() {
+            Ok(n) => {
+                if n < 10 { Ok(Prec(n + 1)) } else { Err(format!("the number `{}` is not within the range of supported precedence values 0 <= prec <= 9", n))}
+            }
+            Err(e) => Err(format!(
+                "the string `{}` is not a valid precedence value due to failure to parse as unsigned integer.\n >> {}", s, e)),
+        }
     }
 }
 
@@ -52,6 +71,23 @@ impl Assoc {
     }
     pub fn is_none(&self) -> bool {
         matches!(self, Self::None)
+    }
+}
+
+impl std::str::FromStr for Assoc {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let text = s.to_lowercase();
+        match text.as_str() {
+            "l" | "left" | "infixl" => Ok(Self::Left),
+            "r" | "right" | "infixr" => Ok(Self::Right),
+            "_" | "n" | "none" | "infix" => Ok(Self::None),
+            s => Err(format!(
+                "The string `{}` does not correspond to a supported infix associativity",
+                s
+            )),
+        }
     }
 }
 
@@ -213,10 +249,10 @@ where
 
     fn visit_expression(&mut self, expr: &mut Expression<Id>) -> Result<(), FixityFail<Id>> {
         // walk_expr_mut(self, expr)
-        use visit::*;
-        Visitor(())
-            .visit_expr_mut(expr)
-            .map_err(FixityFail::Visit)?;
+        // use visit::*;
+        // Visitor(())
+        //     .visit_expr_mut(expr)
+        //     .map_err(FixityFail::Visit)?;
 
         if let Expression::Infix { .. } = expr {
             let mut temp = Expression::Tuple(vec![]);
