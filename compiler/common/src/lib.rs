@@ -44,12 +44,29 @@ pub trait Foldable: Iterator {
     }
 }
 
+#[macro_export]
+macro_rules! deque {
+    () => { $crate::Deque::new() };
+    (
+        $($ex0:expr $(, $expr:expr)*)+
+    ) => {{
+        let mut deq = $crate::Deque::new();
+        $(
+            deq.push_back($ex0);
+            $(deq.push_back($expr);)*
+        )+
+        deq
+    }};
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
 
     #[test]
     fn it_works() {
         let result = 2 + 2;
+        let deq = deque![1, 22, 3, 3, 4];
         assert_eq!(result, 4);
     }
 }
