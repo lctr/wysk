@@ -15,10 +15,6 @@ impl std::fmt::Display for VisitError {
 
 impl std::error::Error for VisitError {}
 
-pub struct Visitor<T>(pub T);
-impl<Id> Visit<Id, VisitError> for Visitor<()> {}
-impl<Id> VisitMut<Id, VisitError> for Visitor<()> {}
-
 /// Applying the visitor pattern to relevant AST Nodes. The methods involved
 /// have all been predefined, but any overwritten definitions *must* ensure
 /// that they still recurse throughout the tree.
@@ -26,9 +22,15 @@ pub trait Visit<Id, Err = VisitError>: Sized
 where
     Err: std::error::Error + From<VisitError>,
 {
+    fn visit_ident(&mut self, id: &Id) -> Result<(), Err> {
+        Ok(())
+    }
     fn visit_expr(&mut self, expr: &Expression<Id>) -> Result<(), Err> {
         match expr {
-            Expression::Ident(_) | Expression::Lit(_) | Expression::Path(..) => {}
+            Expression::Ident(id) => {
+                self.visit_ident(id)?;
+            }
+            Expression::Lit(_) | Expression::Path(..) => {}
             Expression::Neg(e) => self.visit_expr(e.as_ref())?,
             Expression::Infix {
                 infix: _,
@@ -135,11 +137,6 @@ where
         } else {
             Err(VisitError::Binding.into())
         }
-        // for arm in arms {
-        //     self.visit_expr(&arm.body)?;
-        //     break;
-        // }
-        // Ok(())
     }
     fn visit_stmt(&mut self, stmt: &Statement<Id>) -> Result<(), Err> {
         match stmt {
