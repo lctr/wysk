@@ -1,3 +1,10 @@
+[package]
+name = "wysk"
+version = "0.1.0"
+authors = ["Lictor Guzman <lctrgzmn@gmail.com>"]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/lctr/wysk"
 
 [workspace]
 members = [
