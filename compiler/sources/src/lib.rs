@@ -60,11 +60,27 @@
 
 use std::{
     fs::File,
-    path::{self, Path, PathBuf},
+    path::{Path, PathBuf},
 };
 
 use wy_common::Deque;
-use wy_failure::Failure;
+
+const FILE_EXT: &'static str = "wy";
+
+pub fn is_file_ext(p: &impl AsRef<Path>) -> bool {
+    matches!(
+        p.as_ref().extension(),
+        Some(ext) if ext == FILE_EXT
+    )
+}
+
+const STD_PRELUDE: &'static str = "../../language/prim.wy";
+
+pub fn load_std_prelude(Fid(id): Fid) -> std::io::Result<FileSrc<String>> {
+    FileSrc::new(Fid(id + 1), STD_PRELUDE, ())
+        .load_string()
+        .map(|(fs, _)| fs)
+}
 
 wy_common::newtype! { u32 in Fid | Show Usize }
 
