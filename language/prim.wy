@@ -1,0 +1,205 @@
+module Prim where
+
+data Bool = False | True 
+   with (Show, Eq, Ord)
+
+fn not :: Bool -> Bool
+| True = False
+| False = True
+
+infixl 2 ||
+
+fn (||) :: Bool -> Bool -> Bool
+| True _ = True
+| False y = y
+
+infixl 3 &&
+
+fn (&&) :: Bool -> Bool -> Bool
+| True y = y
+| False _ = False
+
+class Eq a {
+   (==) :: a -> a -> Bool;
+   (!=) :: a -> a -> Bool
+   | x y = not (x == y)
+}
+
+impl Eq Bool {
+   (==) 
+   | True True = True
+   | False False = True
+   | _ _ = False
+
+   ~~ overwrite default method for efficiency?
+   (!=) 
+   | True False = True
+   | False True = True
+   | _ _ = False
+}
+
+~~ Note: floating point numbers do NOT implement Eq
+impl Eq Int {
+   ~~ rust function call
+   (==) = prim'IntEq
+}
+
+impl |Eq a| Eq [a] {
+   (==)
+   | [] [] = True
+   | (x:xs) (y:ys) = (x == y) && (xs == ys)
+   | _ _ = False
+}
+
+infixl 6 + -
+
+infixl 7 * /
+
+~~> Addition
+class Add a { (+) :: a -> a -> a }
+
+~~> Subtraction
+class Sub a { (-) :: a -> a -> a }
+
+~~> Multiplication
+class Mul a { (*) :: a -> a -> a }
+
+~~> Division
+class Div a { (/) :: a -> a -> a }
+
+~~> Remainder
+class Rem a { (%) :: a -> a -> a }
+
+type Integer = PrimBigInt
+
+class |Add a, Sub a, Mul a| Num a {
+   negate :: a -> a;
+   fromInt :: Int -> a;
+   intoInt :: a -> Int;
+   
+   ~~> TODO: bigints
+   ~~ fromInteger :: Integer -> a;
+   ~~ integerFrom :: a -> Integer;
+}
+
+impl Add Int { (+) = prim'AddInt }
+impl Sub Int { (-) = prim'SubInt }
+impl Mul Int { (-) = prim'MulInt }
+
+impl Num Int {
+   fromInt = identity;
+   fromInteger n = n :: Integer
+}
+
+fn fst :: (a, b) -> a 
+| (x, _) = x
+
+fn snd :: (a, b) -> b 
+| (_, y) = y
+
+fn curry :: ((a, b) -> c) -> a -> b -> c
+| f x y = f (x, y)
+
+fn uncurry :: (a -> b -> c) -> (a, b) -> c
+| f = \(x, y) -> f x y
+
+fn identity :: a -> a 
+| x = x
+
+fn const :: a -> b -> a 
+| x _ = x
+
+~~ same as (.) in Haskell
+infixr 9 \>
+~~ same as ($) in Haskell
+infixr 0 <|
+~~ same as (&) in Haskell
+infixl 1 |>
+~~ same as (<$) in Haskell
+infixl 4 />
+
+fn (\>) :: (b -> c) -> (a -> b) -> a -> c
+| f g = \x -> f (g x) 
+
+fn (<|) :: (a -> b) -> a -> b
+| f x = f x
+
+fn (|>) :: a -> (a -> b) -> b
+| x f = f x
+
+
+~~> Functor typeclass
+~~| The class of `mappable` types. A `Functor` represents a parametrized
+~~| container type that allows for composition of actions without modifying the
+~~| external structure using the function `map`. In other words, a type `f` 
+~~| is a Functor if it implements a function `map` that, given a function
+~~| `a -> b`, will transform an `f a` into an `f b`. 
+~~| 
+~~| A key feature of `Functors` is *composition*. Namely, every functor is
+~~| endowed with a function `map` that upholds the following laws:
+~~| * *Identity:* `map identity = identity``
+~~| * *Composition:* `map (f \> g) = map f \> map g`
+~~| 
+~~| Functors operate on types of kind `(* -> *) -> Constraint``
+class Functor f {
+   ~~> Applies a function `g` to every `a` parametrizing a functor  f``.
+   ~~|
+   ~~| # Examples
+   ~~| The type `Option a` is a member of the functor typeclass, with `map`
+   ~~| applying a given function to the inner value of type `a` if it exists.
+   ~~|
+   ~~| ```
+   ~~| map 
+   ~~| | f None = None
+   ~~| | f (Some x) = Some (f x) 
+   ~~|
+   ~~| assert <| let plus2 x = x + 2 in map plus2 (Some 5) == Some 7
+   ~~| ``` 
+   ~~|
+   ~~| The general collection type `[a]` is a functor, with the canonical 
+   ~~| definition of map.
+   ~~| ```
+   ~~| map
+   ~~| | f [] = []
+   ~~| | f (x:xs) = f x : f xs
+   ~~| 
+   ~~| assert <| let plus2 | x = x + 2 in map plus2 [1, 2, 3] == [3, 4, 5]
+   ~~| ```
+   map :: (a -> b) -> f a -> f b;
+   ~~> Replace all values in a functor with a given value.
+   ~~|
+   ~~| ```
+   ~~| (/>) = go u xs 
+   ~~|   where go 
+   ~~|   | u [] = [] 
+   ~~|   | u (_:xs) = u : go xs
+   ~~| 
+   ~~| assert <| 3 <\ "abc" == [3, 3, 3]
+   ~~| ````
+   (/>) :: b -> f a -> f b
+   | x = map \> const
+}
+
+fn flip :: (a -> b -> c) -> b -> a -> c
+| f x y = f y x
+
+fn fmap :: |Functor f| f a -> (a -> b) -> f b
+   = flip map 
+
+impl Functor [a] {
+    map
+    | f [] = []
+    | f (x:xs) = f x : fmap f xs
+
+    (/>)
+    | y xs = map (const y) xs
+}
+
+infixl 4 <* <*> *>
+class |Functor f| Applicative f {
+    ~~ `pure` in Haskell
+    onto :: a -> f a;
+    (<*>) :: f (a -> b) -> f a -> f b;
+    (*>) :: f a -> f b -> f b;
+    (<*) :: f a -> f b -> f a;
+}
