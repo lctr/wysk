@@ -132,7 +132,7 @@ macro_rules! newtype {
         }
 
         impl std::cmp::PartialOrd<usize> for $name {
-            fn partial_cmp(&self, other: &isize) -> Option<std::cmp::Ordering> {
+            fn partial_cmp(&self, other: &usize) -> Option<std::cmp::Ordering> {
                 (self.0 as usize).partial_cmp(other)
             }
         }
