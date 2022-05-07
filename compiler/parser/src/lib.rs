@@ -5,7 +5,7 @@ use wy_lexer::*;
 use wy_span::{Dummy, WithLoc, WithSpan};
 use wy_syntax::{
     fixity::{Assoc, Fixity, FixityTable, Prec},
-    ident::Ident,
+    ident::{Chain, Ident},
     tipo::{Field, Record, Tv, Type},
     AliasDecl, Alternative, Arity, Binding, ClassDecl, Context, DataDecl, Declaration, Expression,
     FixityDecl, FnDecl, Import, ImportSpec, InstDecl, Match, Method, Module, Pattern, Program,
@@ -70,6 +70,7 @@ pub trait Streaming {
         }
         on_it
     }
+
     fn is_done(&mut self) -> bool;
 
     /// Given a predicate `pred` and a parser, applies the given parser `parse`
@@ -205,7 +206,7 @@ impl<'t> Parser<'t> {
                         srcloc,
                         found,
                         delim,
-                        source: self.source_string(),
+                        source: self.text(),
                     })
                 }
                 found => {
@@ -215,18 +216,15 @@ impl<'t> Parser<'t> {
                         src_loc,
                         LexKind::Specified(found),
                         tok,
-                        self.source_string(),
+                        self.text(),
                     ))
                 }
             },
-            None => Err(ParseError::UnexpectedEof(
-                self.get_srcloc(),
-                self.source_string(),
-            )),
+            None => Err(ParseError::UnexpectedEof(self.get_srcloc(), self.text())),
         }
     }
 
-    fn source_string(&self) -> String {
+    fn text(&self) -> String {
         let mut buf = String::new();
         self.lexer.write_to_string(&mut buf);
         buf
@@ -356,7 +354,7 @@ macro_rules! expect {
                 srcloc,
                 LexKind::$lexkind,
                 $self.bump(),
-                $self.source_string(),
+                $self.text(),
             ))
         }
     }};
@@ -377,6 +375,29 @@ impl<'t> Parser<'t> {
             expect!(self Infix)
         }
     }
+    fn expect_ident(&mut self) -> Parsed<Ident> {
+        match self.peek().map(|t| t.lexeme) {
+            Some(Lexeme::Upper(s)) => {
+                self.bump();
+                Ok(Ident::Upper(s))
+            }
+            Some(Lexeme::Lower(s)) => {
+                self.bump();
+                Ok(Ident::Lower(s))
+            }
+            Some(Lexeme::Infix(s)) => {
+                self.bump();
+                Ok(Ident::Infix(s))
+            }
+            _ => Err(ParseError::Expected(
+                self.get_srcloc(),
+                LexKind::Identifier,
+                self.lookahead::<1>()[0],
+                self.text(),
+            )),
+        }
+    }
+
     fn expect_literal(&mut self) -> Parsed<Literal> {
         let srcloc = self.get_srcloc();
         if let Some(Token {
@@ -391,7 +412,7 @@ impl<'t> Parser<'t> {
                 srcloc,
                 LexKind::Literal,
                 self.bump(),
-                self.source_string(),
+                self.text(),
             ))
         }
     }
@@ -405,9 +426,9 @@ impl<'t> ModuleParser<'t> {
         let rootname = self.expect_upper()?;
         let tailnames = self.many_while(|p| p.bump_on(Lexeme::Dot), Self::expect_upper)?;
         self.eat(Keyword::Where)?;
-        let imports = self.many_while_on(Keyword::Import, Self::import_spec)?;
+        let imports = self.imports()?;
         let mut module = Module {
-            modname: (rootname, tailnames),
+            modname: Chain::new(rootname, tailnames.into_iter().collect()),
             imports,
             ..Default::default()
         };
@@ -434,21 +455,30 @@ impl<'t> ModuleParser<'t> {
         Ok(())
     }
 
+    fn imports(&mut self) -> Parsed<Vec<ImportSpec>> {
+        self.many_while(
+            |p| p.bump_on(Keyword::Import) || p.bump_on(Lexeme::Pipe),
+            Self::import_spec,
+        )
+    }
+
     fn import_spec(&mut self) -> Parsed<ImportSpec> {
-        use Keyword::{Hiding, Import, Qualified};
-        use Lexeme::{Comma, CurlyL, CurlyR, Pipe};
-        self.eat(Import)?;
+        use Keyword::{Hiding, Qualified};
+        use Lexeme::{At, Comma, CurlyL, CurlyR};
+
         let qualified = self.bump_on(Qualified);
-        let name = self.expect_upper()?;
-        let rename = if self.bump_on(Pipe) {
-            let rename = self.expect_upper()?;
-            self.eat(Pipe)?;
-            Some(rename)
+        let name = Chain::new(
+            self.expect_upper()?,
+            // todo: specialize/optimize this
+            self.id_path_tail()?.into_iter().collect(),
+        );
+        let rename = if self.bump_on(At) {
+            Some(self.expect_upper()?)
         } else {
             None
         };
         let hidden = self.bump_on(Hiding);
-        let imports = if lexpat!(self on [curlyL]) {
+        let imports = if self.peek_on(CurlyL) {
             self.delimited([CurlyL, Comma, CurlyR], Self::import_item)?
         } else {
             vec![]
@@ -478,8 +508,8 @@ impl<'t> ModuleParser<'t> {
                         return Ok(Import::Total(first));
                     }
 
-                    let ctors = self.many_while_on(Lexeme::is_upper, |p| {
-                        let con = p.expect_upper()?;
+                    let ctors = self.many_while_on(Lexeme::is_ident, |p| {
+                        let con = p.expect_ident()?;
                         p.ignore(Lexeme::Comma);
                         Ok(con)
                     })?;
@@ -493,7 +523,7 @@ impl<'t> ModuleParser<'t> {
                 self.get_srcloc(),
                 self.lookahead::<1>()[0],
                 "is not a valid import",
-                self.source_string(),
+                self.text(),
             )),
         }
     }
@@ -527,7 +557,7 @@ impl<'t> FixityParser<'t> {
                 self.get_srcloc(),
                 self.bump(),
                 "expected fixity keyword `infix`, `infixl`, or `infixr`",
-                self.source_string(),
+                self.text(),
             )),
         }?;
         self.bump();
@@ -546,7 +576,7 @@ impl<'t> FixityParser<'t> {
             _ => Err(ParseError::InvalidPrec(
                 self.get_srcloc(),
                 self.bump(),
-                self.source_string(),
+                self.text(),
             )),
         }
     }
@@ -557,12 +587,7 @@ impl<'t> FixityParser<'t> {
             let Spanned(infix, span) = p.spanned(Self::expect_infix);
             let infix = infix?;
             if p.fixities.contains_key(&infix) {
-                Err(ParseError::FixityExists(
-                    srcloc,
-                    infix,
-                    span,
-                    p.source_string(),
-                ))
+                Err(ParseError::FixityExists(srcloc, infix, span, p.text()))
             } else {
                 p.fixities.insert(infix, fixity);
                 Ok(infix)
@@ -713,6 +738,7 @@ impl<'t> DeclParser<'t> {
         let ctxt = self.ty_contexts()?;
         let name = self.expect_upper()?;
         let tipo = self.ty_atom()?;
+        self.ignore(Keyword::With);
         self.eat(Lexeme::CurlyL)?;
         let mut defs = vec![];
         while !self.peek_on(Lexeme::CurlyR) {
@@ -820,7 +846,7 @@ impl<'t> TypeParser<'t> {
         let ty = self.ty_atom()?;
         if lexpat!(self on [->]) {
             self.arrow_ty(ty)
-        } else if self.get_col() > col {
+        } else if self.peek_on(Lexeme::begins_ty) && self.get_col() > col {
             let ty = self.maybe_ty_app(ty)?;
             self.arrow_ty(ty)
         } else {
@@ -863,7 +889,7 @@ impl<'t> TypeParser<'t> {
                 self.get_srcloc(),
                 self.bump(),
                 "does not begin a type",
-                self.source_string(),
+                self.text(),
             )),
         }
     }
@@ -909,7 +935,7 @@ impl<'t> TypeParser<'t> {
                         self.get_srcloc(),
                         self.bump(),
                         "unbalanced parentheses in type signature",
-                        self.source_string(),
+                        self.text(),
                     ));
                 }
             }
@@ -995,7 +1021,7 @@ impl<'t> PatParser<'t> {
                     self.get_srcloc(),
                     self.lookahead::<1>()[0],
                     "does not begin a valid pattern",
-                    self.source_string(),
+                    self.text(),
                 ))
             }
         }?;
@@ -1049,7 +1075,7 @@ impl<'t> PatParser<'t> {
                 srcloc: this.get_srcloc(),
                 found: this.lookahead::<1>()[0],
                 delim: ParenR,
-                source: this.source_string(),
+                source: this.text(),
             })
         };
 
@@ -1186,7 +1212,7 @@ impl<'t> PatParser<'t> {
                     self.get_srcloc(),
                     self.lookahead::<1>()[0],
                     "after failure to reduce cons pattern",
-                    self.source_string(),
+                    self.text(),
                 )
             })
     }
@@ -1311,7 +1337,7 @@ impl<'t> ExprParser<'t> {
                 self.get_srcloc(),
                 self.bump(),
                 "does not correspond to a lexeme that begins an expression",
-                self.source_string(),
+                self.text(),
             )),
         }
     }
@@ -1328,7 +1354,7 @@ impl<'t> ExprParser<'t> {
                 self.get_srcloc(),
                 LexKind::Identifier,
                 self.bump(),
-                self.source_string(),
+                self.text(),
             )),
         }?;
         if lexpat!(self on [.]) {
@@ -1350,7 +1376,7 @@ impl<'t> ExprParser<'t> {
                     p.get_srcloc(),
                     LexKind::Identifier,
                     p.bump(),
-                    p.source_string(),
+                    p.text(),
                 )),
             },
         )
@@ -1426,7 +1452,7 @@ impl<'t> ExprParser<'t> {
             _ => Err(ParseError::InvalidLexeme(
                 self.get_srcloc(),
                 self.bump(),
-                self.source_string(),
+                self.text(),
             )),
         }
     }
@@ -1478,7 +1504,7 @@ impl<'t> ExprParser<'t> {
             }
             self.ignore(Comma);
             if self.is_done() {
-                return Err(ParseError::UnexpectedEof(srcloc, self.source_string()));
+                return Err(ParseError::UnexpectedEof(srcloc, self.text()));
             }
         }
         self.eat(BrackR)?;
@@ -1511,7 +1537,7 @@ impl<'t> ExprParser<'t> {
                 self.get_srcloc(),
                 self.bump(),
                 "is not a valid binding name: expected a lowercase-initial identifier or an infix wrapped in parentheses", 
-                self.source_string()
+                self.text()
             ))
         }
     }
@@ -1530,7 +1556,7 @@ impl<'t> ExprParser<'t> {
                 self.get_srcloc(),
                 self.bump(),
                 "is not a valid binding argument pattern",
-                self.source_string(),
+                self.text(),
             ))
         }
     }
@@ -1593,7 +1619,7 @@ impl<'t> ExprParser<'t> {
                 self.get_srcloc(),
                 self.lookahead::<1>()[0],
                 "unable to parse binding",
-                self.source_string(),
+                self.text(),
             )),
         }
     }
@@ -1682,7 +1708,7 @@ impl<'t> ExprParser<'t> {
                     self.get_srcloc(),
                     self.bump(),
                     "can only follow simple variable patterns",
-                    self.source_string(),
+                    self.text(),
                 ));
             }
         };
