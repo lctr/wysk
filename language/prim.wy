@@ -1,3 +1,4 @@
+~~> Sketch for Prelude
 module Prim where
 
 data Bool = False | True 
