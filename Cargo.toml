@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Lictor Guzman <lctrgzmn@gmail.com>"]
 edition = "2021"
 license = "MIT"
+description = "A statically typed functional language with type inference, ad-hoc polymorphism, and an extensible operator syntax. Influenced by Rust, ML, and Haskell."
 repository = "https://github.com/lctr/wysk"
 
 [workspace]
