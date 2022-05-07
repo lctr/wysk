@@ -27,7 +27,7 @@ where
 }
 
 impl Manifest {
-    pub const FILENAME: &'static str = "Manifest.toml";
+    pub const FILENAME: &'static str = "manifest.toml";
     pub const INITIAL_VERSION: &'static str = "0.0.1";
 
     pub fn new(name: String) -> Manifest {
@@ -154,9 +154,7 @@ pub enum Dependency<S = String> {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct DevDependencies<K: Ord = String, S = String>(
-    pub Map<K, Dependency<S>>,
-);
+pub struct DevDependencies<K: Ord = String, S = String>(pub Map<K, Dependency<S>>);
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Artifacts<S = String>(Map<S, S>)
@@ -181,7 +179,7 @@ mod test {
         license = "MIT"
         description = "A simple description"
         authors = ["Lictor Guzman"]
-        keywords = ["wysc lang", "config"]
+        keywords = ["wysk lang", "config"]
     
     
         [workspace]
@@ -210,15 +208,10 @@ mod test {
 
     #[test]
     fn test_deserialize_example_manifest() {
-        match std::fs::read_to_string(
-            "/Users/lictor/Rust/lolvm/examples/manifest.toml",
-        ) {
+        match std::fs::read_to_string("../../language/manifest.toml") {
             Ok(source) => match toml::from_str::<Manifest>(&*source) {
                 Ok(cfg) => {
-                    println!(
-                        "Manifest successfully deseralized:\n\n{:#?}",
-                        &cfg
-                    );
+                    println!("Manifest successfully deseralized:\n\n{:#?}", &cfg);
                 }
                 Err(e) => {
                     eprintln!("Error reading manifest.toml! {}", e)
