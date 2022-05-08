@@ -1,6 +1,6 @@
 use std::{iter::Peekable, str::Chars};
 
-use wy_span::{BytePos, Coord, Located, Location, Span, Spanned, WithLoc, WithSpan};
+use wy_span::{BytePos, Coord, Location, Span, WithLoc, WithSpan};
 
 use crate::comment::Comment;
 use crate::token::{Lexeme, Token};

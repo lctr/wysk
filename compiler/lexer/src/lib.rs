@@ -3,7 +3,7 @@ use wy_span as span;
 
 use intern::symbol;
 
-use span::{Coord, Span, Spanned, WithSpan};
+use span::{Span, Spanned, WithSpan};
 use token::Base;
 pub use token::{LexError, Keyword, Lexeme, Literal, Token};
 pub use stream::{Lexer, Source};
