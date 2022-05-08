@@ -294,10 +294,8 @@ impl<'t> Parser<'t> {
         F: FnMut(&mut Self) -> Parsed<X>,
     {
         let mut xs = vec![];
-        let mut go = pred(self);
-        while go {
+        while pred(self) {
             xs.push(f(self)?);
-            go = pred(self);
         }
         Ok(xs)
     }
