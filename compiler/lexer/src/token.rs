@@ -25,6 +25,8 @@ strenum! { Keyword is_keyword ::
     Class "class"
     Impl "impl"
 
+    Forall "forall"
+
     InfixL "infixl"
     InfixR "infixr"
     Infix "infix"
