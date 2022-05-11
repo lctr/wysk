@@ -24,6 +24,7 @@ strenum! { Keyword is_keyword ::
     Type "type"
     Class "class"
     Impl "impl"
+    Newtype "newtype"
 
     Forall "forall"
 
@@ -89,6 +90,12 @@ pub enum Literal {
 }
 
 impl Eq for Literal {}
+
+impl std::hash::Hash for Literal {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        core::mem::discriminant(self).hash(state);
+    }
+}
 
 impl Literal {
     #[inline]
@@ -983,5 +990,8 @@ macro_rules! lexpat {
     };
     ([hiding]) => {
         Lexeme::Kw(Keyword::Hiding)
+    };
+    ([newtype]) => {
+        Lexeme::Kw(Keyword::Newtype)
     };
 }
