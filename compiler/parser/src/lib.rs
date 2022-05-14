@@ -1,15 +1,15 @@
-use std::rc::Rc;
-
 use token::*;
 use wy_lexer::*;
 use wy_span::{Dummy, WithLoc, WithSpan};
 use wy_syntax::{
+    expr::Expression,
     fixity::{Assoc, Fixity, FixityTable, Prec},
     ident::{Chain, Ident},
-    tipo::{Field, Record, Tv, Type},
-    AliasDecl, Alternative, Arity, Binding, ClassDecl, Context, DataDecl, Declaration, Expression,
-    FixityDecl, FnDecl, Import, ImportSpec, InstDecl, Match, Method, Module, Pattern, Program,
-    Signature, Statement, Tag, Variant,
+    pattern::Pattern,
+    stmt::{Alternative, Binding, Match, Statement},
+    tipo::{Context, Field, Record, Signature, Tv, Type},
+    AliasDecl, Arity, ClassDecl, DataDecl, Declaration, FixityDecl, FnDecl, Import, ImportSpec,
+    InstDecl, Method, Module, NewtypeArg, NewtypeDecl, Program, Tag, Variant,
 };
 
 use wy_common::Deque;
@@ -338,6 +338,7 @@ impl<'t> Streaming for Parser<'t> {
 }
 
 macro_rules! expect {
+    // (>> ) => {{}};
     ($self:ident $lexkind:ident) => {{
         let srcloc = $self.get_srcloc();
         if let Some(Token {
@@ -445,6 +446,7 @@ impl<'t> ModuleParser<'t> {
                 Declaration::Class(class) => module.classes.push(class),
                 Declaration::Instance(inst) => module.implems.push(inst),
                 Declaration::Function(fun) => module.fundefs.push(fun),
+                Declaration::Newtype(newty) => module.newtyps.push(newty),
             }
             if !self.is_done() {
                 self.ignore(Lexeme::Semi)
@@ -605,6 +607,7 @@ impl<'t> DeclParser<'t> {
             lexpat!(maybe[type]) => self.alias_decl().map(Declaration::Alias),
             lexpat!(maybe[class]) => self.class_decl().map(Declaration::Class),
             lexpat!(maybe[impl]) => self.inst_decl().map(Declaration::Instance),
+            lexpat!(maybe[newtype]) => self.newtype_decl().map(Declaration::Newtype),
             _ => todo!(),
         }
     }
@@ -633,7 +636,7 @@ impl<'t> DeclParser<'t> {
             ctxt,
             poly: self.many_while(
                 |p| !lexpat!(p on [=] | [;]),
-                |p| p.expect_lower().map(Tv::from_ident),
+                |p| p.expect_lower().map(|ident| Ident::Fresh(ident.symbol())),
             )?,
             vnts: vec![],
             with: vec![],
@@ -696,7 +699,7 @@ impl<'t> DeclParser<'t> {
         let name = self.expect_upper()?;
         let poly = self.many_while(
             |p| !p.peek_on(Equal),
-            |p| p.expect_lower().map(Tv::from_ident),
+            |p| p.expect_lower().map(|ident| Ident::Fresh(ident.symbol())),
         )?;
         self.eat(Equal)?;
         let sign = self.total_signature()?;
@@ -707,8 +710,9 @@ impl<'t> DeclParser<'t> {
         self.eat(Keyword::Class)?;
         let ctxt = self.ty_contexts()?;
         let name = self.expect_upper()?;
-        let poly =
-            self.many_while_on(Lexeme::is_lower, |p| p.expect_lower().map(Tv::from_ident))?;
+        let poly = self.many_while_on(Lexeme::is_lower, |p| {
+            p.expect_lower().map(|ident| Ident::Fresh(ident.symbol()))
+        })?;
         self.eat(Lexeme::CurlyL)?;
         let mut defs = vec![];
         while !self.peek_on(Lexeme::CurlyR) {
@@ -751,6 +755,52 @@ impl<'t> DeclParser<'t> {
             tipo,
         })
     }
+
+    fn newtype_decl(&mut self) -> Parsed<NewtypeDecl> {
+        use Keyword::{Newtype, With};
+        use Lexeme::{Colon2, Comma, CurlyL, CurlyR, Equal, ParenL, ParenR};
+
+        self.eat(Newtype)?;
+        let name = self.expect_upper()?;
+        let poly = self.many_while_on(Lexeme::is_lower, variable(Self::expect_lower))?;
+        self.eat(Equal)?;
+        let ctor = self.expect_upper()?;
+        let narg = if self.bump_on(CurlyL) {
+            let label = self.expect_lower()?;
+            self.eat(Colon2)?;
+            let tysig = self.total_signature()?;
+            self.eat(CurlyR)?;
+            NewtypeArg::Record(label, tysig)
+        } else {
+            NewtypeArg::Product(self.many_while(|p| lexpat!(p on [;] | [kw]), Self::ty_node)?)
+        };
+        let with = if self.bump_on(With) {
+            if self.peek_on(ParenL) {
+                self.delimited([ParenL, Comma, ParenR], Self::expect_upper)?
+            } else {
+                vec![self.expect_upper()?]
+            }
+        } else {
+            vec![]
+        };
+        Ok(NewtypeDecl {
+            name,
+            poly,
+            ctor,
+            narg,
+            with,
+        })
+    }
+}
+
+/// Utility combinator for type variables, which are to initially be parsed as
+/// `Ident::Fresh` variants before being transformed to `Tv` instances later on
+/// the pipeline
+fn variable<F, P>(mut parse_ident: F) -> impl FnMut(&mut P) -> Parsed<Ident>
+where
+    F: FnMut(&mut P) -> Parsed<Ident>,
+{
+    move |p: &mut P| parse_ident(p).map(|id| Ident::Fresh(id.symbol()))
 }
 
 // DATA TYPES
@@ -763,7 +813,7 @@ impl<'t> Parser<'t> {
         while !(self.is_done() || lexpat!(self on [;] | [|] | [kw])) {
             args.push(self.ty_node()?);
         }
-        let arity = Arity::from_len(args.as_slice());
+        let arity = Arity(args.len());
         Ok(Variant {
             name,
             args,
@@ -790,9 +840,16 @@ impl<'t> TypeParser<'t> {
     /// any type constraints in a cast expression or in data declaration
     /// constructor arguments.
     fn total_signature(&mut self) -> Parsed<Signature> {
+        let each = if self.bump_on(Keyword::Forall) {
+            let es = self.many_while_on(Lexeme::is_lower, variable(Self::expect_lower))?;
+            self.eat(Lexeme::Dot)?;
+            es
+        } else {
+            vec![]
+        };
         let ctxt = self.ty_contexts()?;
         let tipo = self.ty_node()?;
-        Ok(Signature { ctxt, tipo })
+        Ok(Signature { each, ctxt, tipo })
     }
 
     fn ty_contexts(&mut self) -> Parsed<Vec<Context>> {
@@ -801,7 +858,6 @@ impl<'t> TypeParser<'t> {
                 [Lexeme::Pipe, Lexeme::Comma, Lexeme::Pipe],
                 Self::ty_constraint,
             )?;
-            self.ignore(Lexeme::FatArrow);
             Ok(ctxt)
         } else {
             Ok(vec![])
@@ -835,7 +891,7 @@ impl<'t> TypeParser<'t> {
     /// type `(uvw, xyz)` has its type variables remaped to `(a, b)`.
     fn ty_constraint(&mut self) -> Parsed<Context> {
         let class = self.expect_upper()?;
-        let tyvar = self.expect_lower().map(|id| Tv::from(id.get_symbol()))?;
+        let tyvar = variable(Self::expect_lower)(self)?;
         Ok(Context { class, tyvar })
     }
 
@@ -875,10 +931,7 @@ impl<'t> TypeParser<'t> {
 
     fn ty_atom(&mut self) -> Parsed<Type> {
         match self.peek() {
-            lexpat!(~[var]) => self
-                .expect_lower()
-                .map(|id| Tv::from(id.get_symbol()))
-                .map(Type::Var),
+            lexpat!(~[var]) => variable(Self::expect_lower)(self).map(Type::Var),
             lexpat!(~[Var]) => Ok(Type::Con(self.expect_upper()?, vec![])),
             lexpat!(~[brackL]) => self.brack_ty(),
             lexpat!(~[curlyL]) => self.curly_ty(),
@@ -925,7 +978,7 @@ impl<'t> TypeParser<'t> {
                     break;
                 }
                 Some(t) if t.begins_ty() => {
-                    ty = Type::App(Box::new(ty), self.ty_atom().map(Box::new)?);
+                    ty = Type::App(Box::new(ty), Box::new(self.ty_atom()?));
                     continue;
                 }
                 _ => {
@@ -957,7 +1010,7 @@ impl<'t> TypeParser<'t> {
         self.eat(Lexeme::BrackL)?;
         let tipo = self.ty_node()?;
         self.eat(Lexeme::BrackR)?;
-        Ok(Type::Vec(Rc::new(tipo)))
+        Ok(Type::Vec(Box::new(tipo)))
     }
 
     fn curly_ty(&mut self) -> Parsed<Type> {
@@ -1231,10 +1284,12 @@ impl<'t> PatParser<'t> {
     }
 
     fn field_pattern(&mut self) -> Parsed<Field<Pattern>> {
-        Ok(Field::Entry(self.expect_lower()?, {
-            self.eat(Lexeme::Colon2)?;
-            self.pattern()?
-        }))
+        let key = self.expect_lower()?;
+        if self.bump_on(Lexeme::Equal) {
+            Ok(Field::Entry(key, self.pattern()?))
+        } else {
+            Ok(Field::Key(key))
+        }
     }
 }
 
@@ -1318,7 +1373,7 @@ impl<'t> ExprParser<'t> {
 
     fn atom(&mut self) -> Parsed<Expression> {
         fn minus_sign() -> Lexeme {
-            Lexeme::Infix(Ident::minus_sign().get_symbol())
+            Lexeme::Infix(Ident::minus_sign().symbol())
         }
 
         match self.peek() {
@@ -1355,11 +1410,13 @@ impl<'t> ExprParser<'t> {
                 self.text(),
             )),
         }?;
-        if lexpat!(self on [.]) {
-            let tail = self.id_path_tail()?;
-            Ok(Expression::Path(ident, tail))
-        } else {
-            Ok(Expression::Ident(ident))
+        match self.peek() {
+            lexpat!(~[.]) => {
+                let tail = self.id_path_tail()?;
+                Ok(Expression::Path(ident, tail))
+            }
+            lexpat!(~[curlyL]) => Ok(Expression::Dict(Record::Data(ident, self.curly_expr()?))),
+            _ => Ok(Expression::Ident(ident)),
         }
     }
 
@@ -1453,6 +1510,22 @@ impl<'t> ExprParser<'t> {
                 self.text(),
             )),
         }
+    }
+
+    fn curly_expr(&mut self) -> Parsed<Vec<Field<Expression>>> {
+        use Lexeme::{Comma, CurlyL, CurlyR, Dot2, Equal};
+        self.delimited([CurlyL, Comma, CurlyR], |p| {
+            if p.bump_on(Dot2) {
+                return Ok(Field::Rest);
+            }
+
+            let label = p.expect_lower()?;
+            if p.bump_on(Equal) {
+                Ok(Field::Entry(label, p.expression()?))
+            } else {
+                Ok(Field::Key(label))
+            }
+        })
     }
 
     /// Syntactic sugar for generating a list of values based on an expression
@@ -1565,10 +1638,30 @@ impl<'t> ExprParser<'t> {
         Ok((body, wher))
     }
 
+    fn caf_binding(&mut self, name: Ident, tipo: Option<Signature>) -> Parsed<Binding> {
+        let (body, wher) = self.binding_rhs()?;
+        Ok(Binding {
+            name,
+            tipo,
+            arms: vec![Match {
+                args: vec![],
+                pred: None,
+                body,
+                wher,
+            }],
+        })
+    }
+
     fn binding(&mut self) -> Parsed<Binding> {
-        use Lexeme::Pipe;
+        use Lexeme::{Colon2, Equal, FatArrow, Pipe};
 
         let name = self.binder_name()?;
+
+        // let tipo = if self.bump_on(Colon2) {
+        //     Some(self.total_signature()?)
+        // } else {
+        //     None
+        // };
 
         match self.peek() {
             lexpat!(~[|]) => Ok(Binding {
@@ -1579,13 +1672,22 @@ impl<'t> ExprParser<'t> {
             lexpat!(~[::]) => {
                 self.bump();
                 let tipo = self.total_signature()?;
-                Ok(Binding {
-                    name,
-                    arms: self.match_arms()?,
-                    tipo: Some(tipo),
-                })
+                if lexpat!(self on [=]|[=>]) {
+                    self.bump();
+                    self.caf_binding(name, Some(tipo))
+                } else {
+                    Ok(Binding {
+                        name,
+                        arms: self.match_arms()?,
+                        tipo: Some(tipo),
+                    })
+                }
             }
-            lexpat!(maybe[=]) => {
+            lexpat!(~[=>]) => {
+                self.bump();
+                self.caf_binding(name, None)
+            }
+            lexpat!(~[=]) => {
                 self.bump();
                 let (body, wher) = self.binding_rhs()?;
                 let mut arms = vec![Match {
@@ -1622,15 +1724,12 @@ impl<'t> ExprParser<'t> {
         }
     }
 
-    /// *SIDE-EFFECT ALERT* this method will advance the parser to the next
-    /// token in the beginning of each iteration *if the current token matches*
-    /// the pipe `|`.
     fn match_arms(&mut self) -> Parsed<Vec<Match>> {
         use Lexeme::Pipe;
         self.many_while(
-            |parser| {
-                parser.ignore(Pipe);
-                parser.peek_on(Lexeme::begins_pat)
+            |p| {
+                p.ignore(Pipe);
+                p.peek_on(Lexeme::begins_pat)
             },
             Self::match_arm,
         )
@@ -1638,8 +1737,16 @@ impl<'t> ExprParser<'t> {
 
     fn match_arm(&mut self) -> Parsed<Match> {
         use Lexeme::Equal;
-        let (args, pred) = self.binding_lhs()?;
-        self.eat(Equal)?;
+
+        let (args, pred) = if lexpat!(self on [=>]) {
+            self.bump();
+            (vec![], None)
+        } else {
+            let (a, b) = self.binding_lhs()?;
+            self.eat(Equal)?;
+            (a, b)
+        };
+
         let (body, wher) = self.binding_rhs()?;
         Ok(Match {
             args,
@@ -1738,6 +1845,10 @@ impl<'t> ExprParser<'t> {
 
         Ok(Expression::Cond(Box::new([cond, pass, fail])))
     }
+}
+
+pub fn parse_input(src: &str) -> Parsed<Program> {
+    Parser::from_str(src).parse()
 }
 
 pub fn try_parse_file<P: AsRef<std::path::Path>>(

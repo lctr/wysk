@@ -1,5 +1,7 @@
 #![cfg(test)]
-use wy_intern::Symbol;
+use wy_intern::{Symbol, Symbolic};
+use wy_lexer::Literal;
+use wy_syntax::expr::Expression;
 
 use super::*;
 
@@ -190,7 +192,6 @@ fn test_lambda_expr() {
     });
     assert_eq!(expr, expected);
     println!("{:?}", expr);
-    println!("{:?}", Parser::from_str(r#"\ a | b -> c"#).expression());
 }
 
 #[test]
@@ -198,21 +199,22 @@ fn test_types() {
     let src = "Foo x y z -> Bar z y x";
     let result = Parser::from_str(src).ty_node().unwrap();
     println!("{}", &result);
+    let var = Ident::Fresh;
     assert_eq!(
         result,
         with_vars! { |Foo x y z Bar| {
             Type::Fun(
                 Box::new(Type::Con(
                     Ident::Upper(Foo), vec![
-                        Type::Var(Tv::from_symbol(x)),
-                        Type::Var(Tv::from_symbol(y)),
-                        Type::Var(Tv::from_symbol(z))],
+                        Type::Var(var(x)),
+                        Type::Var(var(y)),
+                        Type::Var(var(z))],
                     )),
                 Box::new(Type::Con(
                     Ident::Upper(Bar), vec![
-                        Type::Var(Tv::from_symbol(z)),
-                        Type::Var(Tv::from_symbol(y)),
-                        Type::Var(Tv::from_symbol(x))
+                        Type::Var(var(z)),
+                        Type::Var(var(y)),
+                        Type::Var(var(x))
                     ]
                 ))
         )} }
@@ -298,4 +300,82 @@ fn test_cons_pat() {
         )
     });
     assert_eq!(Ok(link), Parser::from_str("(a:b:c)").pattern())
+}
+
+#[test]
+fn test_ty_sigs() {
+    let src = r#"forall a b. m a -> (a -> m b) -> m b"#;
+    let sig = Parser::from_str(src).total_signature().unwrap();
+    let expected = with_vars!(|a b m| { Signature {
+        each: vec![Ident::Fresh(a), Ident::Fresh(b)],
+        ctxt: vec![],
+        tipo: Type::Fun(
+            Box::new(
+                Type::Fun(
+                    Box::new(
+                        Type::Con(Ident::Lower(m), vec![Type::Var(Ident::Fresh(a))])
+                    ),
+                    Box::new(
+                        Type::Fun(
+                            Box::new(Type::Var(Ident::Fresh(a))),
+                            Box::new(Type::Con(Ident::Lower(m),
+                                vec![Type::Var(Ident::Fresh(b))])))
+                    )
+                )
+            ),
+            Box::new(
+                Type::Con(Ident::Lower(m), vec![Type::Var(Ident::Fresh(b))])
+            )
+        )
+    }});
+    println!("{:#?}\n{}", &sig, &sig.tipo);
+    assert_eq!(expected, sig)
+}
+
+#[test]
+fn test_newtype_decl() {
+    let src = r#"newtype Parser a = Parser { parse :: String -> (a, String) }"#;
+    let parsed = Parser::from_str(src).newtype_decl().unwrap();
+    let expected = with_vars! { |Parser a parse String| {
+        NewtypeDecl {
+            name: Ident::Upper(Parser),
+            poly: vec![Ident::Fresh(a)],
+            ctor: Ident::Upper(Parser),
+            narg: NewtypeArg::Record(Ident::Lower(parse), Signature {
+                each: vec![],
+                ctxt: vec![],
+                tipo: Type::Fun(
+                    Box::new(Type::Con(Ident::Upper(String), vec![])),
+                    Box::new(Type::Tup(vec![
+                        Type::Var(Ident::Fresh(a)),
+                        Type::Con(Ident::Upper(String), vec![])
+                    ]))
+                )
+            }),
+            with: vec![]
+        }
+    }};
+    assert_eq!(parsed, expected)
+}
+
+#[test]
+fn test_caf() {
+    let src = "fn womp :: a => 3";
+    let tests = [
+        "fn womp :: a = 3",
+        "fn womp :: a | = 3",
+        "fn womp :: a => 3",
+    ]
+    .into_iter()
+    .map(|s| Parser::from_str(src).function_decl().unwrap())
+    .collect::<Vec<_>>();
+    assert_eq!(tests[0], tests[1]);
+    assert_eq!(tests[1], tests[2]);
+}
+
+#[test]
+fn test_record_expr() {
+    let src = "fn set 
+    | A { b, c } = a { b = 2, c = 3 }";
+    println!("{:?}", Parser::from_str(src).function_decl())
 }
