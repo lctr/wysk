@@ -10,3 +10,6 @@ wy_common = { path = "../common" }
 wy_syntax = { path = "../syntax" }
 wy_graph = { path = "../graph" }
 wy_intern = { path = "../intern" }
+
+[dev-dependencies]
+wy_parser = { path = "../parser" }
