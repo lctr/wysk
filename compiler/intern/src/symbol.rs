@@ -298,9 +298,6 @@ macro_rules! local_lexicon {
     };
 }
 
-pub struct Id<T>(T);
-// wy_common::generic!();
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -316,14 +313,11 @@ mod test {
     fn test_parallel() {
         use std::thread;
 
-        let hi = "hi";
-        let bye = "bye";
-
-        let syms_1 = intern_many([hi, bye]);
-        let syms_2 = thread::spawn(move || intern_many(["hi", "bye"]))
+        let [hi, bye] = intern_many(["hi", "bye"]);
+        let [hi2, bye2, blue] = thread::spawn(move || intern_many(["hi", "bye", "blue"]))
             .join()
             .unwrap();
-
-        assert_eq!(syms_1, syms_2)
+        let blue2 = intern_once("blue");
+        assert_eq!([hi, bye, blue2], [hi2, bye2, blue])
     }
 }
