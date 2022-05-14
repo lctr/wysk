@@ -1,6 +1,7 @@
 pub use std::collections::{HashMap as Map, HashSet as Set, VecDeque as Deque};
 
 pub use serde;
+pub mod mapstack;
 pub mod newtypes;
 pub mod text;
 
