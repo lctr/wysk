@@ -99,6 +99,7 @@ where
                 }
             }
             Expression::Group(x) => self.visit_expr(x.as_ref())?,
+            _ => todo!(),
         };
         Ok(())
     }
@@ -245,6 +246,7 @@ where
                     self.visit_expr_mut(exp.as_mut())?;
                 }
             }
+            _ => todo!(),
         }
         Ok(())
     }

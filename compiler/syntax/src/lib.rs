@@ -1,15 +1,24 @@
 use wy_common::{deque, Map};
 use wy_intern::symbol::{self, Symbol};
 
-pub use wy_lexer::{comment::Comment, Literal};
+pub use wy_lexer::{
+    comment::{self, Comment},
+    Literal,
+};
 
+pub mod expr;
 pub mod fixity;
 pub mod ident;
+pub mod pattern;
+pub mod stmt;
 pub mod tipo;
 pub mod visit;
 
+use expr::*;
 use fixity::*;
 use ident::*;
+use pattern::*;
+use stmt::*;
 use tipo::*;
 
 // TODO: documentation; potential split-up of definitions into separate files?
@@ -24,28 +33,32 @@ pub struct Program<Id = Ident> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Module<Id = Ident, Uid = Id> {
-    pub modname: Chain<Uid>,
+pub struct Module<Id = Ident, Uid = (), T = Ident> {
+    pub uid: Uid,
+    pub modname: Chain<Id>,
     pub imports: Vec<ImportSpec<Id>>,
-    pub datatys: Vec<DataDecl<Id>>,
-    pub classes: Vec<ClassDecl<Id>>,
-    pub implems: Vec<InstDecl<Id>>,
-    pub fundefs: Vec<FnDecl<Id>>,
     pub infixes: Vec<FixityDecl<Id>>,
-    pub aliases: Vec<AliasDecl<Id>>,
+    pub datatys: Vec<DataDecl<Id, T>>,
+    pub classes: Vec<ClassDecl<Id, T>>,
+    pub implems: Vec<InstDecl<Id, T>>,
+    pub fundefs: Vec<FnDecl<Id, T>>,
+    pub aliases: Vec<AliasDecl<Id, T>>,
+    pub newtyps: Vec<NewtypeDecl<Id, T>>,
 }
 
 impl Default for Module {
     fn default() -> Self {
         Self {
+            uid: (),
             modname: Chain::new(Ident::Upper(symbol::intern_once("Main")), deque![]),
             imports: vec![],
+            infixes: vec![],
             datatys: vec![],
             classes: vec![],
             implems: vec![],
             fundefs: vec![],
-            infixes: vec![],
             aliases: vec![],
+            newtyps: vec![],
         }
     }
 }
@@ -125,6 +138,24 @@ impl<Id> Import<Id> {
             None
         }
     }
+
+    pub fn idents(&self) -> Vec<Id>
+    where
+        Id: Copy,
+    {
+        match self {
+            Import::Operator(id)
+            | Import::Function(id)
+            | Import::Abstract(id)
+            | Import::Total(id) => vec![*id],
+            Import::Partial(head, ids) => {
+                let mut h = Vec::with_capacity(ids.len() + 1);
+                h.push(*head);
+                h.extend(ids.iter().copied());
+                h
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -172,15 +203,15 @@ impl<Id: Copy + Eq + std::hash::Hash> From<&[FixityDecl<Id>]> for FixityTable<Id
 /// ~~       ^^^^^^^^
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DataDecl<Id = Ident> {
+pub struct DataDecl<Id = Ident, T = Ident> {
     pub name: Id,
-    pub poly: Vec<Tv>,
-    pub ctxt: Vec<Context<Id>>,
-    pub vnts: Vec<Variant<Id>>,
+    pub poly: Vec<T>,
+    pub ctxt: Vec<Context<Id, T>>,
+    pub vnts: Vec<Variant<Id, T>>,
     pub with: Vec<Id>,
 }
 
-impl<Id> DataDecl<Id> {
+impl<Id, T> DataDecl<Id, T> {
     pub fn enumer_tags(mut self) -> Self {
         let mut i = 0;
         for Variant { tag, .. } in self.vnts.iter_mut() {
@@ -189,362 +220,390 @@ impl<Id> DataDecl<Id> {
         }
         self
     }
+
+    pub fn map_t<F, U>(self, mut f: F) -> DataDecl<Id, U>
+    where
+        F: FnMut(T) -> U,
+    {
+        let DataDecl {
+            name,
+            poly,
+            ctxt,
+            vnts,
+            with,
+        } = self;
+        let poly = poly.into_iter().map(|t| f(t)).collect();
+        let ctxt = ctxt.into_iter().map(|c| c.map_t(|t| f(t))).collect();
+        let vnts = vnts.into_iter().map(|v| v.map_t(|t| f(t))).collect();
+        DataDecl {
+            name,
+            poly,
+            ctxt,
+            vnts,
+            with,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Variant<Id = Ident> {
+pub struct Variant<Id = Ident, T = Ident> {
     pub name: Id,
-    pub args: Vec<Type<Id>>,
+    pub args: Vec<Type<Id, T>>,
     pub tag: Tag,
     pub arity: Arity,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+impl<Id, T> Variant<Id, T> {
+    pub fn map_t<F, U>(self, mut f: F) -> Variant<Id, U>
+    where
+        F: FnMut(T) -> U,
+    {
+        let Variant {
+            name,
+            args,
+            tag,
+            arity,
+        } = self;
+        let args = args.into_iter().map(|ty| ty.map_t(&mut f)).collect();
+        Variant {
+            name,
+            args,
+            tag,
+            arity,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Tag(pub u32);
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Arity(pub usize);
 
 impl Arity {
     pub fn from_len<T>(ts: &[T]) -> Self {
         Self(ts.len())
     }
+
+    /// Since `Arity` is essentially a `usize` wrapper corresponding to the
+    /// *number of __arguments__*, this method makes it easy to compare an arity
+    /// with any type `T` that implements `ExactSizeIterator` (i.e., has a `len`
+    /// method).
+    pub fn cmp_len<I>(&self, iter: I) -> std::cmp::Ordering
+    where
+        I: ExactSizeIterator,
+    {
+        let n = self.0;
+        n.cmp(&iter.len())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AliasDecl<Id = Ident> {
+pub struct AliasDecl<Id = Ident, T = Ident> {
     pub name: Id,
-    pub poly: Vec<Tv>,
-    pub sign: Signature<Id>,
+    pub poly: Vec<T>,
+    pub sign: Signature<Id, T>,
+}
+
+impl<Id, T> AliasDecl<Id, T> {
+    pub fn map_t<F, U>(self, mut f: F) -> AliasDecl<Id, U>
+    where
+        F: FnMut(T) -> U,
+    {
+        let AliasDecl { name, poly, sign } = self;
+        let poly = poly.into_iter().map(|t| f(t)).collect();
+        let sign = sign.map_t(|t| f(t));
+        AliasDecl { name, poly, sign }
+    }
+}
+
+/// `Newtype`s allow for *renaming* of types. Ideally little to no overhead is
+/// involved in working with newtypes, as the "type renaming" of a newtype is
+/// effectively forgotten post-typechecking. A newtype declaration is helpful
+/// for discriminating against various "uses" of a single type. For example, it
+/// is perfectly acceptable to use a type alias to distinguish between numerical
+/// units, however this does not provide a safeguard against inconsistencies!
+///
+/// Like data variants, `Newtype` variants define constructors -- HOWEVER, *only
+/// one* constructor is accepted! A `Product` variant corresponds to a single
+/// data constructor with (arbitrarily many) arguments, while a `Record` variant
+/// corresponds to a single constructor *associated with* a selector function,
+/// whose signature is included in the variant.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NewtypeArg<Id = Ident, T = Ident> {
+    Product(Vec<Type<Id, T>>),
+    Record(Id, Signature<Id, T>),
+}
+
+impl<Id, T> NewtypeArg<Id, T> {
+    pub fn map_t<F, U>(self, mut f: F) -> NewtypeArg<Id, U>
+    where
+        F: FnMut(T) -> U,
+    {
+        match self {
+            NewtypeArg::Product(ts) => {
+                NewtypeArg::Product(ts.into_iter().map(|ty| ty.map_t(&mut f)).collect())
+            }
+            NewtypeArg::Record(k, sig) => NewtypeArg::Record(k, sig.map_t(f)),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NewtypeDecl<Id = Ident> {
+pub struct NewtypeDecl<Id = Ident, T = Ident> {
     pub name: Id,
-    pub poly: Vec<Tv>,
+    pub poly: Vec<T>,
     pub ctor: Id,
-    pub tipo: Type<Id>,
-    pub dict: Option<(Id, Signature)>,
+    pub narg: NewtypeArg<Id, T>,
     pub with: Vec<Id>,
 }
 
-/// A `Context` always appears as an element in a sequence of other `Context`s
-/// preceding a `=>` and a type signature, and encodes what *type constraints* a
-/// given *type variable* must adhere to in the following type signature.
-///
-/// For example, the following type signature contains *two* `Context`s
-/// corresponding to two type variables `a` and `b`, where, for some given
-/// typeclasses `A` and `B`, `a` is constrained (= required to be a member of)
-/// the typeclass `A`, and `b` is constrained to `B`.
-/// ```wysk
-/// ~~> Context 1
-/// ~~|  vvv
-///     |A a, B b| => (a, b)
-/// ~~:       ^^^  
-/// ~~:  Context 2
-/// ~~: ^--------^
-/// ~~: Context 1 and Context 2, surrounded by `|` and followed by `=>`
-/// ```
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Context<Id = Ident, T = Tv> {
-    pub class: Id,
-    /// Defaults to `Tv`, but is parametrized in order to allow for simple
-    /// (lowercase) identifiers to be used during parsing (which should then be
-    /// *normalized* once the RHS is available so that `T` directly matches any
-    /// type variables from the RHS).
-    pub tyvar: T,
+impl<Id, T> NewtypeDecl<Id, T> {
+    pub fn map_t<F, U>(self, mut f: F) -> NewtypeDecl<Id, U>
+    where
+        F: FnMut(T) -> U,
+    {
+        let NewtypeDecl {
+            name,
+            poly,
+            ctor,
+            narg,
+            with,
+        } = self;
+        let poly = poly.into_iter().map(|t| f(t)).collect();
+        let narg = narg.map_t(f);
+        NewtypeDecl {
+            name,
+            poly,
+            ctor,
+            narg,
+            with,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ClassDecl<Id = Ident> {
+pub struct ClassDecl<Id = Ident, T = Ident> {
     pub name: Id,
-    pub poly: Vec<Tv>,
-    pub ctxt: Vec<Context<Id>>,
-    pub defs: Vec<Method<Id>>,
+    pub poly: Vec<T>,
+    pub ctxt: Vec<Context<Id, T>>,
+    pub defs: Vec<Method<Id, T>>,
+}
+
+impl<Id, T> ClassDecl<Id, T> {
+    pub fn map_t<F, U>(self, mut f: F) -> ClassDecl<Id, U>
+    where
+        F: FnMut(T) -> U,
+    {
+        let ClassDecl {
+            name,
+            poly,
+            ctxt,
+            defs,
+        } = self;
+        let poly = poly.into_iter().map(|t| f(t)).collect();
+        let ctxt = ctxt.into_iter().map(|ctx| ctx.map_t(|t| f(t))).collect();
+        let defs = defs.into_iter().map(|m| m.map_t(|t| f(t))).collect();
+        ClassDecl {
+            name,
+            poly,
+            ctxt,
+            defs,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct InstDecl<Id = Ident> {
+pub struct InstDecl<Id = Ident, T = Ident> {
     pub name: Id,
-    pub tipo: Type<Id>,
-    pub ctxt: Vec<Context<Id>>,
-    pub defs: Vec<Binding<Id>>,
+    pub tipo: Type<Id, T>,
+    pub ctxt: Vec<Context<Id, T>>,
+    pub defs: Vec<Binding<Id, T>>,
+}
+
+impl<Id, T> InstDecl<Id, T> {
+    pub fn map_t<F, U>(self, mut f: F) -> InstDecl<Id, U>
+    where
+        F: FnMut(T) -> U,
+    {
+        let InstDecl {
+            name,
+            tipo,
+            ctxt,
+            defs,
+        } = self;
+        let tipo = tipo.map_t(&mut f);
+        let ctxt = ctxt.into_iter().map(|ctx| ctx.map_t(|t| f(t))).collect();
+        let defs = defs.into_iter().map(|b| b.map_t(|t| f(t))).collect();
+        InstDecl {
+            name,
+            tipo,
+            ctxt,
+            defs,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FnDecl<Id = Ident> {
+pub struct FnDecl<Id = Ident, T = Ident> {
     pub name: Id,
-    pub sign: Option<Signature<Id>>,
-    pub defs: Vec<Match<Id>>,
+    pub sign: Option<Signature<Id, T>>,
+    pub defs: Vec<Match<Id, T>>,
+}
+
+impl<Id, T> FnDecl<Id, T> {
+    pub fn map_t<F, U>(self, mut f: F) -> FnDecl<Id, U>
+    where
+        F: FnMut(T) -> U,
+    {
+        let FnDecl { name, sign, defs } = self;
+        let sign = sign.map(|sig| sig.map_t(|t| f(t)));
+        let defs = defs.into_iter().map(|m| m.map_t(|t| f(t))).collect();
+        FnDecl { name, sign, defs }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Signature<Id = Ident> {
-    pub ctxt: Vec<Context<Id>>,
-    pub tipo: Type<Id>,
+pub enum Method<Id = Ident, T = Ident> {
+    Sig(Id, Signature<Id, T>),
+    Impl(Binding<Id, T>),
+}
+
+impl<Id, T> Method<Id, T> {
+    pub fn name(&self) -> Id
+    where
+        Id: Copy,
+    {
+        match self {
+            Method::Sig(id, _) | Method::Impl(Binding { name: id, .. }) => *id,
+        }
+    }
+    pub fn map_t<F, U>(self, f: F) -> Method<Id, U>
+    where
+        F: FnMut(T) -> U,
+    {
+        match self {
+            Method::Sig(id, sig) => Method::Sig(id, sig.map_t(f)),
+            Method::Impl(binding) => Method::Impl(binding.map_t(f)),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Method<Id = Ident> {
-    Sig(Id, Signature<Id>),
-    Impl(Binding<Id>),
-}
-
-/// ```wysk
-/// ~{
-///       `name`
-///         |          `tipo`   
-///         v     vvvvvvvvvvvvvvvv
-/// }~  fn foo :: a -> b -> (a, b)
-///     | x y = (x, y);
-/// ~~: ^^^^^^^^^^^^^^ `arms[0]`
-/// ```
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Binding<Id = Ident> {
-    pub name: Id,
-    pub arms: Vec<Match<Id>>,
-    pub tipo: Option<Signature<Id>>,
-}
-
-/// ```wysk
-///     fn foo :: Int -> Int -> Bool
-/// ~~> Match[0]
-/// ~~|  `args`
-/// ~~|   vvv
-///     | x y if x > y = True
-/// ~~:       ^^^^^^^^   ^^^^
-/// ~~:        `pred`   `body`
-/// ~~> Match[1]
-/// ~~|  `args`
-/// ~~|   vvv
-///     | x y = False && u where u = x + y > 0
-/// ~~:   ^^^   ^^^^^^^^^^ ^^^^^^^^^^^^^^^^^^^
-/// ~~: `args`    `body`         `wher[0]`
-/// ```
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Match<Id = Ident> {
-    pub args: Vec<Pattern<Id>>,
-    pub pred: Option<Expression<Id>>,
-    pub body: Expression<Id>,
-    pub wher: Vec<Binding<Id>>,
-}
-
-/// Pattern matching over a function definition
-/// ```wysk
-/// fn null :: [a] -> Bool
-/// | [] = True
-/// | _ = False;
-/// ```
-/// can be simplified to a `case` expression
-/// ```wysk
-/// fn null :: [a] -> Bool
-/// | xs = case xs of
-/// ~~> Alternative[0]
-/// ~~|  `pat`
-/// ~~|   vv
-///     | [] -> True
-/// ~~> Alternative[1]
-/// ~~|  `pat`
-/// ~~|   |  `pred`      `body`
-/// ~~|   v vvvvvvvvv    vvvvv
-///     | _ if t || u -> False
-///         where t = True;
-/// ~~:           ^^^^^^^^ `wher[0]`
-///               u = False;
-/// ~~:           ^^^^^^^^^ `wher[1]`
-/// ```
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Alternative<Id = Ident> {
-    pub pat: Pattern<Id>,
-    pub pred: Option<Expression<Id>>,
-    pub body: Expression<Id>,
-    pub wher: Vec<Binding<Id>>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Declaration<Id = Ident> {
-    Data(DataDecl<Id>),
-    Alias(AliasDecl<Id>),
+pub enum Declaration<Id = Ident, T = Ident> {
+    Data(DataDecl<Id, T>),
+    Alias(AliasDecl<Id, T>),
     Fixity(FixityDecl<Id>),
-    Class(ClassDecl<Id>),
-    Instance(InstDecl<Id>),
-    Function(FnDecl<Id>),
+    Class(ClassDecl<Id, T>),
+    Instance(InstDecl<Id, T>),
+    Function(FnDecl<Id, T>),
+    Newtype(NewtypeDecl<Id, T>),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Expression<Id = Ident> {
-    /// Identifier expressions; these can contain either *lowercase*-initial
-    /// identifiers (corresponding to values), *uppercase*-initial identifiers
-    /// (correstpondingo constructors), OR infix identifiers (corresponding to
-    /// infixes used in non-infix nodes).
+/// Not all possible combinations of AST nodes are valid, and in fact many may
+/// be accepted *syntactically* but not *semantically* by the parser (or later
+/// phases of analysis). `SynRule` ties in potential semantic errors
+/// *stemming from* syntactic invariants not being upheld.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum SynRule {
+    /// Each function declaration may contain multiple match arms, *however*
+    /// these match arms must all appear contiguously within the function's
+    /// declaration body. This rule is broken when more than one function
+    /// declaration with the *same name* is found.
+    NoDuplicateFuncs,
+    /// As with `NoDuplicateFuncs`, this rule requires that no duplicate methods
+    /// (either definitions or implementations) be found in any declaration that
+    /// contains them, i.e., class or impl declarations.
+    NoDuplicateMethods,
+    /// All methods defined within the body of a class declaration are required
+    /// to be annotated with their corresponding type signatures
+    ClassMethodAnnotated,
+    /// A more general version of the invariant requiring function declarations
+    /// to preserve arities across match arms. Generalized since match arms are
+    /// found not only in function declarations, but also in `let` expressions
+    /// and `where` clauses.
     ///
-    /// Note that *qualified* identifiers are parsed as `Path`s! This is because
-    /// `.` has record selection semantics, and namespaces are treated as
-    /// records. Thus, the expression `f x` contains two `Ident` nodes, while
-    /// the expression `F.x` contains a single `Path` node.
-    Ident(Id),
-    /// A combination of identifiers. The first identifier, coined the `root` is
-    /// held separately from the rest, and it is *impossible* for a node of this
-    /// variety to have an empty vector of identifiers (called the `tail`).
-    ///
-    /// A path `A.b.c` is represented as `Path::(A, [b, c])`, where the `tail`
-    /// contains identifiers implicitly prefixed with a `.`.
-    ///
-    /// Path nodes are ultimately resolved to identifiers, and currently have
-    /// two semantic uses:
-    /// * identifier qualification; if a module `M` is
-    /// imported and qualified as `N`, and `f` is exported from `M`, then `M.f`
-    /// and `N.f` correspond to the same thing.
-    /// * record selection; if a record `r` has field `f`, then `r.f` is
-    ///   equivalent to the call `r f`
-    Path(Id, Vec<Id>),
-    Lit(Literal),
-    Neg(Box<Expression<Id>>),
-    Infix {
-        infix: Id,
-        left: Box<Expression<Id>>,
-        right: Box<Expression<Id>>,
-    },
-    Tuple(Vec<Expression<Id>>),
-    Array(Vec<Expression<Id>>),
-    /// List comprehensions contain an expression and a list of statements
-    /// consisting of *generators* and *predicates*.
-    ///
-    /// For example, if we suppose `f :: Int -> Int` is some integer-valued
-    /// function, and `even :: Int -> Bool` is some integer-valued predicate
-    /// testing for integer parity, then the following list expression would
-    /// generate a list of the results of applying `f` to each even integer
-    /// between `0` and `10` (not-inclusive).
+    /// For example, the following `let`-declaration for `foo` contains two
+    /// arms, the first with a single pattern (and hence arity `1`) and the
+    /// second with two patterns (and hence arity `2`).
     /// ```wysk
-    ///     [ f x | x <- [0..10], even x ]
+    ///     let foo
+    ///     | a = 3 ~~ 1 arg => arity = 1
+    ///     | b c = 12 ~~ contradiction! 2 args => arity = 2 but arity = 1!
+    ///     in ...
     /// ```
-    /// In fact, the above expression would be equivalent to
+    /// Since the arities aren't equal for the same binding (`foo`), this would
+    /// be a compile time error.
+    ///
+    /// NOTE: the same applies for types! A type constructor has an arity `A` if
+    /// it is fully saturated with `A` type arguments, though this is caught in
+    /// a rule specific to type application arities
+    ///
+    BindingAritiesEqual,
+    /// A binding must not have more argument patterns than denoted by its type
+    /// signature. Since *Wysk* uses *currying semantics*, it is possible for a
+    /// function or binding to have a type signature indicating a function with
+    /// arity `K` and have `N` arguments for `N < K`, though this *does* require
+    /// that the right-hand side (= body definition) resolve to a function of `K
+    /// - N` parameters.
+    ///
+    /// For example, a function `hello :: a -> b -> c -> (a, b, c)` may have a
+    /// body accepting *1*, *2*, or *3* parameters:
+    /// 1. if only 1 parameter is included in the binding then the right hand
+    ///    side must output what resolves to being a function of the *rest* of
+    ///    the arguments, such as in the declaration below
     /// ```wysk
-    ///     map f (filter even [0..10])
+    ///         fn hello :: a -> b -> c -> (a, b, c)
+    ///         | x = \y z -> (x, y, z)
     /// ```
-    /// and can be generalized to the following (inefficient) `let` expression,
-    /// where we use `f`
+    ///
+    /// If `f` is a function with a signature indicating an arity of *n*, i.e.
     /// ```wysk
-    /// let f :: a -> b
-    ///     | a' = ...
-    ///     g :: a -> Bool
-    ///     | a'' = ...
-    ///     h :: [a] -> [b]
-    ///     | [] = []
-    ///     | (a:as) if g a -> f a : h as
-    ///     | (a:as) -> h as
-    /// in ...
+    /// f :: a1 -> a2 -> ... -> an -> b
     /// ```
-    List(Box<Expression<Id>>, Vec<Statement<Id>>),
-    Dict(Record<Expression<Id>, Id>),
-    Lambda(Pattern<Id>, Box<Expression<Id>>),
-    Let(Vec<Binding<Id>>, Box<Expression<Id>>),
-    App(Box<Expression<Id>>, Box<Expression<Id>>),
-    Cond(Box<[Expression<Id>; 3]>),
-    Case(Box<Expression<Id>>, Vec<Alternative<Id>>),
-    Cast(Box<Expression<Id>>, Type<Id>),
-    Do(Vec<Statement<Id>>, Box<Expression<Id>>),
-    Range(Box<Expression<Id>>, Option<Box<Expression<Id>>>),
-    Group(Box<Expression<Id>>),
-}
-
-impl<Id> Expression<Id> {
-    pub const UNIT: Self = Self::Tuple(vec![]);
-    pub const NULL: Self = Self::Array(vec![]);
-    pub const VOID: Self = Self::Dict(Record::Anon(vec![]));
-    pub fn is_unit(&self) -> bool {
-        matches!(self, Self::Tuple(vs) if vs.is_empty())
-    }
-    pub fn is_null(&self) -> bool {
-        matches!(self, Self::Array(vs) if vs.is_empty())
-    }
-    pub fn is_void(&self) -> bool {
-        matches!(self, Self::Dict(Record::Anon(vs)) if vs.is_empty())
-    }
-    pub fn is_empty_record(&self) -> bool {
-        matches!(self, Self::Dict(Record::Anon(fs)|Record::Data(_, fs)) if fs.is_empty() )
-    }
-
-    /// If an expression is a `Group` variant, return the inner node.
-    /// Otherwise, returns `Self`.
-    pub fn ungroup(self) -> Self {
-        match self {
-            Expression::Group(expr) => *expr,
-            expr => expr,
-        }
-    }
-
-    /// If an expression is a `Group` variant, return a reference to the inner
-    /// node. Otherwise, return a reference to `Self`.
-    pub fn ungroup_ref(&self) -> &Self {
-        match self {
-            Expression::Group(expr) => expr.as_ref(),
-            expr => expr,
-        }
-    }
-
-    pub fn mk_app(head: Self, tail: Self) -> Self {
-        Self::App(Box::new(head), Box::new(tail))
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Statement<Id = Ident> {
-    // <PAT> <- <EXPR>
-    Generator(Pattern<Id>, Expression<Id>),
-    // <EXPR>
-    Predicate(Expression<Id>),
-    // `let` without the `in`;
-    // let (<ID> <PAT>* = <EXPR>)+
-    JustLet(Vec<Binding<Id>>),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Pattern<Id = Ident> {
-    /// Describes the wildcard pattern and is written `_`. Since it is a
-    /// wildcard pattern, it matches against *any* pattern.
-    Wild,
-    /// Describes a named wildxard pattern and syntactically corresponds to *any
-    /// lowercase-initial identifier*. The pattern `a` is a `Var` pattern and
-    /// can be rewritten as the `At` pattern `a @ _`, so it follows that this
-    /// pattern matches against *any* pattern, but *also* introduces a
-    /// *binding* between the identifier and the element being matched on.
-    Var(Id),
-    /// Describes a literal as a pattern and is the one variant of patterns with
-    /// specific restrictions.
-    Lit(Literal),
-    /// Describes the pattern formed by a data constructor and its arguments
-    /// (data). In particular, the data constructor *must* be an
-    /// uppercase-initial identifier.
-    Dat(Id, Vec<Pattern<Id>>),
-    Tup(Vec<Pattern<Id>>),
-    /// Describes a list formed with array-like bracket syntax, e.g.,
-    /// `[a, b, c]`. Syntactic sugar for lists.
-    Vec(Vec<Pattern<Id>>),
-    /// Describes a list formed with cons operator infix syntax, e.g.,
-    /// `(a:b:c)`. Note that *as a pattern*, this *must* occur within
-    /// parentheses, as *operator fixities are not observed in patterns*.
-    Lnk(Box<Pattern<Id>>, Box<Pattern<Id>>),
-    At(Id, Box<Pattern<Id>>),
-    Or(Vec<Pattern<Id>>),
-    Rec(Record<Pattern<Id>, Id>),
-    Cast(Box<Pattern<Id>>, Type<Id>),
-}
-
-impl<Id> Pattern<Id> {
-    pub const UNIT: Self = Self::Tup(vec![]);
-    pub const NIL: Self = Self::Vec(vec![]);
-    pub const VOID: Self = Self::Rec(Record::VOID);
-    pub fn is_unit(&self) -> bool {
-        matches!(self, Self::Tup(vs) if vs.is_empty())
-    }
-    pub fn is_null(&self) -> bool {
-        matches!(self, Self::Vec(vs) if vs.is_empty())
-    }
-    pub fn is_void(&self) -> bool {
-        matches!(self, Self::Rec(Record::Anon(vs)) if vs.is_empty())
-    }
-    pub fn is_empty_record(&self) -> bool {
-        matches!(self, Self::Rec(Record::Anon(fs)|Record::Data(_, fs)) if fs.is_empty() )
-    }
+    /// then *the number of patterns* allowed in its bindings __must not
+    /// exceed__ *n*. For example, the following function declaration for `foo`
+    /// is invalid, as the signature `a -> b -> c` indicates an arity of 2,
+    /// while the match arm `| x y z = ...` contains *3* argument patterns.
+    ///
+    /// ```wysk
+    /// fn foo :: a -> b -> c
+    /// | x y z = ... ~~ invalid!
+    /// ```
+    BindingAritiesMatchType,
+    /// While *data constructors* may possess distinct arities (compare `Some ::
+    /// a -> Option a` with `None :: Option a`), the *arity of a type
+    /// application*, defined as the number of types over which a type
+    /// constructor is parametrized, must stay the same!
+    ///
+    /// Consider the type `Result a b`
+    /// ```wysk
+    /// data Result a b = Ok a | Err b
+    /// ```
+    /// parameterized over the type variables `a` and `b`. We can see that its
+    /// *data* constructors each have arity `1`, but as a *type application*
+    /// `Result a b` has arity `2`. Thus the form `Result a` in any type
+    /// signature is __invalid__, as it is missing the *second* type parameter.
+    TyAppAritiesEqual,
+    /// In a type signature with a non-trivial context (i.e., a context is
+    /// included), *all* type variables in the context must appear at least once
+    /// in the type annotation that follows.
+    ///
+    /// Note that type variables need not occur in the context! It is only for
+    /// type variables in contexts that must occur in the type annotation.
+    /// * `|Show a, Show b| a -> ()`
+    ///    - Invalid due to `b` occurring in the context but not the annotation
+    /// * Valid: `|Show a, Show b| a -> (a, b, c)
+    ///   - Valid since all type variables (`a`, `b`) in the context `|Show a,
+    ///   Show b|` occur in the type annotation `(a, b, c)`
+    NoUnusedCtxTyVars,
+    /// The contexts in a given type signature may include the same type
+    /// variable ONLY IF the corresponding type classes are NOT repeated. It is
+    /// invalid for the *same* context to appear more than once in a list of
+    /// contexts.
+    /// * `|Show a, Show a|`
+    ///     - Invalid due to duplicate instances of `Show a`
+    /// * `|Show a, Show a'|`
+    ///     - Valid since `a` is lexicographically distinct from `a'`
+    NoDuplicatesInCtx,
 }
