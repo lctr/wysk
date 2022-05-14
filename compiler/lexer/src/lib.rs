@@ -622,7 +622,7 @@ pub fn is_ident_start(c: char) -> bool {
     c.is_alphabetic() || matches!(c, '_')
 }
 pub fn is_ident_char(c: char) -> bool {
-    c.is_alphabetic() || matches!(c, '_' | '\'')
+    c.is_alphanumeric() || matches!(c, '_' | '\'')
 }
 
 pub fn get_escaped(c: char) -> char {
