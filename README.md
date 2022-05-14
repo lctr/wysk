@@ -52,4 +52,4 @@ The following may not necessarily be directly involved within the development of
 * [[2013] Dunfield and Krishnaswami. *Complete and easy bidirectional typechecking for higher-rank polymorphism*](https://research.cs.queensu.ca/home/jana/papers/bidir/)
 * [[2015] Stephen Diehl. *Write you a Haskell*](http://dev.stephendiehl.com/fun/WYAH.pdf)
 * [[2020] Serrano, Have, Jones, Vytiniotis. *A Quick Look at Impredicativity*](https://www.microsoft.com/en-us/research/uploads/prod/2020/01/quick-look.pdf)
-* [[2022] Gonglin Li. "An Affine Type System with Hindley-Milner Style Type Inference"](https://arxiv.org/pdf/2203.17125v1.pdf)
+* [[2022] Gonglin Li. *An Affine Type System with Hindley-Milner Style Type Inference*](https://arxiv.org/pdf/2203.17125v1.pdf)
