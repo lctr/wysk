@@ -272,7 +272,7 @@ macro_rules! strenum {
                 )*
                 labels
             }
-            pub fn array() -> [Self; $crate::strenum!(# $($name)+)] {
+            pub const fn array() -> [Self; $crate::strenum!(# $($name)+)] {
                 [$($opk::$name,)+]
             }
             pub fn array_str() -> [&'static str; $crate::strenum!(# $($name)+)] {
