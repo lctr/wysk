@@ -64,6 +64,16 @@ impl Ident {
         // }
     }
 
+    /// Returns the constructor for the given `Ident` variant
+    pub fn pure(&self) -> fn(Symbol) -> Self {
+        match self {
+            Ident::Upper(_) => Ident::Upper,
+            Ident::Lower(_) => Ident::Lower,
+            Ident::Infix(_) => Ident::Infix,
+            Ident::Fresh(_) => Ident::Fresh,
+        }
+    }
+
     #[inline]
     pub fn minus_sign() -> Self {
         symbol::MINUS.pure(Self::Infix)
@@ -106,6 +116,18 @@ fn test_idents() {
 /// may be *concatenated*.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Chain<Id = Ident>(Id, Deque<Id>);
+
+impl From<Chain<Ident>> for Ident {
+    fn from(chain: Chain<Ident>) -> Self {
+        chain.root().pure()(chain.canonicalize())
+    }
+}
+
+impl From<&Chain<Ident>> for Ident {
+    fn from(chain: &Chain<Ident>) -> Self {
+        chain.root().pure()(chain.canonicalize())
+    }
+}
 
 impl<Id> Chain<Id> {
     pub fn new(root: Id, tail: Deque<Id>) -> Self {
@@ -177,6 +199,16 @@ impl<Id> Chain<Id> {
         Chain(f(x), xs.into_iter().map(f).collect())
     }
 
+    /// Analogous to `map`, but without taking ownership of `Self`.
+    pub fn map_ref<F, Y>(&self, mut f: F) -> Chain<Y>
+    where
+        F: FnMut(&Id) -> Y,
+        Id: Copy,
+    {
+        let Chain(x, xs) = self;
+        Chain(f(x), xs.iter().map(f).collect())
+    }
+
     pub fn contains_in_tail(&self, id: &Id) -> bool
     where
         Id: PartialEq,
@@ -190,6 +222,40 @@ impl<Id> Chain<Id> {
         tail.push_back(rhs.0);
         tail.extend(rhs.1);
         Chain(head, tail)
+    }
+
+    pub fn into_string(&self) -> String
+    where
+        Id: std::fmt::Display,
+    {
+        format!("{}", self)
+    }
+
+    pub fn write_to_string(&self, buf: &mut String)
+    where
+        Id: std::fmt::Display,
+    {
+        buf.push_str(&*(self.into_string()))
+    }
+
+    /// Takes the string representation of this `Chain` and interns it,
+    /// returning the `Symbol` corresponding to the concatenated (dot-separated)
+    /// identifier. Notice that this does NOT return an `Ident`: this is because
+    /// the upper/lower distinction is lost at this level!
+    pub fn canonicalize(&self) -> Symbol
+    where
+        Id: std::fmt::Display,
+    {
+        symbol::intern_once(&*(self.into_string()))
+    }
+}
+
+impl<Id> PartialEq<Id> for Chain<Id>
+where
+    Id: PartialEq,
+{
+    fn eq(&self, other: &Id) -> bool {
+        &self.0 == other && self.1.is_empty()
     }
 }
 
