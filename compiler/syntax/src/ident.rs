@@ -1,11 +1,15 @@
 use wy_common::Deque;
-use wy_intern::symbol::{self, Symbol};
+use wy_intern::symbol::{self, Symbol, Symbolic};
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub enum Ident {
     Upper(Symbol),
     Lower(Symbol),
     Infix(Symbol),
+    /// Represent user-input type variables. These are for documentation
+    /// primarily, as types are mapped to use `Tv` for variables during
+    /// typechecking.
+    Fresh(Symbol),
 }
 
 impl std::fmt::Debug for Ident {
@@ -14,21 +18,31 @@ impl std::fmt::Debug for Ident {
             Self::Upper(arg0) => write!(f, "Upper({})", arg0),
             Self::Lower(arg0) => write!(f, "Lower({})", arg0),
             Self::Infix(arg0) => write!(f, "Infix({})", arg0),
+            Self::Fresh(arg0) => write!(f, "Fresh({})", arg0),
         }
     }
 }
 
 impl std::fmt::Display for Ident {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.get_symbol())
+        write!(f, "{}", self.symbol())
     }
 }
 
+impl Symbolic for Ident {
+    fn get_symbol(&self) -> Symbol {
+        self.symbol()
+    }
+}
+
+wy_common::variants!(#((Symbol) Ident :Upper :Lower :Infix :Fresh));
+
 impl Ident {
-    pub fn get_symbol(&self) -> Symbol {
-        match self {
-            Self::Upper(s) | Self::Lower(s) | Self::Infix(s) => *s,
-        }
+    pub fn symbol(&self) -> Symbol {
+        *self.get_inner()
+        // match self {
+        //     Self::Upper(s) | Self::Lower(s) | Self::Infix(s) | Self::Fresh(s) => *s,
+        // }
     }
     pub fn is_upper(&self) -> bool {
         matches!(self, Self::Upper(..))
@@ -38,6 +52,16 @@ impl Ident {
     }
     pub fn is_infix(&self) -> bool {
         matches!(self, Self::Infix(..))
+    }
+    pub fn is_fresh(&self) -> bool {
+        matches!(self, Self::Fresh(..))
+    }
+
+    pub fn as_u32(self) -> u32 {
+        self.get_inner().as_u32()
+        // match self {
+        //     Ident::Upper(s) | Ident::Lower(s) | Ident::Infix(s) | Ident::Fresh(s) => s.as_u32(),
+        // }
     }
 
     #[inline]
@@ -51,23 +75,18 @@ impl Ident {
         Self::Infix(*symbol::CONS)
     }
 
-    pub fn tuples_sign(extras: usize) -> Self {
+    pub fn tuple_commas(extras: usize) -> Self {
         Self::Infix(symbol::intern_once(
             &*(0..(extras + 1)).map(|_| ',').collect::<String>(),
         ))
     }
 }
 
-pub struct Grouped<T>(T);
-wy_common::generic! { Grouped, T, T
-    | Clone Copy Debug Display PartialEq Eq PartialOrd Ord Default Hash
-}
-
 #[test]
 fn test_idents() {
     let cons = Ident::cons_sign();
     let minus = Ident::minus_sign();
-    let tuples = (0..5).map(Ident::tuples_sign).collect::<Vec<_>>();
+    let tuples = (0..5).map(Ident::tuple_commas).collect::<Vec<_>>();
     assert_eq!(cons, Ident::Infix(symbol::intern_once(":")));
     assert_eq!(minus, Ident::Infix(symbol::intern_once("-")));
     assert_eq!(tuples[0], Ident::Infix(symbol::intern_once(",")));
@@ -120,6 +139,12 @@ impl<Id> Chain<Id> {
         self.1.len()
     }
 
+    /// Returns an iterator over references to all identifiers in the `Chain`,
+    /// with the `&Id` yielded in order.
+    pub fn iter(&self) -> impl Iterator<Item = &Id> {
+        vec![&self.0].into_iter().chain(self.1.iter())
+    }
+
     /// Given a slice of `Id`s of length > 1, returns a new instance (wrapped in
     /// a `Some` variant) of type `Self` where the first `Id` is in the root and
     /// the rest in the tail. If the slice is empty or has length 1, `None` is
@@ -151,21 +176,22 @@ impl<Id> Chain<Id> {
         let Chain(x, xs) = self;
         Chain(f(x), xs.into_iter().map(f).collect())
     }
-}
 
-impl<Id> Iterator for Chain<Id> {
-    type Item = Id;
+    pub fn contains_in_tail(&self, id: &Id) -> bool
+    where
+        Id: PartialEq,
+    {
+        self.1.contains(id)
+    }
 
-    fn next(&mut self) -> Option<Self::Item> {
-        match self.1.pop_front() {
-            Some(id) => Some(std::mem::replace(&mut self.0, id)),
-            None => None,
-        }
+    pub fn concat_right(self, rhs: Self) -> Self {
+        let head = self.0;
+        let mut tail = self.1;
+        tail.push_back(rhs.0);
+        tail.extend(rhs.1);
+        Chain(head, tail)
     }
 }
-
-#[test]
-fn test_chain_iter() {}
 
 impl<Id> Extend<Id> for Chain<Id> {
     fn extend<T: IntoIterator<Item = Id>>(&mut self, iter: T) {
