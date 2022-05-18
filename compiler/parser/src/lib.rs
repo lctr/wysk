@@ -7,7 +7,7 @@ use wy_syntax::{
     ident::{Chain, Ident},
     pattern::Pattern,
     stmt::{Alternative, Binding, Match, Statement},
-    tipo::{Context, Field, Record, Signature, Tv, Type},
+    tipo::{Context, Field, Record, Signature, Type},
     AliasDecl, Arity, ClassDecl, DataDecl, Declaration, FixityDecl, FnDecl, Import, ImportSpec,
     InstDecl, Method, Module, NewtypeArg, NewtypeDecl, Program, Tag, Variant,
 };
@@ -69,6 +69,13 @@ pub trait Streaming {
             self.bump();
         }
         on_it
+    }
+
+    fn ignore<T>(&mut self, item: T)
+    where
+        T: Lexlike<Self::Peeked, Self::Lexeme>,
+    {
+        self.bump_on(item);
     }
 
     fn is_done(&mut self) -> bool;
@@ -134,15 +141,6 @@ impl<'t> Parser<'t> {
         Self {
             lexer: Lexer::new(src),
             filepath,
-            queue: Deque::new(),
-            fixities: FixityTable::new(Ident::Infix),
-        }
-    }
-
-    pub fn with_lexer(lexer: Lexer<'t>) -> Self {
-        Self {
-            lexer,
-            filepath: None,
             queue: Deque::new(),
             fixities: FixityTable::new(Ident::Infix),
         }
@@ -238,17 +236,17 @@ impl<'t> Parser<'t> {
         }
     }
 
-    pub fn ignore<T>(&mut self, item: T)
-    where
-        T: Lexlike,
-    {
-        match self.peek() {
-            Some(t) if item.cmp_tok(t) => {
-                self.bump();
-            }
-            _ => (),
-        }
-    }
+    // pub fn ignore<T>(&mut self, item: T)
+    // where
+    //     T: Lexlike,
+    // {
+    //     match self.peek() {
+    //         Some(t) if item.cmp_tok(t) => {
+    //             self.bump();
+    //         }
+    //         _ => (),
+    //     }
+    // }
 
     pub fn lookahead<const N: usize>(&mut self) -> [Token; N] {
         let mut array = [Token {
@@ -338,7 +336,6 @@ impl<'t> Streaming for Parser<'t> {
 }
 
 macro_rules! expect {
-    // (>> ) => {{}};
     ($self:ident $lexkind:ident) => {{
         let srcloc = $self.get_srcloc();
         if let Some(Token {
@@ -619,7 +616,7 @@ impl<'t> DeclParser<'t> {
         Ok(FixityDecl { infixes, fixity })
     }
 
-    fn data_decl(&mut self) -> Parsed<DataDecl> {
+    fn data_decl(&mut self) -> Parsed<DataDecl<Ident, Ident>> {
         use Keyword::{Data, With};
         use Lexeme::{Comma, Equal, Kw, ParenL, ParenR, Pipe};
 
@@ -716,6 +713,28 @@ impl<'t> DeclParser<'t> {
         self.eat(Lexeme::CurlyL)?;
         let mut defs = vec![];
         while !self.peek_on(Lexeme::CurlyR) {
+            // match self.peek() {
+            //     lexpat!(~[def]) => {
+            //         defs.push(self.method_signature()?);
+            //     }
+            //     lexpat!(~[fn]) => {
+            //         defs.push(self.function_decl().map(|FnDecl { name, defs, sign }| {
+            //             Method::Impl(Binding {
+            //                 name,
+            //                 arms: defs,
+            //                 tipo: sign,
+            //             })
+            //         })?);
+            //     }
+            //     _ => {
+            //         return Err(ParseError::Custom(
+            //             self.get_srcloc(),
+            //             self.lookahead::<1>()[0],
+            //             "doesn't begin a class method",
+            //             self.text(),
+            //         ))
+            //     }
+            // };
             match self.binding()? {
                 Binding {
                     name,
@@ -733,6 +752,15 @@ impl<'t> DeclParser<'t> {
             ctxt,
             defs,
         })
+    }
+
+    #[allow(unused)]
+    fn method_signature(&mut self) -> Parsed<Method> {
+        self.eat(Lexeme::Kw(Keyword::Def))?;
+        let name = self.binder_name()?;
+        self.eat(Lexeme::Colon2)?;
+        let tipo = self.total_signature()?;
+        Ok(Method::Sig(name, tipo))
     }
 
     fn inst_decl(&mut self) -> Parsed<InstDecl> {
@@ -772,7 +800,7 @@ impl<'t> DeclParser<'t> {
             self.eat(CurlyR)?;
             NewtypeArg::Record(label, tysig)
         } else {
-            NewtypeArg::Product(self.many_while(|p| lexpat!(p on [;] | [kw]), Self::ty_node)?)
+            NewtypeArg::Stacked(self.many_while(|p| lexpat!(p on [;] | [kw]), Self::ty_node)?)
         };
         let with = if self.bump_on(With) {
             if self.peek_on(ParenL) {
@@ -813,7 +841,7 @@ impl<'t> Parser<'t> {
         while !(self.is_done() || lexpat!(self on [;] | [|] | [kw])) {
             args.push(self.ty_node()?);
         }
-        let arity = Arity(args.len());
+        let arity = Arity::new(args.len());
         Ok(Variant {
             name,
             args,
@@ -910,22 +938,14 @@ impl<'t> TypeParser<'t> {
 
     fn maybe_ty_app(&mut self, head: Type) -> Parsed<Type> {
         match head {
+            Type::Var(id) => self
+                .many_while_on(Lexeme::begins_ty, Self::ty_atom)
+                .map(|args| Type::Con(id, args)),
             Type::Con(id, mut args) => {
                 args.extend(self.many_while_on(Lexeme::begins_ty, Self::ty_atom)?);
                 Ok(Type::Con(id, args))
             }
-            head => self
-                .many_while_on(Lexeme::begins_ty, Self::ty_atom)
-                .map(|args| {
-                    if args.is_empty() {
-                        head
-                    } else {
-                        args.into_iter()
-                            .rev()
-                            .map(Box::new)
-                            .fold(head, |a, c| Type::App(Box::new(a), c))
-                    }
-                }),
+            head => Ok(head),
         }
     }
 
@@ -970,16 +990,22 @@ impl<'t> TypeParser<'t> {
 
         let mut ty = self.ty_atom()?;
 
+        let mut args = vec![];
+        match ty {
+            Type::Var(n) | Type::Con(n, _) if self.peek_on(Lexeme::begins_pat) => {
+                while !(self.is_done() || lexpat!(self on [parenR]|[,]|[->])) {
+                    args.push(self.ty_atom()?);
+                }
+                ty = Type::Con(n, args)
+            }
+            _ => {}
+        }
         while !(self.is_done() || self.peek_on(ParenR)) {
             match self.peek() {
                 lexpat!(~[,]) => return self.tuple_ty(ty),
                 lexpat!(~[->]) => {
                     ty = self.arrow_ty(ty)?;
                     break;
-                }
-                Some(t) if t.begins_ty() => {
-                    ty = Type::App(Box::new(ty), Box::new(self.ty_atom()?));
-                    continue;
                 }
                 _ => {
                     return Err(ParseError::Custom(
@@ -1653,7 +1679,7 @@ impl<'t> ExprParser<'t> {
     }
 
     fn binding(&mut self) -> Parsed<Binding> {
-        use Lexeme::{Colon2, Equal, FatArrow, Pipe};
+        use Lexeme::Pipe;
 
         let name = self.binder_name()?;
 
@@ -1738,6 +1764,7 @@ impl<'t> ExprParser<'t> {
     fn match_arm(&mut self) -> Parsed<Match> {
         use Lexeme::Equal;
 
+        // syntactic shorthand for `| =`
         let (args, pred) = if lexpat!(self on [=>]) {
             self.bump();
             (vec![], None)
@@ -1855,11 +1882,16 @@ pub fn try_parse_file<P: AsRef<std::path::Path>>(
     filepath: P,
 ) -> Result<Program, Failure<ParseError>> {
     let path = filepath.as_ref();
-    debug_assert_eq!("ws", path.extension().unwrap());
+    debug_assert_eq!("wy", path.extension().unwrap());
     let content = std::fs::read_to_string(path)?;
     Parser::new(content.as_str(), Some(path.to_owned()))
         .parse()
         .map_err(Failure::Err)
+}
+
+pub fn parse_prelude() -> Parsed<Program> {
+    let src = include_str!("../../../language/prim.wy");
+    Parser::from_str(src).parse()
 }
 
 #[cfg(test)]
