@@ -1,6 +1,7 @@
 use std::num::ParseFloatError;
 use std::num::ParseIntError;
 
+use wy_common::pretty::Many;
 // use serde::{Deserialize, Serialize};
 use wy_common::strenum;
 use wy_intern::symbol::{self, Symbol};
@@ -25,6 +26,7 @@ strenum! { Keyword is_keyword ::
     Class "class"
     Impl "impl"
     Newtype "newtype"
+    Def "def"
 
     Forall "forall"
 
@@ -445,6 +447,7 @@ pub enum LexKind {
     Number,
     Character,
     Specified(Lexeme),
+    AnyOf(&'static [Lexeme]),
 }
 
 impl From<Keyword> for LexKind {
@@ -523,6 +526,9 @@ impl std::fmt::Display for LexKind {
             LexKind::Number => write!(f, "number"),
             LexKind::Character => write!(f, "character"),
             LexKind::Specified(lexeme) => write!(f, "{}", lexeme),
+            LexKind::AnyOf(lexemes) => {
+                write!(f, "any of [{}]", Many(lexemes, ", "))
+            }
         }
     }
 }
@@ -693,6 +699,19 @@ where
 }
 
 impl<T> Lexlike for [T]
+where
+    T: Lexlike,
+{
+    fn cmp_lex(&self, lex: &Lexeme) -> bool {
+        self.iter().any(|t| t.cmp_lex(lex))
+    }
+
+    fn cmp_tok(&self, tok: &Token) -> bool {
+        self.iter().any(|t| t.cmp_tok(tok))
+    }
+}
+
+impl<T> Lexlike for &[T]
 where
     T: Lexlike,
 {
@@ -957,6 +976,9 @@ macro_rules! lexpat {
     };
     ([fn]) => {
         Lexeme::Kw(Keyword::Fn)
+    };
+    ([def]) => {
+        Lexeme::Kw(Keyword::Def)
     };
     ([data]) => {
         Lexeme::Kw(Keyword::Data)
