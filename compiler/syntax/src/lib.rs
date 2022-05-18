@@ -1,4 +1,4 @@
-use wy_common::{deque, Map};
+use wy_common::{deque, Map, Mappable};
 use wy_intern::symbol::{self, Symbol};
 
 pub use wy_lexer::{
@@ -26,11 +26,50 @@ use tipo::*;
 wy_common::newtype!({ u64 in Uid | Show (+= usize |rhs| rhs as u64) });
 
 #[derive(Clone, Debug)]
-pub struct Program<Id = Ident> {
-    pub module: Module<Id>,
+pub struct Ast {
+    programs: Vec<Program>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Program<Id = Ident, U = (), T = Ident> {
+    pub module: Module<Id, U, T>,
     pub fixities: FixityTable,
     pub comments: Vec<Comment>,
 }
+
+macro_rules! impl_program {
+    ($($(|)? $field:ident : $typ:ty, $method_name_iter:ident & $method_name_slice:ident)+) => {
+        impl<Id, U, T> Program<Id, U, T> {
+            $(
+                impl_program! { Iter<$typ> | $field <- $method_name_iter }
+                impl_program! { [$typ] | $field <- $method_name_slice }
+            )+
+        }
+    };
+    (Iter<$typ:ty> | $field:ident <- $method_name:ident) => {
+        pub fn $method_name(&self) -> std::slice::Iter<'_, $typ> {
+            self.module.$field.iter()
+        }
+    };
+    ([$typ:ty] | $field:ident <- $method_name:ident) => {
+        pub fn $method_name(&self) -> &[$typ] {
+            self.module.$field.as_slice()
+        }
+    };
+}
+
+impl_program! {
+    | imports: ImportSpec<Id>, get_imports_iter & get_imports
+    | infixes: FixityDecl<Id>, get_infixes_iter & get_infixes
+    | fundefs: FnDecl<Id, T>, get_fundefs_iter & get_fundefs
+    | datatys: DataDecl<Id, T>, get_datatys_iter & get_datatys
+    | classes: ClassDecl<Id, T>, get_classes_iter & get_classes
+    | implems: InstDecl<Id, T>, get_implems_iter & get_implems
+    | aliases: AliasDecl<Id, T>, get_aliases_iter & get_aliases
+    | newtyps: NewtypeDecl<Id, T>, get_newtyps_iter & get_newtyps
+}
+
+impl<Id, U, T> Program<Id, U, T> {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Module<Id = Ident, Uid = (), T = Ident> {
@@ -63,6 +102,42 @@ impl Default for Module {
     }
 }
 
+impl<Id, U, T> Module<Id, U, T> {
+    pub fn with_uid<V>(self, uid: V) -> Module<Id, V, T> {
+        Module {
+            uid,
+            modname: self.modname,
+            imports: self.imports,
+            infixes: self.infixes,
+            datatys: self.datatys,
+            classes: self.classes,
+            implems: self.implems,
+            fundefs: self.fundefs,
+            aliases: self.aliases,
+            newtyps: self.newtyps,
+        }
+    }
+    pub fn map_t<F, X>(self, mut f: F) -> Module<Id, U, X>
+    where
+        F: FnMut(T) -> X,
+    {
+        Module {
+            uid: self.uid,
+            modname: self.modname,
+            imports: self.imports,
+            infixes: self.infixes,
+            datatys: self.datatys.fmap(|data_decl| data_decl.map_t(|t| f(t))),
+            classes: self.classes.fmap(|class_decl| class_decl.map_t(|t| f(t))),
+            implems: self.implems.fmap(|inst_decl| inst_decl.map_t(|t| f(t))),
+            fundefs: self.fundefs.fmap(|fun_decl| fun_decl.map_t(|t| f(t))),
+            aliases: self.aliases.fmap(|alias_decl| alias_decl.map_t(|t| f(t))),
+            newtyps: self.newtyps.fmap(|newty_decl| newty_decl.map_t(|t| f(t))),
+        }
+    }
+}
+
+impl<Id, U, T> Module<Id, U, T> {}
+
 /// Describe the declared dependencies on other modules within a given module.
 /// Every import spec brings into scope the entities corresponding to the
 /// identifiers included.
@@ -87,8 +162,29 @@ pub struct ImportSpec<Id = Ident> {
 }
 
 impl<Id> ImportSpec<Id> {
+    pub fn map<F, T>(self, mut f: F) -> ImportSpec<T>
+    where
+        F: FnMut(Id) -> T,
+    {
+        ImportSpec {
+            name: self.name.map(|t| f(t)),
+            qualified: self.qualified,
+            rename: self.rename.map(|t| f(t)),
+            hidden: self.hidden,
+            imports: self
+                .imports
+                .into_iter()
+                .map(|import| import.map(|i| f(i)))
+                .collect(),
+        }
+    }
+
     pub fn get_imports(&self) -> &[Import<Id>] {
         self.imports.as_slice()
+    }
+
+    pub fn get_imports_iter(&self) -> std::slice::Iter<'_, Import<Id>> {
+        self.imports.iter()
     }
 
     pub fn infix_deps(&self) -> impl Iterator<Item = &Import<Id>> {
@@ -129,6 +225,20 @@ pub enum Import<Id = Ident> {
 }
 
 impl<Id> Import<Id> {
+    pub fn map<F, T>(self, mut f: F) -> Import<T>
+    where
+        F: FnMut(Id) -> T,
+    {
+        match self {
+            Import::Operator(id) => Import::Operator(f(id)),
+            Import::Function(id) => Import::Function(f(id)),
+            Import::Abstract(id) => Import::Abstract(f(id)),
+            Import::Total(id) => Import::Total(f(id)),
+            Import::Partial(root, rest) => {
+                Import::Partial(f(root), rest.into_iter().map(f).collect())
+            }
+        }
+    }
     /// If the import corresponds to an infix operator, then return the
     /// identifier wrapped in a `Some` variant. Otherwise, return `None`.
     pub fn infix_id(&self) -> Option<&Id> {
@@ -164,12 +274,65 @@ pub struct FixityDecl<Id = Ident> {
     pub fixity: Fixity,
 }
 
+macro_rules! get_dupe_ids {
+    (for $ex:expr) => {{
+        let mut dupes = vec![];
+        let mut seen = vec![];
+        for (idx, item) in $ex {
+            if seen.contains(&item) {
+                dupes.push((idx, *item))
+            } else {
+                seen.push(item)
+            }
+        }
+        if dupes.is_empty() {
+            None
+        } else {
+            Some(dupes)
+        }
+    }};
+}
+
 impl<Id> FixityDecl<Id> {
     pub fn new(assoc: Assoc, prec: Prec, infixes: Vec<Id>) -> Self {
         Self {
             infixes,
             fixity: Fixity { assoc, prec },
         }
+    }
+    pub fn infixes_iter(&self) -> std::slice::Iter<'_, Id> {
+        self.infixes.iter()
+    }
+
+    pub fn duplicates(&self) -> Option<Vec<(usize, Id)>>
+    where
+        Id: Copy + PartialEq,
+    {
+        get_dupe_ids!(for self.infixes_iter().enumerate())
+    }
+
+    pub fn contains_id(&self, infix_id: &Id) -> bool
+    where
+        Id: PartialEq,
+    {
+        self.infixes.contains(infix_id)
+    }
+    pub fn map<F, T>(self, f: F) -> FixityDecl<T>
+    where
+        F: FnMut(Id) -> T,
+    {
+        FixityDecl {
+            infixes: self.infixes.into_iter().map(f).collect(),
+            fixity: self.fixity,
+        }
+    }
+
+    /// Returns an iterator of (infix, fixity) pairs.
+    pub fn distribute(&self) -> impl Iterator<Item = (Id, Fixity)> + '_
+    where
+        Id: Copy,
+    {
+        self.infixes.iter().map(|infix| (*infix, self.fixity))
     }
 }
 
@@ -212,6 +375,57 @@ pub struct DataDecl<Id = Ident, T = Ident> {
 }
 
 impl<Id, T> DataDecl<Id, T> {
+    /// Identifies whether the data type defined by this data declaration is
+    /// parametrized over the given type variable.
+    pub fn depends_on(&self, var: &T) -> bool
+    where
+        T: PartialEq,
+    {
+        self.poly.contains(var)
+    }
+
+    pub fn get_ctxt(&self, id: &Id) -> Option<&Context<Id, T>>
+    where
+        Id: PartialEq,
+    {
+        self.ctxt.iter().find(|c| c.class == *id)
+    }
+
+    pub fn get_variant(&self, id: &Id) -> Option<&Variant<Id, T>>
+    where
+        Id: PartialEq,
+    {
+        self.vnts.iter().find(|v| v.name == *id)
+    }
+
+    pub fn find_variant<F>(&self, f: F) -> Option<&Variant<Id, T>>
+    where
+        F: FnMut(&&Variant<Id, T>) -> bool,
+    {
+        self.vnts.iter().find(f)
+    }
+
+    pub fn get_variant_by_tag(&self, tag: &Tag) -> Option<&Variant<Id, T>> {
+        let idx = tag.0 as usize;
+        if self.vnts.len() <= idx {
+            None
+        } else {
+            Some(&self.vnts[idx])
+        }
+    }
+
+    pub fn variant_names(&self) -> impl Iterator<Item = &Id> + '_ {
+        self.vnts.iter().map(|v| &v.name)
+    }
+
+    pub fn class_names(&self) -> impl Iterator<Item = &Id> + '_ {
+        self.ctxt.iter().map(|c| &c.class)
+    }
+
+    pub fn derived_names(&self) -> impl Iterator<Item = &Id> + '_ {
+        self.with.iter()
+    }
+
     pub fn enumer_tags(mut self) -> Self {
         let mut i = 0;
         for Variant { tag, .. } in self.vnts.iter_mut() {
@@ -221,27 +435,45 @@ impl<Id, T> DataDecl<Id, T> {
         self
     }
 
+    pub fn map_id<F, X>(self, mut f: F) -> DataDecl<X, T>
+    where
+        F: FnMut(Id) -> X,
+    {
+        DataDecl {
+            name: f(self.name),
+            poly: self.poly,
+            ctxt: self
+                .ctxt
+                .into_iter()
+                .map(|ctxt| ctxt.map_id(|id| f(id)))
+                .collect(),
+            vnts: self
+                .vnts
+                .into_iter()
+                .map(|v| v.map_id(|id| f(id)))
+                .collect(),
+            with: self.with.into_iter().map(|id| f(id)).collect(),
+        }
+    }
+
     pub fn map_t<F, U>(self, mut f: F) -> DataDecl<Id, U>
     where
         F: FnMut(T) -> U,
     {
-        let DataDecl {
-            name,
-            poly,
-            ctxt,
-            vnts,
-            with,
-        } = self;
-        let poly = poly.into_iter().map(|t| f(t)).collect();
-        let ctxt = ctxt.into_iter().map(|c| c.map_t(|t| f(t))).collect();
-        let vnts = vnts.into_iter().map(|v| v.map_t(|t| f(t))).collect();
         DataDecl {
-            name,
-            poly,
-            ctxt,
-            vnts,
-            with,
+            name: self.name,
+            poly: self.poly.into_iter().map(|t| f(t)).collect(),
+            ctxt: self.ctxt.into_iter().map(|c| c.map_t(|t| f(t))).collect(),
+            vnts: self.vnts.into_iter().map(|v| v.map_t(|t| f(t))).collect(),
+            with: self.with,
         }
+    }
+
+    pub fn duplicates(&self) -> Option<Vec<(usize, Id)>>
+    where
+        Id: Copy + PartialEq,
+    {
+        get_dupe_ids!(for self.variant_names().enumerate())
     }
 }
 
@@ -254,9 +486,112 @@ pub struct Variant<Id = Ident, T = Ident> {
 }
 
 impl<Id, T> Variant<Id, T> {
+    /// Returns the function type corresponding to this data constructor. Note
+    /// that it requires the  "constructed" type.
+    ///
+    /// A constructed datatype `T a1 a2 ... an`, where `a1`, `a2`, ..., `an` are
+    /// type variables (if any) over which the type `T` is parametrized, may be
+    /// constructed by any of its data constructors `C` and their respective
+    /// arguments.
+    ///
+    /// A data constructor `C` has an *arity* equal to the number of arguments
+    /// it takes, *regardless* of how many type variables it may range over.
+    /// Furthermore, every data constructor is effectively a *function* from its
+    /// arguments (curried) to the data type they construct.
+    ///
+    /// The data type `Foo a b` defined below is constructed with *four*
+    /// variants, each funtions of their arguments.
+    /// ```wysk
+    /// data Foo a b = Zero | One a | Two a b | Three a b (a, b)
+    /// ~~: Zero :: Foo a b
+    /// ~~: One :: a -> Foo a b
+    /// ~~: Two :: a -> b -> Foo a b
+    /// ~~: Three :: a -> b -> (a, b) -> Foo a b
+    /// ```
+    pub fn fun_ty(&self, data_ty: Type<Id, T>) -> Type<Id, T>
+    where
+        Id: Clone,
+        T: Clone,
+    {
+        self.args
+            .clone()
+            .into_iter()
+            .rev()
+            .fold(data_ty, |a, c| Type::Fun(Box::new(c), Box::new(a)))
+    }
+
+    /// Same as `con_ty`, but for the concrete type with `Id = Ident` and `T =
+    /// Tv`. Hence it requires a reference to the data type `Type<Ident, Tv>`
+    /// and will return another `Type<Ident, Tv>` corresponding to the function
+    /// type of this variant/constructor.
+    pub fn function_type(
+        variant: Variant<Ident, Tv>,
+        data_type: &Type<Ident, Tv>,
+    ) -> Type<Ident, Tv> {
+        variant
+            .args
+            .into_iter()
+            .rev()
+            .fold(data_type.clone(), |a, c| {
+                Type::Fun(Box::new(c), Box::new(a))
+            })
+    }
+
+    pub fn iter_args(&self) -> std::slice::Iter<'_, Type<Id, T>> {
+        self.args.iter()
+    }
+
+    pub fn iter_mut_args(&mut self) -> std::slice::IterMut<'_, Type<Id, T>> {
+        self.args.iter_mut()
+    }
+
+    pub fn find_arg(&self, predicate: impl FnMut(&&Type<Id, T>) -> bool) -> Option<&Type<Id, T>> {
+        self.iter_args().find(predicate)
+    }
+
+    /// Apply a closure to inner values of type parameter `Id`, mapping a
+    /// `Variant<Id, T>` to a `Variant<Id, U>` for some given closure `f :: T ->
+    /// U`. This type parameter corresponds to the *identifier representation*,
+    /// and ranges over the `name` and `args` field.r
+    pub fn map_id<F, X>(self, mut f: F) -> Variant<X, T>
+    where
+        F: FnMut(Id) -> X,
+    {
+        Variant {
+            name: f(self.name),
+            args: self.args.into_iter().map(|ty| ty.map_id(&mut f)).collect(),
+            tag: self.tag,
+            arity: self.arity,
+        }
+    }
+
+    /// Apply a closure to inner values of type parameter `T`, mapping a
+    /// `Variant<Id, T>` to a `Variant<Id, U>` for some given closure `f :: T ->
+    /// U`. This type parameter corresponds to the *type variable
+    /// representation* of the underlying `Type` arguments in the field `args`.
     pub fn map_t<F, U>(self, mut f: F) -> Variant<Id, U>
     where
         F: FnMut(T) -> U,
+    {
+        Variant {
+            name: self.name,
+            args: self.args.into_iter().map(|ty| ty.map_t(&mut f)).collect(),
+            tag: self.tag,
+            arity: self.arity,
+        }
+    }
+
+    /// Alternative version of `map_t` that takes the receiver by reference
+    /// instead of by value. This allows for mapping (and effectively copying)
+    /// without taking ownership of `Self`.
+    ///
+    /// Note that in order for this method to be available, both type parameters
+    /// `Id` and `T` must implement `Copy`.
+    pub fn map_t_ref<F, U>(&self, mut f: F) -> Variant<Id, U>
+    where
+        F: FnMut(&T) -> U,
+        Id: Copy,
+        T: Copy,
     {
         let Variant {
             name,
@@ -264,25 +599,53 @@ impl<Id, T> Variant<Id, T> {
             tag,
             arity,
         } = self;
-        let args = args.into_iter().map(|ty| ty.map_t(&mut f)).collect();
+        let args = args.into_iter().map(|ty| ty.map_t_ref(&mut f)).collect();
         Variant {
-            name,
+            name: *name,
             args,
-            tag,
-            arity,
+            tag: *tag,
+            arity: *arity,
         }
     }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Tag(pub u32);
+impl Default for Tag {
+    fn default() -> Self {
+        Self(0)
+    }
+}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Arity(pub usize);
 
 impl Arity {
-    pub fn from_len<T>(ts: &[T]) -> Self {
-        Self(ts.len())
+    pub const ZERO: Self = Self(0);
+
+    pub fn as_usize(self) -> usize {
+        self.0
+    }
+
+    pub fn new(len: usize) -> Self {
+        Arity(len)
+    }
+
+    /// Shortcut to check whether a given item takes *no arguments*.
+    pub fn is_zero(self) -> bool {
+        self.0 == 0
+    }
+
+    /// Shortcut to check whether a given item takes a *single* argument.
+    pub fn is_one(self) -> bool {
+        self.0 == 1
+    }
+
+    /// Shortcut for checking whether the `Arity` of a given item is larger than
+    /// one. If so, then it is implied that whatever this `Arity` belongs to
+    /// must be curried.
+    pub fn curries(self) -> bool {
+        self.0 > 1
     }
 
     /// Since `Arity` is essentially a `usize` wrapper corresponding to the
@@ -298,6 +661,11 @@ impl Arity {
     }
 }
 
+// make it easy to compare Arity using usizes by implementing PartialEq<usize>
+// and PartialOrd<usize>
+wy_common::newtype!(Arity | usize | PartialEq);
+wy_common::newtype!(Arity | usize | PartialOrd);
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AliasDecl<Id = Ident, T = Ident> {
     pub name: Id,
@@ -306,14 +674,74 @@ pub struct AliasDecl<Id = Ident, T = Ident> {
 }
 
 impl<Id, T> AliasDecl<Id, T> {
+    pub fn get_contexts_iter(&self) -> std::slice::Iter<'_, Context<Id, T>> {
+        self.sign.ctxt.iter()
+    }
+
+    pub fn duplicate_tyvars(&self) -> Option<Vec<(usize, T)>>
+    where
+        T: Copy + PartialEq,
+    {
+        get_dupe_ids!(for self.poly.iter().enumerate())
+    }
+
+    pub fn enumerate_tyvars(&self) -> impl Iterator<Item = (usize, &T)> + '_ {
+        self.poly.iter().enumerate()
+    }
+
+    pub fn no_unused_tyvars(&self) -> bool
+    where
+        T: Copy + PartialEq,
+    {
+        let fvs = self.sign.tipo.fv();
+        self.poly.iter().all(|tv| fvs.contains(tv))
+    }
+
+    pub fn no_unused_tyvars_in_ctxts(&self) -> bool
+    where
+        T: Copy + PartialEq,
+    {
+        let fvs = self.sign.tipo.fv();
+        self.sign.ctxt.iter().all(|ctx| fvs.contains(&ctx.tyvar))
+    }
+
+    /// Checks whether all type variables in the `Type` (right-hand-side) are
+    /// declared as type variables for the type alias.
+    ///
+    /// For example, `type Foo a b = |Baz a| (a -> b) -> c` would fail and this method
+    /// would return `false`, as `c` is not included in the left-hand-side of
+    /// the type alias declaration.
+    pub fn no_new_tyvar_in_type(&self) -> bool
+    where
+        T: Copy + PartialEq,
+    {
+        self.sign
+            .tipo
+            .fv()
+            .into_iter()
+            .chain(self.sign.ctxt.iter().map(|ctx| ctx.tyvar))
+            .all(|t| self.poly.contains(&t))
+    }
+
+    pub fn map_id<F, X>(self, mut f: F) -> AliasDecl<X, T>
+    where
+        F: FnMut(Id) -> X,
+    {
+        AliasDecl {
+            name: f(self.name),
+            poly: self.poly,
+            sign: self.sign.map_id(f),
+        }
+    }
     pub fn map_t<F, U>(self, mut f: F) -> AliasDecl<Id, U>
     where
         F: FnMut(T) -> U,
     {
-        let AliasDecl { name, poly, sign } = self;
-        let poly = poly.into_iter().map(|t| f(t)).collect();
-        let sign = sign.map_t(|t| f(t));
-        AliasDecl { name, poly, sign }
+        AliasDecl {
+            name: self.name,
+            poly: self.poly.into_iter().map(|t| f(t)).collect(),
+            sign: self.sign.map_t(|t| f(t)),
+        }
     }
 }
 
@@ -331,18 +759,35 @@ impl<Id, T> AliasDecl<Id, T> {
 /// whose signature is included in the variant.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NewtypeArg<Id = Ident, T = Ident> {
-    Product(Vec<Type<Id, T>>),
+    /// Used when the newtype constructor is *not* a record and instead takes
+    /// multiple type arguments, such as `newtype Foo a = Bar a`
+    Stacked(Vec<Type<Id, T>>),
+    /// Used when the newtype constructor is a single-entry record. The label
+    /// for this constructor defines the function used to "lift" a computation
+    /// or value into the newtype, such as `newtype Foo a = Foo { foo :: a }`
     Record(Id, Signature<Id, T>),
 }
 
 impl<Id, T> NewtypeArg<Id, T> {
+    pub fn map_id<F, X>(self, mut f: F) -> NewtypeArg<X, T>
+    where
+        F: FnMut(Id) -> X,
+    {
+        match self {
+            NewtypeArg::Stacked(ts) => {
+                NewtypeArg::Stacked(ts.into_iter().map(|ty| ty.map_id(&mut f)).collect())
+            }
+            NewtypeArg::Record(k, ss) => NewtypeArg::Record(f(k), ss.map_id(|id| f(id))),
+        }
+    }
+
     pub fn map_t<F, U>(self, mut f: F) -> NewtypeArg<Id, U>
     where
         F: FnMut(T) -> U,
     {
         match self {
-            NewtypeArg::Product(ts) => {
-                NewtypeArg::Product(ts.into_iter().map(|ty| ty.map_t(&mut f)).collect())
+            NewtypeArg::Stacked(ts) => {
+                NewtypeArg::Stacked(ts.into_iter().map(|ty| ty.map_t(&mut f)).collect())
             }
             NewtypeArg::Record(k, sig) => NewtypeArg::Record(k, sig.map_t(f)),
         }
@@ -363,21 +808,12 @@ impl<Id, T> NewtypeDecl<Id, T> {
     where
         F: FnMut(T) -> U,
     {
-        let NewtypeDecl {
-            name,
-            poly,
-            ctor,
-            narg,
-            with,
-        } = self;
-        let poly = poly.into_iter().map(|t| f(t)).collect();
-        let narg = narg.map_t(f);
         NewtypeDecl {
-            name,
-            poly,
-            ctor,
-            narg,
-            with,
+            name: self.name,
+            poly: self.poly.into_iter().map(|t| f(t)).collect(),
+            ctor: self.ctor,
+            narg: self.narg.map_t(f),
+            with: self.with,
         }
     }
 }
@@ -391,24 +827,25 @@ pub struct ClassDecl<Id = Ident, T = Ident> {
 }
 
 impl<Id, T> ClassDecl<Id, T> {
+    pub fn item_names(&self) -> impl Iterator<Item = &Id> + '_ {
+        self.defs.iter().map(|method| match method {
+            Method::Sig(name, _) | Method::Impl(Binding { name, .. }) => name,
+        })
+    }
+
     pub fn map_t<F, U>(self, mut f: F) -> ClassDecl<Id, U>
     where
         F: FnMut(T) -> U,
     {
-        let ClassDecl {
-            name,
-            poly,
-            ctxt,
-            defs,
-        } = self;
-        let poly = poly.into_iter().map(|t| f(t)).collect();
-        let ctxt = ctxt.into_iter().map(|ctx| ctx.map_t(|t| f(t))).collect();
-        let defs = defs.into_iter().map(|m| m.map_t(|t| f(t))).collect();
         ClassDecl {
-            name,
-            poly,
-            ctxt,
-            defs,
+            name: self.name,
+            poly: self.poly.into_iter().map(|t| f(t)).collect(),
+            ctxt: self
+                .ctxt
+                .into_iter()
+                .map(|ctx| ctx.map_t(|t| f(t)))
+                .collect(),
+            defs: self.defs.into_iter().map(|m| m.map_t(|t| f(t))).collect(),
         }
     }
 }
@@ -422,24 +859,55 @@ pub struct InstDecl<Id = Ident, T = Ident> {
 }
 
 impl<Id, T> InstDecl<Id, T> {
+    pub fn item_names(&self) -> impl Iterator<Item = &Id> + '_ {
+        self.defs.iter().map(|Binding { name, .. }| name)
+    }
+    pub fn get_ctxt(&self, id: &Id) -> Option<&Context<Id, T>>
+    where
+        Id: PartialEq,
+    {
+        self.ctxt.iter().find(|ctx| ctx.class == *id)
+    }
+
+    pub fn get_def(&self, id: &Id) -> Option<&Binding<Id, T>>
+    where
+        Id: PartialEq,
+    {
+        self.defs.iter().find(|b| b.name == *id)
+    }
+
+    pub fn map_id<F, X>(self, mut f: F) -> InstDecl<X, T>
+    where
+        F: FnMut(Id) -> X,
+    {
+        InstDecl {
+            name: f(self.name),
+            tipo: self.tipo.map_id(&mut f),
+            ctxt: self
+                .ctxt
+                .into_iter()
+                .map(|ctx| ctx.map_id(|id| f(id)))
+                .collect(),
+            defs: self
+                .defs
+                .into_iter()
+                .map(|bind| bind.map_id(|id| f(id)))
+                .collect(),
+        }
+    }
     pub fn map_t<F, U>(self, mut f: F) -> InstDecl<Id, U>
     where
         F: FnMut(T) -> U,
     {
-        let InstDecl {
-            name,
-            tipo,
-            ctxt,
-            defs,
-        } = self;
-        let tipo = tipo.map_t(&mut f);
-        let ctxt = ctxt.into_iter().map(|ctx| ctx.map_t(|t| f(t))).collect();
-        let defs = defs.into_iter().map(|b| b.map_t(|t| f(t))).collect();
         InstDecl {
-            name,
-            tipo,
-            ctxt,
-            defs,
+            name: self.name,
+            tipo: self.tipo.map_t(&mut f),
+            ctxt: self
+                .ctxt
+                .into_iter()
+                .map(|ctx| ctx.map_t(|t| f(t)))
+                .collect(),
+            defs: self.defs.into_iter().map(|b| b.map_t(|t| f(t))).collect(),
         }
     }
 }
@@ -456,10 +924,11 @@ impl<Id, T> FnDecl<Id, T> {
     where
         F: FnMut(T) -> U,
     {
-        let FnDecl { name, sign, defs } = self;
-        let sign = sign.map(|sig| sig.map_t(|t| f(t)));
-        let defs = defs.into_iter().map(|m| m.map_t(|t| f(t))).collect();
-        FnDecl { name, sign, defs }
+        FnDecl {
+            name: self.name,
+            sign: self.sign.map(|sig| sig.map_t(|t| f(t))),
+            defs: self.defs.into_iter().map(|m| m.map_t(|t| f(t))).collect(),
+        }
     }
 }
 
@@ -470,14 +939,27 @@ pub enum Method<Id = Ident, T = Ident> {
 }
 
 impl<Id, T> Method<Id, T> {
-    pub fn name(&self) -> Id
-    where
-        Id: Copy,
-    {
+    #[inline]
+    pub fn is_signature(&self) -> bool {
+        matches!(self, Self::Sig(..))
+    }
+
+    #[inline]
+    pub fn name(&self) -> &Id {
         match self {
-            Method::Sig(id, _) | Method::Impl(Binding { name: id, .. }) => *id,
+            Method::Sig(id, _) | Method::Impl(Binding { name: id, .. }) => id,
         }
     }
+    pub fn map_id<F, X>(self, mut f: F) -> Method<X, T>
+    where
+        F: FnMut(Id) -> X,
+    {
+        match self {
+            Method::Sig(id, sig) => Method::Sig(f(id), sig.map_id(|id| f(id))),
+            Method::Impl(binding) => Method::Impl(binding.map_id(|id| f(id))),
+        }
+    }
+
     pub fn map_t<F, U>(self, f: F) -> Method<Id, U>
     where
         F: FnMut(T) -> U,
@@ -506,6 +988,8 @@ pub enum Declaration<Id = Ident, T = Ident> {
 /// *stemming from* syntactic invariants not being upheld.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum SynRule {
+    /// Generalization of the rules requiring syntactic instance be unique.
+    NoDuplicates,
     /// Each function declaration may contain multiple match arms, *however*
     /// these match arms must all appear contiguously within the function's
     /// declaration body. This rule is broken when more than one function

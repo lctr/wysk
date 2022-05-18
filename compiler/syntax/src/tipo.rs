@@ -30,6 +30,16 @@ pub struct Context<Id = Ident, T = Ident> {
 }
 
 impl<Id, T> Context<Id, T> {
+    pub fn map_id<F, X>(self, mut f: F) -> Context<X, T>
+    where
+        F: FnMut(Id) -> X,
+    {
+        let Context { class, tyvar } = self;
+        Context {
+            class: f(class),
+            tyvar,
+        }
+    }
     pub fn map_t<F, U>(self, mut f: F) -> Context<Id, U>
     where
         F: FnMut(T) -> U,
@@ -50,19 +60,49 @@ pub struct Signature<Id = Ident, T = Ident> {
 }
 
 impl<Id, T> Signature<Id, T> {
+    /// Checks whether all type variables in the type signature's contexts
+    /// appear in the type annotation. It is valid for the type to contain type
+    /// variables not covered by the contexts, *however* all type variables
+    /// within the contexts *must* be used in the type!
+    ///
+    /// For example, the signature `|Foo a, Bar b| a -> b` is valid, but the
+    /// signature `|Foo a, Bar b, Baz c| a -> b` is not as the type `a -> b`
+    /// does not include the type variable `c`.
+    pub fn no_unused_ctx_tyvars(&self) -> bool
+    where
+        T: Copy + PartialEq,
+    {
+        let tyvars = self.tipo.fv();
+        self.ctxt.iter().all(|ctxt| tyvars.contains(&ctxt.tyvar))
+    }
+
+    pub fn map_id<F, X>(self, mut f: F) -> Signature<X, T>
+    where
+        F: FnMut(Id) -> X,
+    {
+        let Signature { each, ctxt, tipo } = self;
+        Signature {
+            each: each.into_iter().map(|id| f(id)).collect(),
+            ctxt: ctxt.into_iter().map(|ctx| ctx.map_id(|id| f(id))).collect(),
+            tipo: tipo.map_id(&mut f),
+        }
+    }
+
     pub fn map_t<F, U>(self, mut f: F) -> Signature<Id, U>
     where
         F: FnMut(T) -> U,
     {
         let Signature { each, ctxt, tipo } = self;
-        let ctxt = ctxt.into_iter().map(|c| c.map_t(|t| f(t))).collect();
-        let tipo = tipo.map_t(&mut f);
-        Signature { each, ctxt, tipo }
+        Signature {
+            each,
+            ctxt: ctxt.into_iter().map(|c| c.map_t(|t| f(t))).collect(),
+            tipo: tipo.map_t(&mut f),
+        }
     }
 }
 
 /// Represents a type variable.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct Tv(pub u32);
 
 impl Tv {
@@ -84,15 +124,39 @@ impl Tv {
     }
 }
 
+impl PartialEq<Ident> for Tv {
+    fn eq(&self, other: &Ident) -> bool {
+        matches!(other, Ident::Fresh(n) if n.as_u32() == self.0)
+    }
+}
+
+impl PartialEq<Tv> for Ident {
+    fn eq(&self, other: &Tv) -> bool {
+        matches!(self, Ident::Fresh(s) if s.as_u32() == other.0)
+    }
+}
+
 impl From<Symbol> for Tv {
     fn from(sym: Symbol) -> Self {
         Tv::from_symbol(sym)
     }
 }
 
+impl std::fmt::Debug for Tv {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Tv({})", self.0)
+    }
+}
+
 impl std::fmt::Display for Tv {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.display())
+    }
+}
+
+impl From<Tv> for Ident {
+    fn from(tv: Tv) -> Self {
+        Ident::Fresh(wy_intern::intern_once(&*tv.display()))
     }
 }
 
@@ -134,10 +198,8 @@ pub enum Type<Id = Ident, T = Ident> {
     Tup(Vec<Type<Id, T>>),
     Vec(Box<Type<Id, T>>),
     Rec(Record<Type<Id, T>, Id>),
-    App(Box<Type<Id, T>>, Box<Type<Id, T>>),
 }
 
-// impl<Id> std::fmt::Debug for Type<Id> {}
 impl<Id: std::fmt::Display, T: std::fmt::Display> std::fmt::Display for Type<Id, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -146,11 +208,16 @@ impl<Id: std::fmt::Display, T: std::fmt::Display> std::fmt::Display for Type<Id,
                 if args.is_empty() {
                     write!(f, "{}", con)
                 } else {
-                    write!(f, "({}", con)?;
+                    write!(f, "{}", con)?;
                     for arg in args {
+                        if arg.is_func() || (arg.is_app() && !arg.is_nullary()) {
+                            write!(f, " ({})", arg)?;
+                            continue;
+                        }
                         write!(f, " {}", arg)?;
                     }
-                    write!(f, ")")
+                    Ok(())
+                    // write!(f, ")")
                 }
             }
             Type::Fun(x, y) => {
@@ -186,8 +253,8 @@ impl<Id: std::fmt::Display, T: std::fmt::Display> std::fmt::Display for Type<Id,
                     .fields()
                     .iter()
                     .filter_map(|field| match field {
-                        // for typed records, we should expect both lhs (keys) and
-                        // rhs (types)
+                        // for typed records, we should expect both lhs (keys)
+                        // and rhs (types)
                         Field::Rest | Field::Key(_) => None,
                         Field::Entry(k, v) => Some((k, v)),
                     })
@@ -204,15 +271,65 @@ impl<Id: std::fmt::Display, T: std::fmt::Display> std::fmt::Display for Type<Id,
                 };
                 char::fmt(&'}', f)
             }
-            Type::App(c, d) => {
-                write!(f, "{} {}", c, d)
-            }
         }
     }
 }
 
 impl<Id, T> Type<Id, T> {
     pub const UNIT: Self = Self::Tup(vec![]);
+
+    /// Identifies whether this `Type` is polymorphic over the given type
+    /// variable. Equivalently, this method tests for containment of the given
+    /// variable of type `T`.
+    pub fn depends_on(&self, var: &T) -> bool
+    where
+        T: PartialEq,
+    {
+        match self {
+            Type::Var(t) => var == t,
+            Type::Con(_, ts) | Type::Tup(ts) => ts.iter().any(|ty| ty.depends_on(var)),
+            Type::Fun(x, y) => x.depends_on(var) || y.depends_on(var),
+            Type::Vec(t) => t.depends_on(var),
+            Type::Rec(rec) => rec
+                .fields()
+                .into_iter()
+                .any(|field| matches!(field.get_value(), Some(ty) if ty.depends_on(var))),
+        }
+    }
+
+    /// Tests whether a given type contains another type.
+    pub fn contains(&self, subty: &Type<Id, T>) -> bool
+    where
+        Id: PartialEq,
+        T: PartialEq,
+    {
+        match self {
+            ty @ Type::Var(_) => ty == subty,
+            Type::Fun(x, y) => x.contains(subty) || y.contains(subty),
+            Type::Con(_, tys) | Type::Tup(tys) => tys.iter().any(|ty| ty.contains(subty)),
+            Type::Vec(t) => t.contains(subty),
+            Type::Rec(rec) => rec
+                .fields()
+                .into_iter()
+                .any(|field| matches!(field.get_value(), Some(ty) if ty.contains(subty))),
+        }
+    }
+
+    pub fn map_id<F, X>(self, f: &mut F) -> Type<X, T>
+    where
+        F: FnMut(Id) -> X,
+    {
+        match self {
+            Type::Var(t) => Type::Var(t),
+            Type::Con(id, tys) => {
+                Type::Con(f(id), tys.into_iter().map(|ty| ty.map_id(f)).collect())
+            }
+            Type::Fun(x, y) => Type::Fun(Box::new(x.map_id(f)), Box::new(y.map_id(f))),
+            Type::Tup(ts) => Type::Tup(ts.into_iter().map(|t| t.map_id(f)).collect()),
+            Type::Vec(t) => Type::Vec(Box::new(t.map_id(f))),
+            Type::Rec(_) => todo!(),
+        }
+    }
 
     pub fn map_t<F, U>(self, f: &mut F) -> Type<Id, U>
     where
@@ -225,7 +342,26 @@ impl<Id, T> Type<Id, T> {
             Type::Tup(tys) => Type::Tup(tys.into_iter().map(|ty| ty.map_t(f)).collect::<Vec<_>>()),
             Type::Vec(ty) => Type::Vec(Box::new(ty.map_t(f))),
             Type::Rec(rs) => Type::Rec(rs.map_t(|ty| ty.map_t(f))),
-            Type::App(x, y) => Type::App(Box::new(x.map_t(f)), Box::new(y.map_t(f))),
+        }
+    }
+
+    pub fn map_t_ref<F, U>(&self, f: &mut F) -> Type<Id, U>
+    where
+        F: FnMut(&T) -> U,
+        Id: Copy,
+        T: Copy,
+    {
+        match self {
+            Type::Var(t) => Type::Var(f(t)),
+            Type::Con(c, ts) => Type::Con(*c, ts.iter().map(|ty| ty.map_t_ref(f)).collect()),
+            Type::Fun(x, y) => Type::Fun(Box::new(x.map_t_ref(f)), Box::new(y.map_t_ref(f))),
+            Type::Tup(tys) => Type::Tup(
+                tys.into_iter()
+                    .map(|ty| ty.map_t_ref(f))
+                    .collect::<Vec<_>>(),
+            ),
+            Type::Vec(ty) => Type::Vec(Box::new(ty.map_t_ref(f))),
+            Type::Rec(rs) => Type::Rec(rs.map_t_ref(|ty| ty.map_t_ref(f))),
         }
     }
 
@@ -233,12 +369,8 @@ impl<Id, T> Type<Id, T> {
         matches!(self, Self::Fun(..))
     }
 
-    pub fn un_app(&self) -> Option<(&Self, &Self)> {
-        if let Self::App(c, d) = self {
-            Some((c.as_ref(), d.as_ref()))
-        } else {
-            None
-        }
+    pub fn is_app(&self) -> bool {
+        matches!(self, Self::Con(..))
     }
 
     /// Returns `true` if the type is a single type constructor with arity 0.
@@ -306,13 +438,6 @@ impl<Id, T> Type<Id, T> {
                         }
                     }),
             },
-            Type::App(x, y) => {
-                for tv in x.fv().into_iter().chain(y.fv()) {
-                    if !fvs.contains(&tv) {
-                        fvs.push(tv)
-                    }
-                }
-            }
         };
         fvs
     }
@@ -334,21 +459,9 @@ impl<Id, T> Type<Id, T> {
     where
         T: Copy + Eq,
     {
-        let vars = self.fv();
-        let w = vars.len();
-        vars.iter()
-            .fold(Vec::with_capacity(w), |a, c| {
-                let mut acc = a;
-                if acc.contains(c) {
-                    acc
-                } else {
-                    acc.push(*c);
-                    acc
-                }
-            })
-            .into_iter()
-            .enumerate()
-            .map(|(v, tv)| (tv, Tv(v as u32)))
+        let mut vars = self.fv();
+        vars.dedup();
+        vars.into_iter().zip(0..).map(|(t, var)| (t, Tv(var)))
     }
 
     /// Since `Type` is generic over identifiers, in order to extract the
@@ -429,6 +542,32 @@ impl<T, Id> Record<T, Id> {
         }
     }
 
+    pub fn contains_key(&self, key: &Id) -> bool
+    where
+        Id: PartialEq,
+    {
+        self.keys().any(|id| id == key)
+    }
+
+    pub fn get(&self, key: &Id) -> Option<&T>
+    where
+        Id: PartialEq,
+    {
+        self.fields().into_iter().find_map(|field| {
+            field
+                .get_key()
+                .and_then(|id| if id == key { field.get_value() } else { None })
+        })
+    }
+
+    pub fn find(&self, pred: impl FnMut(&&Field<T, Id>) -> bool) -> Option<&Field<T, Id>>
+    where
+        Id: PartialEq,
+        T: PartialEq,
+    {
+        self.fields().into_iter().find(pred)
+    }
+
     /// Applies a transformation to the underlying components of a `Record`.
     /// Since a `Record` may or may not have a *constructor*, it follows that
     /// the kind of record *returned* will also depend on whether the first
@@ -455,6 +594,21 @@ impl<T, Id> Record<T, Id> {
         }
     }
 
+    pub fn map_id<F, X>(self, mut f: F) -> Record<T, X>
+    where
+        F: FnMut(Id) -> X,
+    {
+        match self {
+            Record::Anon(fs) => {
+                Record::Anon(fs.into_iter().map(|fld| fld.map_id(|id| f(id))).collect())
+            }
+            Record::Data(k, vs) => Record::Data(
+                f(k),
+                vs.into_iter().map(|fld| fld.map_id(|id| f(id))).collect(),
+            ),
+        }
+    }
+
     pub fn map_t<F, U>(self, mut f: F) -> Record<U, Id>
     where
         F: FnMut(T) -> U,
@@ -468,6 +622,22 @@ impl<T, Id> Record<T, Id> {
             Record::Data(k, v) => Record::Data(
                 k,
                 v.into_iter().map(|v| v.map_t(|t| f(t))).collect::<Vec<_>>(),
+            ),
+        }
+    }
+
+    pub fn map_t_ref<F, U>(&self, mut f: F) -> Record<U, Id>
+    where
+        F: FnMut(&T) -> U,
+        Id: Copy,
+    {
+        match self {
+            Record::Anon(es) => {
+                Record::Anon(es.iter().map(|e| e.map_t_ref(|t| f(t))).collect::<Vec<_>>())
+            }
+            Record::Data(k, v) => Record::Data(
+                *k,
+                v.iter().map(|v| v.map_t_ref(|t| f(t))).collect::<Vec<_>>(),
             ),
         }
     }
@@ -514,6 +684,34 @@ impl<T, Id> Field<T, Id> {
         }
     }
 
+    pub fn map<F, U, X>(self, mut f: F) -> Field<X, U>
+    where
+        F: FnMut((Id, Option<T>)) -> (U, Option<X>),
+    {
+        match self {
+            Field::Rest => Field::Rest,
+            Field::Key(k) => match f((k, None)) {
+                (a, None) => Field::Key(a),
+                (a, Some(b)) => Field::Entry(a, b),
+            },
+            Field::Entry(k, v) => match f((k, Some(v))) {
+                (a, None) => Field::Key(a),
+                (a, Some(b)) => Field::Entry(a, b),
+            },
+        }
+    }
+
+    pub fn map_id<F, X>(self, mut f: F) -> Field<T, X>
+    where
+        F: FnMut(Id) -> X,
+    {
+        match self {
+            Field::Rest => Field::Rest,
+            Field::Key(k) => Field::Key(f(k)),
+            Field::Entry(k, v) => Field::Entry(f(k), v),
+        }
+    }
+
     pub fn map_t<F, U>(self, mut f: F) -> Field<U, Id>
     where
         F: FnMut(T) -> U,
@@ -524,4 +722,28 @@ impl<T, Id> Field<T, Id> {
             Field::Entry(k, v) => Field::Entry(k, f(v)),
         }
     }
+
+    pub fn map_t_ref<F, U>(&self, mut f: F) -> Field<U, Id>
+    where
+        F: FnMut(&T) -> U,
+        Id: Copy,
+    {
+        match self {
+            Field::Rest => Field::Rest,
+            Field::Key(k) => Field::Key(*k),
+            Field::Entry(k, v) => Field::Entry(*k, f(v)),
+        }
+    }
+}
+
+wy_common::strenum! {
+    PrimTy ::
+    Byte    "Byte"      // u8
+    Int     "Int"       // i32
+    Nat     "Nat"       // u64
+    Float   "Float"     // f32
+    Double  "Double"    // f64
+    Bool    "Bool"      // bool
+    Char    "Char"      // char
+    Str     "Str"       // &'static str
 }
