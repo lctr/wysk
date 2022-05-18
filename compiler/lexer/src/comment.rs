@@ -1,7 +1,10 @@
 use wy_intern::symbol::{self, Symbol};
 use wy_span::Span;
 
-//----COMMENTS-----------------------------------------------------
+// Unique identifiers for each comment
+wy_common::newtype! {
+    usize in CommentId | New Show AsUsize [Comment]
+}
 
 /// Comment kinds. Note that *all* line comments are preceded by `~~` unless
 /// immediately followed by a special glyph indicating the flavor of doc
@@ -23,6 +26,7 @@ pub enum Comment {
     Line(Span),
     Block(Span),
     Doc {
+        id: CommentId,
         span: Span,
         linekind: LineKind,
     },
@@ -31,9 +35,7 @@ pub enum Comment {
 impl Comment {
     pub fn span(&self) -> Span {
         match self {
-            Comment::Line(span)
-            | Comment::Block(span)
-            | Comment::Doc { span, .. } => *span,
+            Comment::Line(span) | Comment::Block(span) | Comment::Doc { span, .. } => *span,
         }
     }
 }
@@ -128,8 +130,7 @@ impl LineKind {
             Self::DocBody
         } else if flag.starts_with(':') {
             Self::DocFoot
-        } else if flag.starts_with('<') && flag.ends_with('>') && flag.len() > 2
-        {
+        } else if flag.starts_with('<') && flag.ends_with('>') && flag.len() > 2 {
             Self::Embeded(SyntaxId::from_str(&flag[1..flag.len() - 1]))
         } else {
             Self::Ignore
