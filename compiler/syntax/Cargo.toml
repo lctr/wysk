@@ -12,3 +12,4 @@ wy_intern = { path = "../intern" }
 wy_failure = { path = "../failure" }
 wy_span = { path = "../span" }
 wy_lexer = { path = "../lexer" }
+wy_graph = { path = "../graph" }

@@ -1,3 +1,5 @@
+use wy_graph::EdgeVisitor;
+
 use super::*;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -22,7 +24,7 @@ pub trait Visit<Id, Err = VisitError>: Sized
 where
     Err: std::error::Error + From<VisitError>,
 {
-    fn visit_ident(&mut self, id: &Id) -> Result<(), Err> {
+    fn visit_ident(&mut self, _id: &Id) -> Result<(), Err> {
         Ok(())
     }
     fn visit_expr(&mut self, expr: &Expression<Id>) -> Result<(), Err> {
@@ -99,7 +101,6 @@ where
                 }
             }
             Expression::Group(x) => self.visit_expr(x.as_ref())?,
-            _ => todo!(),
         };
         Ok(())
     }
@@ -246,7 +247,6 @@ where
                     self.visit_expr_mut(exp.as_mut())?;
                 }
             }
-            _ => todo!(),
         }
         Ok(())
     }
@@ -331,3 +331,166 @@ where
         _ => {}
     }
 }
+
+impl<'a, T> Visit<Ident> for EdgeVisitor<'a, Ident, T> {
+    fn visit_ident(&mut self, id: &Ident) -> Result<(), VisitError> {
+        if let Some(idx) = self.map.get(id) {
+            self.graph.connect(self.node_id, *idx);
+        }
+        Ok(())
+    }
+
+    fn visit_expr(&mut self, expr: &Expression<Ident>) -> Result<(), VisitError> {
+        match expr {
+            Expression::Ident(id) => {
+                self.visit_ident(id)?;
+            }
+            Expression::Lit(_) | Expression::Path(..) => {}
+            Expression::Neg(e) => self.visit_expr(e.as_ref())?,
+            Expression::Infix {
+                infix: _,
+                left,
+                right,
+            } => {
+                self.visit_expr(left.as_ref())?;
+                self.visit_expr(right.as_ref())?;
+            }
+            Expression::Tuple(xs) | Expression::Array(xs) => {
+                for x in xs {
+                    self.visit_expr(x)?;
+                }
+            }
+            Expression::List(e, stmts) => {
+                // order?
+                self.visit_expr(e.as_ref())?;
+                for stmt in stmts {
+                    self.visit_stmt(stmt)?;
+                }
+            }
+            Expression::Dict(record) => match record {
+                Record::Anon(fields) | Record::Data(_, fields) => {
+                    for field in fields {
+                        match field {
+                            Field::Rest | Field::Key(_) => {}
+                            Field::Entry(_, v) => self.visit_expr(v)?,
+                        }
+                    }
+                }
+            },
+            Expression::Lambda(_, ex) => self.visit_expr(ex.as_ref())?,
+            Expression::Let(bindings, ex) => {
+                for binding in bindings {
+                    self.visit_binding(binding)?;
+                }
+                self.visit_expr(ex.as_ref())?;
+            }
+            Expression::App(fun, arg) => {
+                self.visit_expr(fun.as_ref())?;
+                self.visit_expr(arg.as_ref())?;
+            }
+            Expression::Cond(abc) => {
+                let [pred, pass, fail] = abc.as_ref();
+                self.visit_expr(pred)?;
+                self.visit_expr(pass)?;
+                self.visit_expr(fail)?;
+            }
+            Expression::Case(e, alts) => {
+                self.visit_expr(e.as_ref())?;
+                for alt in alts {
+                    self.visit_alt(alt)?;
+                }
+            }
+            Expression::Cast(x, _) => self.visit_expr(x.as_ref())?,
+            Expression::Do(stmts, e) => {
+                for stmt in stmts {
+                    self.visit_stmt(stmt)?;
+                }
+                self.visit_expr(e.as_ref())?;
+            }
+            Expression::Range(a, b) => {
+                self.visit_expr(a.as_ref())?;
+                if let Some(b) = b {
+                    self.visit_expr(b.as_ref())?;
+                }
+            }
+            Expression::Group(x) => self.visit_expr(x.as_ref())?,
+        };
+        Ok(())
+    }
+
+    fn visit_alt(&mut self, alt: &Alternative<Ident>) -> Result<(), VisitError> {
+        let Alternative {
+            pat,
+            pred,
+            body,
+            wher,
+        } = alt;
+        self.visit_pat(pat)?;
+        if let Some(ex) = pred {
+            self.visit_expr(ex)?;
+        }
+        self.visit_expr(body)?;
+        for binding in wher {
+            self.visit_binding(binding)?;
+        }
+        Ok(())
+    }
+
+    fn visit_pat(&mut self, pat: &Pattern<Ident>) -> Result<(), VisitError> {
+        if let Pattern::<Ident>::Dat(_, pats)
+        | Pattern::<Ident>::Vec(pats)
+        | Pattern::<Ident>::Tup(pats) = pat
+        {
+            for pat in pats {
+                self.visit_pat(pat)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn visit_binding(&mut self, binding: &Binding<Ident>) -> Result<(), VisitError> {
+        let Binding { arms, .. } = binding;
+        if arms.len() == 1 {
+            self.visit_expr(&arms[0].body)?;
+            Ok(())
+        } else {
+            Err(VisitError::Binding.into())
+        }
+    }
+
+    fn visit_stmt(&mut self, stmt: &Statement<Ident>) -> Result<(), VisitError> {
+        match stmt {
+            Statement::Generator(pat, ex) => {
+                self.visit_pat(pat)?;
+                self.visit_expr(ex)?;
+            }
+            Statement::Predicate(ex) => self.visit_expr(ex)?,
+            Statement::JustLet(bnds) => {
+                for binding in bnds {
+                    self.visit_binding(binding)?;
+                }
+            }
+        };
+        Ok(())
+    }
+
+    fn visit_module(&mut self, module: &Module<Ident>) -> Result<(), VisitError> {
+        for inst in &module.implems {
+            for binding in &inst.defs {
+                self.visit_binding(binding)?;
+            }
+        }
+        for fundefs in &module.fundefs {
+            for arm in &fundefs.defs {
+                if let Some(pred) = &arm.pred {
+                    self.visit_expr(pred)?;
+                }
+                self.visit_expr(&arm.body)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {}
