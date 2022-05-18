@@ -13,5 +13,4 @@ wy_failure = { path = "../failure" }
 wy_span = { path = "../span" }
 wy_lexer = { path = "../lexer" }
 wy_syntax = { path = "../syntax" }
-lazy_static = "1.4.0"
-backtrace = "0.3"
+# lazy_static = "1.4.0"
