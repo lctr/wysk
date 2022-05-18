@@ -78,20 +78,29 @@ macro_rules! newtype {
         }
     };
     ($($(#[$com:meta])+)? $name:ident |$tipo:ty| Wrapper) => {
+        $($(#[$com])+)?
+        $crate::newtype! { $name |$tipo| PartialEq }
+        $crate::newtype! { $name |$tipo| PartialOrd }
+    };
+    ($($(#[$com:meta])+)? $name:ident |$tipo:ty| (= $rhs:ty |$x:ident| $y:expr)) => {
+        impl std::cmp::PartialEq<$rhs> for $name {
+            fn eq(&self, other: &$rhs) -> bool {
+                self.0 == (|$x: &$rhs| $y)(other)
+            }
+        }
+    };
+    ($($(#[$com:meta])+)? $name:ident |$tipo:ty| PartialEq) => {
         impl std::cmp::PartialEq<$tipo> for $name {
             fn eq(&self, other: &$tipo) -> bool {
                 &(self.0) == other
             }
         }
-
+    };
+    ($($(#[$com:meta])+)? $name:ident |$tipo:ty| PartialOrd) => {
         impl std::cmp::PartialOrd<$tipo> for $name {
             fn partial_cmp(&self, other: &$tipo) -> Option<std::cmp::Ordering> {
                 self.0.partial_cmp(other)
             }
-        }
-
-        impl $crate::newtypes::Newtype for $name {
-            type Inner = $tipo;
         }
     };
     ($($(#[$com:meta])+)? $name:ident |$tipo:ty| New) => {
