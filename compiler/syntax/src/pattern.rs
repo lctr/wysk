@@ -53,6 +53,34 @@ impl<Id, T> Pattern<Id, T> {
     pub fn is_empty_record(&self) -> bool {
         matches!(self, Self::Rec(Record::Anon(fs)|Record::Data(_, fs)) if fs.is_empty() )
     }
+    pub fn map_id<F, X>(self, mut f: F) -> Pattern<X, T>
+    where
+        F: FnMut(Id) -> X,
+    {
+        match self {
+            Pattern::Wild => Pattern::Wild,
+            Pattern::Var(id) => Pattern::Var(f(id)),
+            Pattern::Lit(k) => Pattern::Lit(k),
+            Pattern::Dat(id, tail) => Pattern::Dat(
+                f(id),
+                tail.into_iter().map(|p| p.map_id(|id| f(id))).collect(),
+            ),
+            Pattern::Tup(ts) => {
+                Pattern::Tup(ts.into_iter().map(|p| p.map_id(|id| f(id))).collect())
+            }
+            Pattern::Vec(ts) => {
+                Pattern::Vec(ts.into_iter().map(|p| p.map_id(|id| f(id))).collect())
+            }
+            Pattern::Lnk(x, y) => Pattern::Lnk(
+                Box::new(x.map_id(|id| f(id))),
+                Box::new(y.map_id(|id| f(id))),
+            ),
+            Pattern::At(id, p) => Pattern::At(f(id), Box::new(p.map_id(|id| f(id)))),
+            Pattern::Or(ps) => Pattern::Or(ps.into_iter().map(|p| p.map_id(|id| f(id))).collect()),
+            Pattern::Rec(_) => todo!(),
+            Pattern::Cast(_, _) => todo!(),
+        }
+    }
     pub fn map_t<F, U>(self, mut f: F) -> Pattern<Id, U>
     where
         F: FnMut(T) -> U,
