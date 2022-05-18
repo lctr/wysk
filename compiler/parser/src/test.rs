@@ -196,7 +196,7 @@ fn test_lambda_expr() {
 
 #[test]
 fn test_types() {
-    let src = "Foo x y z -> Bar z y x";
+    let src = "Foo x y z -> Bar (z, y) x";
     let result = Parser::from_str(src).ty_node().unwrap();
     println!("{}", &result);
     let var = Ident::Fresh;
@@ -212,8 +212,10 @@ fn test_types() {
                     )),
                 Box::new(Type::Con(
                     Ident::Upper(Bar), vec![
-                        Type::Var(var(z)),
-                        Type::Var(var(y)),
+                        Type::Tup(vec![
+                            Type::Var(var(z)),
+                            Type::Var(var(y)),
+                        ]),
                         Type::Var(var(x))
                     ]
                 ))
@@ -280,7 +282,7 @@ import A.thing.from.Somewhere @ A { foo, bar }
 fn parse_prim_module() {
     let src = include_str!("../../../language/prim.wy");
     let result = Parser::from_str(src).parse();
-
+    // let dcons = result.as_ref().map(|prog| prog.module.data_ctors());
     println!("{:#?}", result);
     let mut parser = Parser::from_str(src);
     for _ in 0..10 {
