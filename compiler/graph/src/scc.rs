@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 /// Simple graph and implementation of Tarjan's `Strongly Connected Components`
 /// algorithm. This module is used during semantic analysis (namely,
 /// typechecking) to identify mutually recursive functions.
@@ -321,6 +323,12 @@ impl<'a, T> Tarjan<'a, T> {
 
 pub fn graph_sccs<T>(graph: &Graph<T>) -> Vec<Scc> {
     Tarjan::from_graph(graph).components()
+}
+
+pub struct EdgeVisitor<'a, Id, T> {
+    pub graph: &'a mut Graph<T>,
+    pub map: &'a HashMap<Id, NodeId>,
+    pub node_id: NodeId,
 }
 
 #[cfg(test)]
