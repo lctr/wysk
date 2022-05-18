@@ -24,6 +24,23 @@ pub struct Match<Id = Ident, T = Ident> {
 }
 
 impl<Id, T> Match<Id, T> {
+    pub fn map_id<F, X>(self, mut f: F) -> Match<X, T>
+    where
+        F: FnMut(Id) -> X,
+    {
+        let Match {
+            args,
+            pred,
+            body,
+            wher,
+        } = self;
+        Match {
+            args: args.into_iter().map(|pat| pat.map_id(|id| f(id))).collect(),
+            pred: pred.map(|ex| ex.map_id(|id| f(id))),
+            body: body.map_id(|id| f(id)),
+            wher: wher.into_iter().map(|bnd| bnd.map_id(|id| f(id))).collect(),
+        }
+    }
     pub fn map_t<F, U>(self, mut f: F) -> Match<Id, U>
     where
         F: FnMut(T) -> U,
@@ -115,6 +132,24 @@ pub struct Alternative<Id = Ident, T = Ident> {
 }
 
 impl<Id, T> Alternative<Id, T> {
+    pub fn map_id<F, X>(self, mut f: F) -> Alternative<X, T>
+    where
+        F: FnMut(Id) -> X,
+    {
+        let Alternative {
+            pat,
+            pred,
+            body,
+            wher,
+        } = self;
+        Alternative {
+            pat: pat.map_id(|id| f(id)),
+            pred: pred.map(|x| x.map_id(|id| f(id))),
+            body: body.map_id(|id| f(id)),
+            wher: wher.into_iter().map(|b| b.map_id(|id| f(id))).collect(),
+        }
+    }
+
     pub fn map_t<F, U>(self, mut f: F) -> Alternative<Id, U>
     where
         F: FnMut(T) -> U,
@@ -155,6 +190,17 @@ pub struct Binding<Id = Ident, T = Ident> {
 }
 
 impl<Id, T> Binding<Id, T> {
+    pub fn map_id<F, X>(self, mut f: F) -> Binding<X, T>
+    where
+        F: FnMut(Id) -> X,
+    {
+        let Binding { name, arms, tipo } = self;
+        Binding {
+            name: f(name),
+            arms: arms.into_iter().map(|m| m.map_id(|id| f(id))).collect(),
+            tipo: tipo.map(|sig| sig.map_id(|id| f(id))),
+        }
+    }
     pub fn map_t<F, U>(self, mut f: F) -> Binding<Id, U>
     where
         F: FnMut(T) -> U,
@@ -182,6 +228,21 @@ pub enum Statement<Id = Ident, T = Ident> {
 }
 
 impl<Id, T> Statement<Id, T> {
+    pub fn map_id<F, X>(self, mut f: F) -> Statement<X, T>
+    where
+        F: FnMut(Id) -> X,
+    {
+        match self {
+            Statement::Generator(p, x) => {
+                Statement::Generator(p.map_id(|id| f(id)), x.map_id(|id| f(id)))
+            }
+            Statement::Predicate(x) => Statement::Predicate(x.map_id(|id| f(id))),
+            Statement::JustLet(bns) => {
+                Statement::JustLet(bns.into_iter().map(|b| b.map_id(|id| f(id))).collect())
+            }
+        }
+    }
+
     pub fn map_t<F, U>(self, mut f: F) -> Statement<Id, U>
     where
         F: FnMut(T) -> U,
