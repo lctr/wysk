@@ -126,6 +126,73 @@ impl<Id, T> Expression<Id, T> {
         Self::App(Box::new(head), Box::new(tail))
     }
 
+    pub fn map_id<F, X>(self, mut f: F) -> Expression<X, T>
+    where
+        F: FnMut(Id) -> X,
+    {
+        match self {
+            Expression::Ident(id) => Expression::Ident(f(id)),
+            Expression::Path(p, rs) => {
+                Expression::Path(f(p), rs.into_iter().map(|id| f(id)).collect())
+            }
+            Expression::Lit(l) => Expression::Lit(l),
+            Expression::Neg(x) => Expression::Neg(Box::new(x.map_id(|id| f(id)))),
+            Expression::Infix { infix, left, right } => Expression::Infix {
+                infix: f(infix),
+                left: Box::new(left.map_id(|id| f(id))),
+                right: Box::new(right.map_id(|id| f(id))),
+            },
+            Expression::Tuple(ts) => {
+                Expression::Tuple(ts.into_iter().map(|x| x.map_id(|id| f(id))).collect())
+            }
+            Expression::Array(ts) => {
+                Expression::Array(ts.into_iter().map(|x| x.map_id(|id| f(id))).collect())
+            }
+            Expression::List(x, stms) => Expression::List(
+                Box::new(x.map_id(|id| f(id))),
+                stms.into_iter().map(|s| s.map_id(|id| f(id))).collect(),
+            ),
+            Expression::Dict(rec) => {
+                Expression::Dict(rec.map_t(|x| x.map_id(|id| f(id))).map_id(|id| f(id)))
+            }
+            Expression::Lambda(p, x) => {
+                Expression::Lambda(p.map_id(|id| f(id)), Box::new(x.map_id(|id| f(id))))
+            }
+            Expression::Let(bs, x) => Expression::Let(
+                bs.into_iter().map(|b| b.map_id(|id| f(id))).collect(),
+                Box::new(x.map_id(|id| f(id))),
+            ),
+            Expression::App(x, y) => Expression::App(
+                Box::new(x.map_id(|id| f(id))),
+                Box::new(y.map_id(|id| f(id))),
+            ),
+            Expression::Cond(xyz) => {
+                let [x, y, z] = *xyz;
+                Expression::Cond(Box::new([
+                    x.map_id(|id| f(id)),
+                    y.map_id(|id| f(id)),
+                    z.map_id(|id| f(id)),
+                ]))
+            }
+            Expression::Case(scrut, arms) => Expression::Case(
+                Box::new(scrut.map_id(|id| f(id))),
+                arms.into_iter().map(|a| a.map_id(|id| f(id))).collect(),
+            ),
+            Expression::Cast(x, ty) => {
+                Expression::Cast(Box::new(x.map_id(|id| f(id))), ty.map_id(&mut f))
+            }
+            Expression::Do(sts, x) => Expression::Do(
+                sts.into_iter().map(|s| s.map_id(|id| f(id))).collect(),
+                Box::new(x.map_id(|id| f(id))),
+            ),
+            Expression::Range(a, b) => Expression::Range(
+                Box::new(a.map_id(|id| f(id))),
+                b.map(|x| Box::new(x.map_id(|id| f(id)))),
+            ),
+            Expression::Group(ex) => Expression::Group(Box::new(ex.map_id(|id| f(id)))),
+        }
+    }
+
     pub fn map_t<F, U>(self, mut f: F) -> Expression<Id, U>
     where
         F: FnMut(T) -> U,
