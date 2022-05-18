@@ -59,9 +59,6 @@ impl Ident {
 
     pub fn as_u32(self) -> u32 {
         self.get_inner().as_u32()
-        // match self {
-        //     Ident::Upper(s) | Ident::Lower(s) | Ident::Infix(s) | Ident::Fresh(s) => s.as_u32(),
-        // }
     }
 
     /// Returns the constructor for the given `Ident` variant
@@ -77,7 +74,6 @@ impl Ident {
     #[inline]
     pub fn minus_sign() -> Self {
         symbol::MINUS.pure(Self::Infix)
-        // Self::Infix(*symbol::MINUS)
     }
 
     #[inline]
