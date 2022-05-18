@@ -8,7 +8,7 @@ use token::Base;
 pub use token::{LexError, Keyword, Lexeme, Literal, Token};
 pub use stream::{Lexer, Source};
 
-use comment::{LineKind, Comment};
+use comment::{LineKind, Comment, CommentId};
 
 pub mod token;
 pub mod comment;
@@ -583,7 +583,8 @@ impl<'t> Lexer<'t> {
         // ignore newlines
         self.source.next();
         let span = first.union(rest);
-        self.comments.push(Comment::Doc { span, linekind });
+        let id = CommentId::new(self.comments.len());
+        self.comments.push(Comment::Doc { id, span, linekind });
     }
 
     fn unknown(&mut self) -> Token {
