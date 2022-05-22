@@ -6,11 +6,14 @@ pub use std::collections::{HashMap as Map, HashSet as Set, VecDeque as Deque};
 
 pub use serde;
 
+pub mod functor;
 pub mod index;
 pub mod mapstack;
 pub mod newtypes;
 pub mod pretty;
 pub mod text;
+
+pub use functor::Mappable;
 
 // TODO: Keep?
 pub trait Foldable: Iterator {
@@ -65,75 +68,6 @@ macro_rules! deque {
         )+
         deq
     }};
-}
-
-pub trait Mappable<X> {
-    type M<A>: Mappable<A>;
-    fn fmap<F, Y>(self, f: F) -> Self::M<Y>
-    where
-        F: FnMut(X) -> Y;
-}
-
-impl<X> Mappable<X> for Vec<X> {
-    type M<Y> = Vec<Y>;
-    fn fmap<F, Y>(self, f: F) -> Self::M<Y>
-    where
-        F: FnMut(X) -> Y,
-    {
-        self.into_iter().map(f).collect()
-    }
-}
-
-impl<X> Mappable<X> for Option<X> {
-    type M<A> = Option<A>;
-
-    fn fmap<F, Y>(self, f: F) -> Self::M<Y>
-    where
-        F: FnMut(X) -> Y,
-    {
-        self.map(f)
-    }
-}
-
-impl<X, E> Mappable<X> for Result<X, E> {
-    type M<A> = Result<A, E>;
-
-    fn fmap<F, Y>(self, f: F) -> Self::M<Y>
-    where
-        F: FnMut(X) -> Y,
-    {
-        self.map(f)
-    }
-}
-
-impl<X, const N: usize> Mappable<X> for [X; N] {
-    type M<A> = [A; N];
-
-    fn fmap<F, Y>(self, f: F) -> Self::M<Y>
-    where
-        F: FnMut(X) -> Y,
-    {
-        let mut array: [Y; N] = unsafe { std::mem::zeroed() };
-        for (i, y) in self.into_iter().map(f).enumerate() {
-            array[i] = y;
-        }
-        array
-    }
-}
-
-impl<X> Mappable<X> for Box<X> {
-    type M<A> = Box<A>;
-
-    fn fmap<F, Y>(self, mut f: F) -> Self::M<Y>
-    where
-        F: FnMut(X) -> Y,
-    {
-        Box::new(f(*self))
-    }
-}
-
-pub fn map_vec<X, Y>(vec: Vec<X>, f: impl FnMut(X) -> Y) -> Vec<Y> {
-    vec.fmap(f)
 }
 
 #[cfg(test)]
