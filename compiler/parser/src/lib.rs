@@ -7,9 +7,9 @@ use wy_syntax::{
     ident::{Chain, Ident},
     pattern::Pattern,
     stmt::{Alternative, Binding, Match, Statement},
-    tipo::{Context, Field, Record, Signature, Type},
+    tipo::{Con, Context, Field, Record, Signature, Type},
     AliasDecl, Arity, ClassDecl, DataDecl, Declaration, FixityDecl, FnDecl, Import, ImportSpec,
-    InstDecl, Method, Module, NewtypeArg, NewtypeDecl, Program, Tag, Variant,
+    InstDecl, Method, MethodDef, Module, NewtypeArg, NewtypeDecl, Program, Tag, Variant,
 };
 
 use wy_common::Deque;
@@ -713,35 +713,29 @@ impl<'t> DeclParser<'t> {
         self.eat(Lexeme::CurlyL)?;
         let mut defs = vec![];
         while !self.peek_on(Lexeme::CurlyR) {
-            // match self.peek() {
-            //     lexpat!(~[def]) => {
-            //         defs.push(self.method_signature()?);
-            //     }
-            //     lexpat!(~[fn]) => {
-            //         defs.push(self.function_decl().map(|FnDecl { name, defs, sign }| {
-            //             Method::Impl(Binding {
-            //                 name,
-            //                 arms: defs,
-            //                 tipo: sign,
-            //             })
-            //         })?);
-            //     }
-            //     _ => {
-            //         return Err(ParseError::Custom(
-            //             self.get_srcloc(),
-            //             self.lookahead::<1>()[0],
-            //             "doesn't begin a class method",
-            //             self.text(),
-            //         ))
-            //     }
-            // };
             match self.binding()? {
                 Binding {
                     name,
                     arms,
-                    tipo: Some(sig),
-                } if arms.is_empty() => defs.push(Method::Sig(name, sig)),
-                binding => defs.push(Method::Impl(binding)),
+                    tipo: None,
+                } => {
+                    return Err(ParseError::Custom(
+                        self.get_srcloc(),
+                        self.lookahead::<1>()[0],
+                        "class method definition without type signature",
+                        self.text(),
+                    ))
+                }
+                Binding {
+                    name,
+                    arms,
+                    tipo: Some(sign),
+                } => defs.push(MethodDef {
+                    name,
+                    sign,
+                    body: arms,
+                }),
+                // binding => defs.push(Method::Impl(binding)),
             };
             self.ignore(Lexeme::Semi);
         }
@@ -940,7 +934,13 @@ impl<'t> TypeParser<'t> {
         match head {
             Type::Var(id) => self
                 .many_while_on(Lexeme::begins_ty, Self::ty_atom)
-                .map(|args| Type::Con(id, args)),
+                .map(|args| {
+                    if args.is_empty() {
+                        Type::Var(id)
+                    } else {
+                        Type::Con(Con::Free(id), args)
+                    }
+                }),
             Type::Con(id, mut args) => {
                 args.extend(self.many_while_on(Lexeme::begins_ty, Self::ty_atom)?);
                 Ok(Type::Con(id, args))
@@ -952,7 +952,7 @@ impl<'t> TypeParser<'t> {
     fn ty_atom(&mut self) -> Parsed<Type> {
         match self.peek() {
             lexpat!(~[var]) => variable(Self::expect_lower)(self).map(Type::Var),
-            lexpat!(~[Var]) => Ok(Type::Con(self.expect_upper()?, vec![])),
+            lexpat!(~[Var]) => Ok(Type::Con(Con::Data(self.expect_upper()?), vec![])),
             lexpat!(~[brackL]) => self.brack_ty(),
             lexpat!(~[curlyL]) => self.curly_ty(),
             lexpat!(~[parenL]) => self.paren_ty(),
@@ -975,9 +975,19 @@ impl<'t> TypeParser<'t> {
             };
             rest.push(right);
         }
-        Ok(rest
-            .into_iter()
-            .fold(head, |a, c| Type::Fun(Box::new(a), Box::new(c))))
+        if rest.is_empty() {
+            Ok(head)
+        } else {
+            Ok(Type::Fun(
+                Box::new(head),
+                Box::new(
+                    rest.into_iter()
+                        .rev()
+                        .reduce(|a, c| Type::Fun(Box::new(c), Box::new(a)))
+                        .unwrap(),
+                ),
+            ))
+        }
     }
 
     fn paren_ty(&mut self) -> Parsed<Type> {
@@ -992,11 +1002,13 @@ impl<'t> TypeParser<'t> {
 
         let mut args = vec![];
         match ty {
-            Type::Var(n) | Type::Con(n, _) if self.peek_on(Lexeme::begins_pat) => {
+            Type::Var(n) | Type::Con(Con::Data(n) | Con::Free(n), _)
+                if self.peek_on(Lexeme::begins_pat) =>
+            {
                 while !(self.is_done() || lexpat!(self on [parenR]|[,]|[->])) {
                     args.push(self.ty_atom()?);
                 }
-                ty = Type::Con(n, args)
+                ty = Type::Con(Con::Data(n), args)
             }
             _ => {}
         }
@@ -1876,6 +1888,24 @@ impl<'t> ExprParser<'t> {
 
 pub fn parse_input(src: &str) -> Parsed<Program> {
     Parser::from_str(src).parse()
+}
+
+/// Parsing the type portion of a type signature in an isolated context
+#[allow(unused)]
+pub fn parse_type_node(src: &str) -> Parsed<Type> {
+    Parser::from_str(src).ty_node()
+}
+
+/// Parsing a type signature in an isolated context
+#[allow(unused)]
+pub fn parse_type_signature(src: &str) -> Parsed<Signature> {
+    Parser::from_str(src).total_signature()
+}
+
+/// Parsing en expression in an isolated context
+#[allow(unused)]
+pub fn parse_expression(src: &str) -> Parsed<Expression> {
+    Parser::from_str(src).expression()
 }
 
 pub fn try_parse_file<P: AsRef<std::path::Path>>(
