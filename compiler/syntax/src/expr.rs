@@ -192,66 +192,59 @@ impl<Id, T> Expression<Id, T> {
             Expression::Group(ex) => Expression::Group(Box::new(ex.map_id(|id| f(id)))),
         }
     }
+}
 
-    pub fn map_t<F, U>(self, mut f: F) -> Expression<Id, U>
+impl<T> Expression<Ident, T> {
+    pub fn map_t<F, U>(self, f: &mut F) -> Expression<Ident, U>
     where
         F: FnMut(T) -> U,
+        T: Copy,
     {
+        fn iters<A>(vec: &mut Vec<A>, f: &mut impl FnMut() -> A) {
+            vec.push((*f)())
+        }
         match self {
             Expression::Ident(id) => Expression::Ident(id),
-            Expression::Path(head, tail) => Expression::Path(head, tail),
-            Expression::Lit(lit) => Expression::Lit(lit),
-            Expression::Neg(x) => Expression::Neg(Box::new(x.map_t(|t| f(t)))),
-            Expression::Infix { infix, left, right } => Expression::Infix {
-                infix,
-                left: Box::new(left.map_t(|t| f(t))),
-                right: Box::new(right.map_t(|t| f(t))),
-            },
-            Expression::Tuple(xs) => {
-                Expression::Tuple(xs.into_iter().map(|ex| ex.map_t(|t| f(t))).collect())
+            Expression::Path(a, bs) => Expression::Path(a, bs),
+            Expression::Lit(l) => Expression::Lit(l),
+            Expression::Neg(e) => todo!(),
+            Expression::Infix { infix, left, right } => {
+                let left = Box::new(left.map_t(f));
+                let right = Box::new(right.map_t(f));
+                Expression::Infix { infix, left, right }
             }
-            Expression::Array(xs) => {
-                Expression::Array(xs.into_iter().map(|x| x.map_t(|t| f(t))).collect())
+            Expression::Tuple(ts) => {
+                let mut xs = vec![];
+                for t in ts {
+                    iters(&mut xs, &mut || t.clone().map_t(f));
+                }
+                Expression::Tuple(xs)
             }
-            Expression::List(head, stmts) => Expression::List(
-                Box::new(head.map_t(|t| f(t))),
-                stmts.into_iter().map(|s| s.map_t(|t| f(t))).collect(),
-            ),
-            Expression::Dict(rec) => Expression::Dict(rec.map_t(|x| x.map_t(|t| f(t)))),
-            Expression::Lambda(arg, body) => {
-                Expression::Lambda(arg.map_t(|t| f(t)), Box::new(body.map_t(|t| f(t))))
+            Expression::Array(ts) => {
+                let mut xs = vec![];
+                for t in ts {
+                    iters(&mut xs, &mut || t.clone().map_t(f));
+                }
+                Expression::Array(xs)
             }
-            Expression::Let(bs, body) => Expression::Let(
-                bs.into_iter().map(|b| b.map_t(|t| f(t))).collect(),
-                Box::new(body.map_t(|t| f(t))),
-            ),
-            Expression::App(x, y) => {
-                Expression::App(Box::new(x.map_t(|t| f(t))), Box::new(y.map_t(|t| f(t))))
+            Expression::List(head, stmts) => {
+                let h = Box::new(head.map_t(f));
+                let mut sts = vec![];
+                for s in stmts {
+                    iters(&mut sts, &mut || s.clone().map_t(f));
+                }
+                Expression::List(h, sts)
             }
-            Expression::Cond(xs) => {
-                let [x, y, z] = *xs;
-                Expression::Cond(Box::new([
-                    x.map_t(|t| f(t)),
-                    y.map_t(|t| f(t)),
-                    z.map_t(|t| f(t)),
-                ]))
-            }
-            Expression::Case(scrut, alts) => Expression::Case(
-                Box::new(scrut.map_t(|t| f(t))),
-                alts.into_iter().map(|a| a.map_t(|t| f(t))).collect(),
-            ),
-            Expression::Cast(x, ty) => {
-                Expression::Cast(Box::new(x.map_t(|t| f(t))), ty.map_t(&mut f))
-            }
-            Expression::Do(stmts, ex) => Expression::Do(
-                stmts.into_iter().map(|s| s.map_t(|t| f(t))).collect(),
-                Box::new(ex.map_t(|t| f(t))),
-            ),
-            Expression::Range(x, y) => Expression::Range(
-                Box::new(x.map_t(|t| f(t))),
-                y.map(|x| Box::new(x.map_t(|t| f(t)))),
-            ),
-            Expression::Group(ex) => Expression::Group(Box::new(ex.map_t(|t| f(t)))),
+            Expression::Dict(_) => todo!(),
+            Expression::Lambda(_, _) => todo!(),
+            Expression::Let(_, _) => todo!(),
+            Expression::App(_, _) => todo!(),
+            Expression::Cond(_) => todo!(),
+            Expression::Case(_, _) => todo!(),
+            Expression::Cast(_, _) => todo!(),
+            Expression::Do(_, _) => todo!(),
+            Expression::Range(_, _) => todo!(),
+            Expression::Group(_) => todo!(),
         }
     }
 }
