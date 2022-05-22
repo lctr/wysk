@@ -1,8 +1,9 @@
+use wy_common::{functor::Bifunctor, Mappable};
 use wy_lexer::Literal;
 
 use crate::{
     ident::Ident,
-    tipo::{Record, Type},
+    tipo::{Field, Record, Type},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -81,7 +82,7 @@ impl<Id, T> Pattern<Id, T> {
             Pattern::Cast(_, _) => todo!(),
         }
     }
-    pub fn map_t<F, U>(self, mut f: F) -> Pattern<Id, U>
+    pub fn map_t<F, U>(self, f: &mut F) -> Pattern<Id, U>
     where
         F: FnMut(T) -> U,
     {
@@ -89,19 +90,78 @@ impl<Id, T> Pattern<Id, T> {
             Pattern::Wild => Pattern::Wild,
             Pattern::Var(t) => Pattern::Var(t),
             Pattern::Lit(lit) => Pattern::Lit(lit),
-            Pattern::Dat(a, bs) => {
-                Pattern::Dat(a, bs.into_iter().map(|p| p.map_t(|t| f(t))).collect())
+            Pattern::Dat(_, _) => todo!(),
+            Pattern::Tup(ts) => {
+                if ts.is_empty() {
+                    Pattern::UNIT
+                } else {
+                    Pattern::Tup(ts.fmap(|p| p.map_t(f)))
+                }
             }
-            Pattern::Tup(ps) => Pattern::Tup(ps.into_iter().map(|t| t.map_t(|t| f(t))).collect()),
-            Pattern::Vec(ps) => Pattern::Vec(ps.into_iter().map(|t| t.map_t(|t| f(t))).collect()),
+            Pattern::Vec(ts) => {
+                if ts.is_empty() {
+                    Pattern::NIL
+                } else {
+                    Pattern::Vec(ts.fmap(|p| p.map_t(f)))
+                }
+            }
             Pattern::Lnk(x, y) => {
-                Pattern::Lnk(Box::new(x.map_t(|t| f(t))), Box::new(y.map_t(|t| f(t))))
+                let x = Box::new(x.map_t(f));
+                let y = Box::new(y.map_t(f));
+                Pattern::Lnk(x, y)
             }
-            Pattern::At(id, pat) => Pattern::At(id, Box::new(pat.map_t(|t| f(t)))),
-            Pattern::Or(ps) => Pattern::Or(ps.into_iter().map(|p| p.map_t(|t| f(t))).collect()),
-            Pattern::Rec(rec) => Pattern::Rec(rec.map_t(|pat| pat.map_t(|t| f(t)))),
+            Pattern::At(id, ps) => Pattern::At(id, Box::new(ps.map_t(f))),
+            Pattern::Or(ps) => Pattern::Or(ps.fmap(|p| p.map_t(f))),
+            Pattern::Rec(rec) => {
+                let (cted, fields) = match rec {
+                    Record::Anon(fs) => (None, fs),
+                    Record::Data(con, fs) => (Some(con), fs),
+                };
+                let fields = fields.fmap(|field| match field {
+                    Field::Rest => Field::Rest,
+                    Field::Key(k) => Field::Key(k),
+                    Field::Entry(k, v) => Field::Entry(k, v.map_t(f)),
+                });
+                let record = match cted {
+                    Some(k) => Record::Data(k, fields),
+                    None => Record::Anon(fields),
+                };
+                Pattern::Rec(record)
+            }
             Pattern::Cast(pat, ty) => {
-                Pattern::Cast(Box::new(pat.map_t(|t| f(t))), ty.map_t(&mut f))
+                fn map_ty<A, B, C>(ty: Type<A, B>, f: &mut impl FnMut(B) -> C) -> Type<A, C> {
+                    match ty {
+                        Type::Var(v) => Type::Var(f(v)),
+                        Type::Con(id, args) => {
+                            Type::Con(id.map_t(|b| f(b)), args.fmap(|ty| map_ty(ty, f)))
+                        }
+                        Type::Fun(x, y) => {
+                            Type::Fun(Box::new(map_ty(*x, f)), Box::new(map_ty(*y, f)))
+                        }
+                        Type::Tup(ts) => Type::Tup(ts.fmap(|ty| map_ty(ty, f))),
+                        Type::Vec(t) => Type::Vec(Box::new(map_ty(*t, f))),
+                        Type::Rec(recs) => {
+                            let (k, fs) = match recs {
+                                Record::Anon(fs) => (None, fs),
+                                Record::Data(k, fs) => (Some(k), fs),
+                            };
+                            let fields = fs.fmap(|field| match field {
+                                Field::Rest => Field::Rest,
+                                Field::Key(k) => Field::Key(k),
+                                Field::Entry(k, v) => Field::Entry(k, map_ty(v, f)),
+                            });
+                            Type::Rec(if let Some(k) = k {
+                                Record::Data(k, fields)
+                            } else {
+                                Record::Anon(fields)
+                            })
+                        }
+                    }
+                }
+
+                let pat = Box::new(pat.map_t(f));
+                let tipo = map_ty(ty, f);
+                Pattern::Cast(pat, tipo)
             }
         }
     }
