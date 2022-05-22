@@ -61,7 +61,7 @@ macro_rules! newtype {
     ($($(#[$com:meta])+)? $name:ident => $tipo:ty) => {
         $($(#[$com])+)?
         #[derive(
-            Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord
+            Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord
         )]
         pub struct $name($tipo);
 
@@ -74,6 +74,12 @@ macro_rules! newtype {
         impl std::cmp::PartialOrd<$tipo> for $name {
             fn partial_cmp(&self, other: &$tipo) -> Option<std::cmp::Ordering> {
                 self.0.partial_cmp(other)
+            }
+        }
+
+        impl std::fmt::Debug for $name where $tipo: std::fmt::Debug {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{}({})", stringify!($name), &self.0)
             }
         }
     };
