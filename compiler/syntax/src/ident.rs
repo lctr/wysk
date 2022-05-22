@@ -1,14 +1,36 @@
 use wy_common::Deque;
 use wy_intern::symbol::{self, Symbol, Symbolic};
 
+pub trait Identifier: Eq + Copy {
+    fn is_upper(&self) -> bool;
+    fn is_lower(&self) -> bool;
+    fn is_infix(&self) -> bool;
+    fn is_fresh(&self) -> bool;
+}
+
+impl Identifier for Ident {
+    fn is_upper(&self) -> bool {
+        Ident::is_upper(&self)
+    }
+    fn is_lower(&self) -> bool {
+        Ident::is_lower(&self)
+    }
+    fn is_fresh(&self) -> bool {
+        Ident::is_fresh(&self)
+    }
+    fn is_infix(&self) -> bool {
+        Ident::is_infix(&self)
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub enum Ident {
     Upper(Symbol),
     Lower(Symbol),
     Infix(Symbol),
-    /// Represent user-input type variables. These are for documentation
-    /// primarily, as types are mapped to use `Tv` for variables during
-    /// typechecking.
+    /// Represent internally generated variables distinguishable from `Lower`
+    /// variants, either for type variables or for parser/compiler generated
+    /// variables.
     Fresh(Symbol),
 }
 
@@ -40,9 +62,6 @@ wy_common::variants!(#((Symbol) Ident :Upper :Lower :Infix :Fresh));
 impl Ident {
     pub fn symbol(&self) -> Symbol {
         *self.get_inner()
-        // match self {
-        //     Self::Upper(s) | Self::Lower(s) | Self::Infix(s) | Self::Fresh(s) => *s,
-        // }
     }
     pub fn is_upper(&self) -> bool {
         matches!(self, Self::Upper(..))
@@ -193,6 +212,12 @@ impl<Id> Chain<Id> {
     {
         let Chain(x, xs) = self;
         Chain(f(x), xs.into_iter().map(f).collect())
+    }
+
+    #[inline]
+    /// Alias for `map` method.
+    pub fn fmap<Y>(self, f: impl FnMut(Id) -> Y) -> Chain<Y> {
+        self.map(f)
     }
 
     /// Analogous to `map`, but without taking ownership of `Self`.
