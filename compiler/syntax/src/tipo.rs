@@ -1,107 +1,15 @@
+use std::{fmt::Write, hash::Hash};
+
+use wy_common::{Map, Mappable};
 use wy_intern::Symbol;
 
-use crate::ident::Ident;
-
-/// A `Context` always appears as an element in a sequence of other `Context`s
-/// preceding a `=>` and a type signature, and encodes what *type constraints* a
-/// given *type variable* must adhere to in the following type signature.
-///
-/// For example, the following type signature contains *two* `Context`s
-/// corresponding to two type variables `a` and `b`, where, for some given
-/// typeclasses `A` and `B`, `a` is constrained (= required to be a member of)
-/// the typeclass `A`, and `b` is constrained to `B`.
-/// ```wysk
-/// ~~> Context 1
-/// ~~|  vvv
-///     |A a, B b| => (a, b)
-/// ~~:       ^^^  
-/// ~~:  Context 2
-/// ~~: ^--------^
-/// ~~: Context 1 and Context 2, surrounded by `|` and followed by `=>`
-/// ```
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Context<Id = Ident, T = Ident> {
-    pub class: Id,
-    /// Defaults to `Tv`, but is parametrized in order to allow for simple
-    /// (lowercase) identifiers to be used during parsing (which should then be
-    /// *normalized* once the RHS is available so that `T` directly matches any
-    /// type variables from the RHS).
-    pub tyvar: T,
-}
-
-impl<Id, T> Context<Id, T> {
-    pub fn map_id<F, X>(self, mut f: F) -> Context<X, T>
-    where
-        F: FnMut(Id) -> X,
-    {
-        let Context { class, tyvar } = self;
-        Context {
-            class: f(class),
-            tyvar,
-        }
-    }
-    pub fn map_t<F, U>(self, mut f: F) -> Context<Id, U>
-    where
-        F: FnMut(T) -> U,
-    {
-        let Context { class, tyvar } = self;
-        Context {
-            class,
-            tyvar: f(tyvar),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Signature<Id = Ident, T = Ident> {
-    pub each: Vec<Id>,
-    pub ctxt: Vec<Context<Id, T>>,
-    pub tipo: Type<Id, T>,
-}
-
-impl<Id, T> Signature<Id, T> {
-    /// Checks whether all type variables in the type signature's contexts
-    /// appear in the type annotation. It is valid for the type to contain type
-    /// variables not covered by the contexts, *however* all type variables
-    /// within the contexts *must* be used in the type!
-    ///
-    /// For example, the signature `|Foo a, Bar b| a -> b` is valid, but the
-    /// signature `|Foo a, Bar b, Baz c| a -> b` is not as the type `a -> b`
-    /// does not include the type variable `c`.
-    pub fn no_unused_ctx_tyvars(&self) -> bool
-    where
-        T: Copy + PartialEq,
-    {
-        let tyvars = self.tipo.fv();
-        self.ctxt.iter().all(|ctxt| tyvars.contains(&ctxt.tyvar))
-    }
-
-    pub fn map_id<F, X>(self, mut f: F) -> Signature<X, T>
-    where
-        F: FnMut(Id) -> X,
-    {
-        let Signature { each, ctxt, tipo } = self;
-        Signature {
-            each: each.into_iter().map(|id| f(id)).collect(),
-            ctxt: ctxt.into_iter().map(|ctx| ctx.map_id(|id| f(id))).collect(),
-            tipo: tipo.map_id(&mut f),
-        }
-    }
-
-    pub fn map_t<F, U>(self, mut f: F) -> Signature<Id, U>
-    where
-        F: FnMut(T) -> U,
-    {
-        let Signature { each, ctxt, tipo } = self;
-        Signature {
-            each,
-            ctxt: ctxt.into_iter().map(|c| c.map_t(|t| f(t))).collect(),
-            tipo: tipo.map_t(&mut f),
-        }
-    }
-}
+use crate::ident::{Ident, Identifier};
 
 /// Represents a type variable.
+///
+/// TODO: (for display/printing aesthetics) reserve `Tv(6)` and `Tv(13)` for `f`
+/// and `m`, respectively for type variables in constructor position??? Or put
+/// off into a separate type in a later phase.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct Tv(pub u32);
 
@@ -160,6 +68,151 @@ impl From<Tv> for Ident {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct VarOrd<T>(T, Tv);
+impl<T> VarOrd<T> {
+    pub fn fst(self) -> T {
+        self.0
+    }
+    pub fn snd(self) -> Tv {
+        self.1
+    }
+    pub fn as_pair(self) -> (T, Tv) {
+        (self.0, self.1)
+    }
+}
+
+impl<T> Extend<VarOrd<T>> for Map<T, Tv>
+where
+    T: Eq + Hash,
+{
+    fn extend<I: IntoIterator<Item = VarOrd<T>>>(&mut self, iter: I) {
+        for VarOrd(t, tv) in iter {
+            self.insert(t, tv);
+        }
+    }
+}
+
+impl<T> Extend<VarOrd<T>> for Vec<(T, Tv)> {
+    fn extend<I: IntoIterator<Item = VarOrd<T>>>(&mut self, iter: I) {
+        for VarOrd(t, tv) in iter {
+            self.push((t, tv));
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Con<Id = Ident, T = Id> {
+    List,
+    Tuple(usize),
+    Arrow,
+    Data(Id),
+    Free(T),
+}
+
+impl<Id, T> Con<Id, T> {
+    pub fn is_list(&self) -> bool {
+        matches!(self, Con::List)
+    }
+    pub fn is_tuple(&self) -> bool {
+        matches!(self, Con::Tuple(..))
+    }
+    pub fn is_arrow(&self) -> bool {
+        matches!(self, Con::Arrow)
+    }
+    pub fn is_data(&self) -> bool {
+        matches!(self, Con::Data(..))
+    }
+    pub fn is_variable(&self) -> bool {
+        matches!(self, Con::Free(..))
+    }
+    /// Since `Type` is generic over identifiers, in order to extract the
+    /// identifier used for the (polymorphic) list constructor `:` -- which, as
+    /// a result of string interning, is represented by a `Symbol` -- a closure
+    /// must be provided to convert the `Symbol` corresponding to `:` into the
+    /// type used to represent identifiers.
+    ///
+    /// Note that, while `(:)` is formally written, the actual identifier does
+    /// *not* include the parentheses! Hence this function is essentially a
+    /// shortcut to interning `:` and mapping it to represent an identifier.
+    pub fn list_cons_id(mut f: impl FnMut(Symbol) -> Id) -> Id {
+        f(wy_intern::intern_once(":"))
+    }
+
+    /// Like with the list constructor `:`, the tuple constructor must also be
+    /// processed to match the type used to represent identifiers. However,
+    /// unlike the list constructor, which is used for *all* lists, tuples
+    /// require a new constructor depending on the number of type components
+    /// held. Namely, the constructor for a tuple with `N` elements is the
+    /// lexeme formed by combining `N - 1` commas and surrounding them in
+    /// parentheses.
+    pub fn n_tuple_id(commas: usize, mut f: impl FnMut(Symbol) -> Id) -> Id {
+        let ntup = (1..(2 + commas)).map(|_| ',').collect::<String>();
+        f(wy_intern::intern_once(&*ntup))
+    }
+    pub fn map_id<X>(self, mut f: impl FnMut(Id) -> X) -> Con<X, T> {
+        match self {
+            Con::List => Con::List,
+            Con::Tuple(n) => Con::Tuple(n),
+            Con::Arrow => Con::Arrow,
+            Con::Data(id) => Con::Data(f(id)),
+            Con::Free(t) => Con::Free(t),
+        }
+    }
+    pub fn map_id_ref<X>(&self, mut f: impl FnMut(&Id) -> X) -> Con<X, T>
+    where
+        T: Copy,
+    {
+        match self {
+            Con::List => Con::List,
+            Con::Tuple(n) => Con::Tuple(*n),
+            Con::Arrow => Con::Arrow,
+            Con::Data(id) => Con::Data(f(id)),
+            Con::Free(t) => Con::Free(*t),
+        }
+    }
+
+    pub fn map_t<X>(self, mut f: impl FnMut(T) -> X) -> Con<Id, X> {
+        match self {
+            Con::List => Con::List,
+            Con::Tuple(n) => Con::Tuple(n),
+            Con::Arrow => Con::Arrow,
+            Con::Data(id) => Con::Data(id),
+            Con::Free(t) => Con::Free(f(t)),
+        }
+    }
+    pub fn map_t_ref<X>(&self, mut f: impl FnMut(&T) -> X) -> Con<Id, X>
+    where
+        Id: Copy,
+    {
+        match self {
+            Con::List => Con::List,
+            Con::Tuple(n) => Con::Tuple(*n),
+            Con::Arrow => Con::Arrow,
+            Con::Data(id) => Con::Data(*id),
+            Con::Free(t) => Con::Free(f(t)),
+        }
+    }
+}
+
+impl<Id: std::fmt::Display, T: std::fmt::Display> std::fmt::Display for Con<Id, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Con::List => write!(f, "[]"),
+            Con::Tuple(ns) => {
+                f.write_char('(')?;
+                for _ in (0..*ns) {
+                    f.write_char(',')?;
+                }
+                f.write_char(')')
+            }
+            Con::Arrow => f.write_str("(->)"),
+            Con::Data(id) => write!(f, "{}", id),
+            Con::Free(v) => write!(f, "{}", v),
+        }
+    }
+}
+
 /// Types corresponding to syntactic forms. A number of variants are effectively
 /// syntactic sugar for type applications over a type constructor, represented
 /// by the variant `Con`:
@@ -178,7 +231,7 @@ pub enum Type<Id = Ident, T = Ident> {
     /// Type constructors. Note that a `Con` variant may NOT have a type
     /// variable as the cosnstructor. For polymorphism over a constructor, use
     /// the `App` variant.
-    Con(Id, Vec<Type<Id, T>>),
+    Con(Con<Id, T>, Vec<Type<Id, T>>),
     /// Function type. The type `a -> b` describes a function whose argument is
     /// of type `a` and whose return value is of type `b`. Functions are *all*
     /// curried, hence a multi-argument function type is a function type whose
@@ -278,6 +331,35 @@ impl<Id: std::fmt::Display, T: std::fmt::Display> std::fmt::Display for Type<Id,
 impl<Id, T> Type<Id, T> {
     pub const UNIT: Self = Self::Tup(vec![]);
 
+    pub fn contains_constructor(&self, con: &Con<Id, T>) -> bool
+    where
+        Id: PartialEq,
+        T: PartialEq,
+    {
+        match self {
+            Type::Var(_) => false,
+            Type::Con(c, ts) => c == con || ts.iter().any(|ty| ty.contains_constructor(con)),
+            Type::Fun(a, b) => {
+                con.is_arrow() || a.contains_constructor(con) || b.contains_constructor(con)
+            }
+            Type::Tup(ts) => {
+                matches!(con, Con::Tuple(n) if *n == ts.len())
+                    || ts.iter().any(|ty| ty.contains_constructor(con))
+            }
+            Type::Vec(t) => {
+                if con.is_list() {
+                    true
+                } else {
+                    t.contains_constructor(con)
+                }
+            }
+            Type::Rec(rec) => rec
+                .fields()
+                .into_iter()
+                .any(|field| matches!(field.get_value(), Some(t) if t.contains_constructor(con))),
+        }
+    }
+
     /// Identifies whether this `Type` is polymorphic over the given type
     /// variable. Equivalently, this method tests for containment of the given
     /// variable of type `T`.
@@ -321,9 +403,11 @@ impl<Id, T> Type<Id, T> {
     {
         match self {
             Type::Var(t) => Type::Var(t),
-            Type::Con(id, tys) => {
-                Type::Con(f(id), tys.into_iter().map(|ty| ty.map_id(f)).collect())
-            }
+            Type::Con(Con::Data(n), ts) => Type::Con(Con::Data(f(n)), ts.fmap(|ty| ty.map_id(f))),
+            Type::Con(id, tys) => Type::Con(
+                id.map_id(|i| f(i)),
+                tys.into_iter().map(|ty| ty.map_id(f)).collect(),
+            ),
             Type::Fun(x, y) => Type::Fun(Box::new(x.map_id(f)), Box::new(y.map_id(f))),
             Type::Tup(ts) => Type::Tup(ts.into_iter().map(|t| t.map_id(f)).collect()),
             Type::Vec(t) => Type::Vec(Box::new(t.map_id(f))),
@@ -331,17 +415,21 @@ impl<Id, T> Type<Id, T> {
         }
     }
 
-    pub fn map_t<F, U>(self, f: &mut F) -> Type<Id, U>
+    pub fn map_id_ref<F, X>(&self, f: &mut F) -> Type<X, T>
     where
-        F: FnMut(T) -> U,
+        F: FnMut(&Id) -> X,
+        T: Copy,
     {
         match self {
-            Type::Var(t) => Type::Var(f(t)),
-            Type::Con(c, ts) => Type::Con(c, ts.into_iter().map(|ty| ty.map_t(f)).collect()),
-            Type::Fun(x, y) => Type::Fun(Box::new(x.map_t(f)), Box::new(y.map_t(f))),
-            Type::Tup(tys) => Type::Tup(tys.into_iter().map(|ty| ty.map_t(f)).collect::<Vec<_>>()),
-            Type::Vec(ty) => Type::Vec(Box::new(ty.map_t(f))),
-            Type::Rec(rs) => Type::Rec(rs.map_t(|ty| ty.map_t(f))),
+            Type::Var(t) => Type::Var(*t),
+            Type::Con(id, tys) => Type::Con(
+                id.map_id_ref(|id| f(id)),
+                tys.iter().map(|ty| ty.map_id_ref(f)).collect(),
+            ),
+            Type::Fun(x, y) => Type::Fun(Box::new(x.map_id_ref(f)), Box::new(y.map_id_ref(f))),
+            Type::Tup(ts) => Type::Tup(ts.iter().map(|t| t.map_id_ref(f)).collect()),
+            Type::Vec(t) => Type::Vec(Box::new(t.map_id_ref(f))),
+            Type::Rec(_) => todo!(),
         }
     }
 
@@ -353,13 +441,9 @@ impl<Id, T> Type<Id, T> {
     {
         match self {
             Type::Var(t) => Type::Var(f(t)),
-            Type::Con(c, ts) => Type::Con(*c, ts.iter().map(|ty| ty.map_t_ref(f)).collect()),
+            Type::Con(c, ts) => Type::Con(c.map_t_ref(|t| f(t)), iter_map_t_ref(&ts[..], f)),
             Type::Fun(x, y) => Type::Fun(Box::new(x.map_t_ref(f)), Box::new(y.map_t_ref(f))),
-            Type::Tup(tys) => Type::Tup(
-                tys.into_iter()
-                    .map(|ty| ty.map_t_ref(f))
-                    .collect::<Vec<_>>(),
-            ),
+            Type::Tup(tys) => Type::Tup(iter_map_t_ref(&tys[..], f)),
             Type::Vec(ty) => Type::Vec(Box::new(ty.map_t_ref(f))),
             Type::Rec(rs) => Type::Rec(rs.map_t_ref(|ty| ty.map_t_ref(f))),
         }
@@ -385,7 +469,7 @@ impl<Id, T> Type<Id, T> {
     /// the identifier represemting the nullary type constructor.
     pub fn id_if_nullary(&self) -> Option<&Id> {
         match self {
-            Type::Con(id, args) if args.is_empty() => Some(id),
+            Type::Con(Con::Data(id), args) if args.is_empty() => Some(id),
             _ => None,
         }
     }
@@ -403,6 +487,16 @@ impl<Id, T> Type<Id, T> {
                 if !fvs.contains(a) {
                     fvs.push(*a)
                 }
+            }
+            Type::Con(Con::Free(t), ts) => {
+                if !fvs.contains(t) {
+                    fvs.push(*t);
+                }
+                ts.into_iter().flat_map(|ty| ty.fv()).for_each(|tv| {
+                    if !fvs.contains(&tv) {
+                        fvs.push(tv);
+                    }
+                })
             }
             Type::Con(_, ts) | Type::Tup(ts) => {
                 ts.into_iter().flat_map(|ty| ty.fv()).for_each(|tv| {
@@ -455,38 +549,81 @@ impl<Id, T> Type<Id, T> {
     /// possible to derive a mapping from one set of type variables to a new
     /// one, facilitating the process of *normalizing* the type variables within
     /// a given type.
-    pub fn enumerate(&self) -> impl Iterator<Item = (T, Tv)>
+    pub fn enumerate(&self) -> impl Iterator<Item = VarOrd<T>>
     where
         T: Copy + Eq,
     {
         let mut vars = self.fv();
         vars.dedup();
-        vars.into_iter().zip(0..).map(|(t, var)| (t, Tv(var)))
+        vars.into_iter().zip(0..).map(|(t, var)| VarOrd(t, Tv(var)))
     }
 
-    /// Since `Type` is generic over identifiers, in order to extract the
-    /// identifier used for the (polymorphic) list constructor `:` -- which, as
-    /// a result of string interning, is represented by a `Symbol` -- a closure
-    /// must be provided to convert the `Symbol` corresponding to `:` into the
-    /// type used to represent identifiers.
-    ///
-    /// Note that, while `(:)` is formally written, the actual identifier does
-    /// *not* include the parentheses! Hence this function is essentially a
-    /// shortcut to interning `:` and mapping it to represent an identifier.
-    pub fn list_cons_id(mut f: impl FnMut(Symbol) -> Id) -> Id {
-        f(wy_intern::intern_once(":"))
+    pub fn ty_str(&self) -> TypeStr<'_, Id, T> {
+        TypeStr(self)
     }
+}
 
-    /// Like with the list constructor `:`, the tuple constructor must also be
-    /// processed to match the type used to represent identifiers. However,
-    /// unlike the list constructor, which is used for *all* lists, tuples
-    /// require a new constructor depending on the number of type components
-    /// held. Namely, the constructor for a tuple with `N` elements is the
-    /// lexeme formed by combining `N - 1` commas and surrounding them in
-    /// parentheses.
-    pub fn n_tuple_id(commas: usize, mut f: impl FnMut(Symbol) -> Id) -> Id {
-        let ntup = (1..(2 + commas)).map(|_| ',').collect::<String>();
-        f(wy_intern::intern_once(&*ntup))
+impl<T> Type<Ident, T> {
+    pub fn map_t<F, U>(self, f: &mut F) -> Type<Ident, U>
+    where
+        F: FnMut(T) -> U,
+        T: Clone,
+    {
+        fn iters<U>(vec: &mut Vec<Type<Ident, U>>, mut f: impl FnMut() -> Type<Ident, U>) {
+            let ty = f();
+            vec.push(ty);
+        }
+
+        match self {
+            Type::Var(t) => Type::Var(f(t)),
+            Type::Con(c, ts) => {
+                let mut args = vec![];
+                let con = match c {
+                    Con::Arrow => Con::Arrow,
+                    Con::List => Con::List,
+                    Con::Tuple(n) => Con::Tuple(n),
+                    Con::Data(id) => Con::Data(id),
+                    Con::Free(c) => Con::Free(f(c)),
+                };
+                for ty in ts {
+                    iters(&mut args, || ty.clone().map_t(f));
+                }
+                Type::Con(con, args)
+            }
+            Type::Fun(x, y) => Type::Fun(Box::new(x.map_t(f)), Box::new(y.map_t(f))),
+            Type::Tup(tys) => Type::Tup({
+                let mut args = vec![];
+                for ty in &tys[..] {
+                    let t = ty.clone();
+                    args.push(t.map_t(f));
+                }
+                args
+            }),
+            Type::Vec(ty) => Type::Vec(Box::new(ty.map_t(f))),
+            Type::Rec(rs) => Type::Rec(rs.map_t(|ty| ty.map_t(f))),
+        }
+    }
+}
+
+fn iter_map_t_ref<X: Copy, Y: Copy, Z>(
+    typs: &[Type<X, Y>],
+    f: &mut impl FnMut(&Y) -> Z,
+) -> Vec<Type<X, Z>> {
+    let mut tys = vec![];
+    for ty in typs {
+        tys.push(ty.map_t_ref(f))
+    }
+    tys
+}
+
+pub struct TypeStr<'t, Id, T>(&'t Type<Id, T>);
+impl<'t, Id, T> std::fmt::Debug for TypeStr<'t, Id, T>
+where
+    Id: 't + std::fmt::Display,
+    T: 't + std::fmt::Display,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 
@@ -613,16 +750,27 @@ impl<T, Id> Record<T, Id> {
     where
         F: FnMut(T) -> U,
     {
-        match self {
-            Record::Anon(es) => Record::Anon(
-                es.into_iter()
-                    .map(|e| e.map_t(|t| f(t)))
-                    .collect::<Vec<_>>(),
-            ),
-            Record::Data(k, v) => Record::Data(
-                k,
-                v.into_iter().map(|v| v.map_t(|t| f(t))).collect::<Vec<_>>(),
-            ),
+        let mut entries = vec![];
+        if let Record::Anon(es) = self {
+            for field in es {
+                match field {
+                    Field::Rest => entries.push(Field::Rest),
+                    Field::Key(k) => entries.push(Field::Key(k)),
+                    Field::Entry(k, v) => entries.push(Field::Entry(k, f(v))),
+                };
+            }
+            return Record::Anon(entries);
+        } else if let Record::Data(k, vs) = self {
+            for field in vs {
+                match field {
+                    Field::Rest => entries.push(Field::Rest),
+                    Field::Key(k) => entries.push(Field::Key(k)),
+                    Field::Entry(k, v) => entries.push(Field::Entry(k, f(v))),
+                };
+            }
+            return Record::Data(k, entries);
+        } else {
+            unreachable!()
         }
     }
 
@@ -632,15 +780,24 @@ impl<T, Id> Record<T, Id> {
         Id: Copy,
     {
         match self {
-            Record::Anon(es) => {
-                Record::Anon(es.iter().map(|e| e.map_t_ref(|t| f(t))).collect::<Vec<_>>())
-            }
-            Record::Data(k, v) => Record::Data(
-                *k,
-                v.iter().map(|v| v.map_t_ref(|t| f(t))).collect::<Vec<_>>(),
-            ),
+            Record::Anon(es) => Record::Anon(iter_map_t_ref_field(&es[..], &mut |t| f(t))),
+            Record::Data(k, v) => Record::Data(*k, iter_map_t_ref_field(&v[..], &mut |t| f(t))),
         }
     }
+}
+
+fn iter_map_t_ref_field<X, Y, Z>(
+    fields: &[Field<Y, X>],
+    mut f: &mut impl FnMut(&Y) -> Z,
+) -> Vec<Field<Z, X>>
+where
+    X: Copy,
+{
+    let mut fs = vec![];
+    for field in fields {
+        fs.push(field.map_t_ref(&mut f))
+    }
+    fs
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -746,4 +903,172 @@ wy_common::strenum! {
     Bool    "Bool"      // bool
     Char    "Char"      // char
     Str     "Str"       // &'static str
+}
+
+/// A `Context` always appears as an element in a sequence of other `Context`s
+/// preceding a `=>` and a type signature, and encodes what *type constraints* a
+/// given *type variable* must adhere to in the following type signature.
+///
+/// For example, the following type signature contains *two* `Context`s
+/// corresponding to two type variables `a` and `b`, where, for some given
+/// typeclasses `A` and `B`, `a` is constrained (= required to be a member of)
+/// the typeclass `A`, and `b` is constrained to `B`.
+/// ```wysk
+/// ~~> Context 1
+/// ~~|  vvv
+///     |A a, B b| => (a, b)
+/// ~~:       ^^^  
+/// ~~:  Context 2
+/// ~~: ^--------^
+/// ~~: Context 1 and Context 2, surrounded by `|` and followed by `=>`
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Context<Id = Ident, T = Ident> {
+    pub class: Id,
+    /// Defaults to `Tv`, but is parametrized in order to allow for simple
+    /// (lowercase) identifiers to be used during parsing (which should then be
+    /// *normalized* once the RHS is available so that `T` directly matches any
+    /// type variables from the RHS).
+    pub tyvar: T,
+}
+
+impl<Id, T> Context<Id, T> {
+    pub fn map_id<F, X>(self, mut f: F) -> Context<X, T>
+    where
+        F: FnMut(Id) -> X,
+    {
+        let Context { class, tyvar } = self;
+        Context {
+            class: f(class),
+            tyvar,
+        }
+    }
+    pub fn map_id_ref<F, X>(&self, mut f: F) -> Context<X, T>
+    where
+        F: FnMut(&Id) -> X,
+        T: Copy,
+    {
+        Context {
+            class: f(&self.class),
+            tyvar: self.tyvar,
+        }
+    }
+    pub fn map_t<F, U>(self, mut f: F) -> Context<Id, U>
+    where
+        F: FnMut(T) -> U,
+    {
+        let Context { class, tyvar } = self;
+        Context {
+            class,
+            tyvar: f(tyvar),
+        }
+    }
+    pub fn map_t_ref<F, U>(&self, mut f: F) -> Context<Id, U>
+    where
+        F: FnMut(&T) -> U,
+        Id: Copy,
+    {
+        Context {
+            class: self.class,
+            tyvar: f(&self.tyvar),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Signature<Id = Ident, T = Ident> {
+    pub each: Vec<Id>,
+    pub ctxt: Vec<Context<Id, T>>,
+    pub tipo: Type<Id, T>,
+}
+
+impl<Id, T> Signature<Id, T> {
+    /// Checks whether all type variables in the type signature's contexts
+    /// appear in the type annotation. It is valid for the type to contain type
+    /// variables not covered by the contexts, *however* all type variables
+    /// within the contexts *must* be used in the type!
+    ///
+    /// For example, the signature `|Foo a, Bar b| a -> b` is valid, but the
+    /// signature `|Foo a, Bar b, Baz c| a -> b` is not as the type `a -> b`
+    /// does not include the type variable `c`.
+    pub fn no_unused_ctx_tyvars(&self) -> bool
+    where
+        T: Copy + PartialEq,
+    {
+        let tyvars = self.tipo.fv();
+        self.ctxt.iter().all(|ctxt| tyvars.contains(&ctxt.tyvar))
+    }
+
+    pub fn ctxt_iter(&self) -> std::slice::Iter<'_, Context<Id, T>> {
+        self.ctxt.iter()
+    }
+
+    pub fn ctxt_iter_mut(&mut self) -> std::slice::IterMut<'_, Context<Id, T>> {
+        self.ctxt.iter_mut()
+    }
+
+    pub fn map_id<F, X>(self, mut f: F) -> Signature<X, T>
+    where
+        F: FnMut(Id) -> X,
+    {
+        Signature {
+            each: self.each.into_iter().map(|id| f(id)).collect(),
+            ctxt: self
+                .ctxt
+                .into_iter()
+                .map(|ctx| ctx.map_id(|id| f(id)))
+                .collect(),
+            tipo: self.tipo.map_id(&mut f),
+        }
+    }
+
+    pub fn map_id_ref<F, X>(&self, mut f: F) -> Signature<X, T>
+    where
+        F: FnMut(&Id) -> X,
+        T: Copy,
+    {
+        Signature {
+            each: self.each.iter().map(|id| f(id)).collect(),
+            ctxt: self
+                .ctxt
+                .iter()
+                .map(|ctx| ctx.map_id_ref(|id| f(id)))
+                .collect(),
+            tipo: self.tipo.map_id_ref(&mut f),
+        }
+    }
+
+    pub fn map_t_ref<F, U>(&self, mut f: F) -> Signature<Id, U>
+    where
+        F: FnMut(&T) -> U,
+        Id: Copy,
+        T: Copy,
+    {
+        Signature {
+            each: self.each.clone(),
+            ctxt: self.ctxt.iter().map(|c| c.map_t_ref(|t| f(t))).collect(),
+            tipo: self.tipo.map_t_ref(&mut f),
+        }
+    }
+}
+
+impl<T> Signature<Ident, T> {
+    pub fn map_t<F, U>(self, f: &mut F) -> Signature<Ident, U>
+    where
+        F: FnMut(T) -> U,
+        T: Clone,
+    {
+        let mut ctxt = vec![];
+        for Context { class, tyvar } in self.ctxt {
+            ctxt.push(Context {
+                class,
+                tyvar: f(tyvar),
+            })
+        }
+        Signature {
+            each: self.each,
+            ctxt,
+            tipo: self.tipo.map_t(f),
+        }
+    }
 }
