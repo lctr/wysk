@@ -5,6 +5,18 @@ use wy_syntax::expr::Expression;
 
 use super::*;
 
+macro_rules! with_vars {
+    (|$($ids:ident $(,)?)+| { $($rest:tt)* }) => {{
+        #[allow(non_snake_case, unused)]
+        let [ $($ids,)+ ] =
+            wy_intern::intern_many([ $(stringify!($ids)),+ ]);
+        let result = {
+            $($rest)*
+        };
+        result
+    }};
+}
+
 fn infixed(left: Expression, infix: wy_intern::Symbol, right: Expression) -> Expression {
     Expression::Infix {
         infix: Ident::Infix(infix),
@@ -165,18 +177,6 @@ fn test_pattern() {
     }
 }
 
-macro_rules! with_vars {
-    (|$($ids:ident $(,)?)+| { $($rest:tt)* }) => {{
-        #[allow(non_snake_case, unused)]
-        let [ $($ids,)+ ] =
-            wy_intern::intern_many([ $(stringify!($ids)),+ ]);
-        let result = {
-            $($rest)*
-        };
-        result
-    }};
-}
-
 #[test]
 fn test_lambda_expr() {
     let src = r#"\x -> f x"#;
@@ -195,7 +195,7 @@ fn test_lambda_expr() {
 }
 
 #[test]
-fn test_types() {
+fn test_type_app() {
     let src = "Foo x y z -> Bar (z, y) x";
     let result = Parser::from_str(src).ty_node().unwrap();
     println!("{}", &result);
@@ -205,13 +205,13 @@ fn test_types() {
         with_vars! { |Foo x y z Bar| {
             Type::Fun(
                 Box::new(Type::Con(
-                    Ident::Upper(Foo), vec![
+                    Con::Data(Ident::Upper(Foo)), vec![
                         Type::Var(var(x)),
                         Type::Var(var(y)),
                         Type::Var(var(z))],
                     )),
                 Box::new(Type::Con(
-                    Ident::Upper(Bar), vec![
+                    Con::Data(Ident::Upper(Bar)), vec![
                         Type::Tup(vec![
                             Type::Var(var(z)),
                             Type::Var(var(y)),
@@ -221,6 +221,33 @@ fn test_types() {
                 ))
         )} }
     )
+}
+
+#[test]
+fn test_arrow_ty_assoc() {
+    let src = "a -> b -> c -> d";
+    let result = Parser::from_str(src).ty_node().unwrap();
+    println!("{}", &result);
+    let expected = with_vars! { |a b c d| {
+        Type::Fun(
+            Box::new(
+                Type::Var(Ident::Fresh(a))
+            ),
+            Box::new(
+                Type::Fun(
+                    Box::new(Type::Var(Ident::Fresh(b))),
+                    Box::new(Type::Fun(
+                        Box::new(
+                            Type::Var(Ident::Fresh(c))
+                        ), Box::new(
+                            Type::Var(Ident::Fresh(d))
+                        )
+                    ))
+                )
+            )
+        )
+    }};
+    assert_eq!(result, expected)
 }
 
 #[test]
@@ -315,18 +342,18 @@ fn test_ty_sigs() {
             Box::new(
                 Type::Fun(
                     Box::new(
-                        Type::Con(Ident::Lower(m), vec![Type::Var(Ident::Fresh(a))])
+                        Type::Con(Con::Free(Ident::Lower(m)), vec![Type::Var(Ident::Fresh(a))])
                     ),
                     Box::new(
                         Type::Fun(
                             Box::new(Type::Var(Ident::Fresh(a))),
-                            Box::new(Type::Con(Ident::Lower(m),
+                            Box::new(Type::Con(Con::Free(Ident::Lower(m)),
                                 vec![Type::Var(Ident::Fresh(b))])))
                     )
                 )
             ),
             Box::new(
-                Type::Con(Ident::Lower(m), vec![Type::Var(Ident::Fresh(b))])
+                Type::Con(Con::Free(Ident::Lower(m)), vec![Type::Var(Ident::Fresh(b))])
             )
         )
     }});
@@ -347,10 +374,10 @@ fn test_newtype_decl() {
                 each: vec![],
                 ctxt: vec![],
                 tipo: Type::Fun(
-                    Box::new(Type::Con(Ident::Upper(String), vec![])),
+                    Box::new(Type::Con(Con::Data(Ident::Upper(String)), vec![])),
                     Box::new(Type::Tup(vec![
                         Type::Var(Ident::Fresh(a)),
-                        Type::Con(Ident::Upper(String), vec![])
+                        Type::Con(Con::Data(Ident::Upper(String)), vec![])
                     ]))
                 )
             }),
