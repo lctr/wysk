@@ -1,4 +1,4 @@
-use wy_common::{deque, Map, Mappable};
+use wy_common::{deque, newtypes::Newtype, Map, Mappable};
 use wy_intern::symbol::{self, Symbol};
 
 pub use wy_lexer::{
@@ -9,6 +9,7 @@ pub use wy_lexer::{
 pub mod expr;
 pub mod fixity;
 pub mod ident;
+pub mod mapper;
 pub mod pattern;
 pub mod stmt;
 pub mod tipo;
@@ -27,7 +28,7 @@ wy_common::newtype!({ u64 in Uid | Show (+= usize |rhs| rhs as u64) });
 
 #[derive(Clone, Debug)]
 pub struct Ast {
-    programs: Vec<Program>,
+    pub programs: Vec<Program>,
 }
 
 #[derive(Clone, Debug)]
@@ -37,21 +38,36 @@ pub struct Program<Id = Ident, U = (), T = Ident> {
     pub comments: Vec<Comment>,
 }
 
+pub type RawProgram = Program<Ident, Option<std::path::PathBuf>, Ident>;
+pub type FreshProgram<U = ()> = Program<Ident, U, Tv>;
+
 macro_rules! impl_program {
-    ($($(|)? $field:ident : $typ:ty, $method_name_iter:ident & $method_name_slice:ident)+) => {
-        impl<Id, U, T> Program<Id, U, T> {
-            $(
-                impl_program! { Iter<$typ> | $field <- $method_name_iter }
-                impl_program! { [$typ] | $field <- $method_name_slice }
-            )+
-        }
+    (
+        $(
+            $(|)? $field:ident : $typ:ident<$g0:tt $(,$gs:tt)?>, $method_name_iter:ident
+            & $method_name_slice:ident
+            $(: $map_t:ident)?
+        )+
+    ) => {
+        $(
+            impl<Id, U, T> Program<Id, U, T> {
+                impl_program! {
+                    # Iter<$typ<$g0 $(, $gs)*>>
+                    | $field : $method_name_iter
+                }
+                impl_program! {
+                    # [$typ<$g0 $(, $gs)*>]
+                    | $field : $method_name_slice
+                }
+            }
+        )+
     };
-    (Iter<$typ:ty> | $field:ident <- $method_name:ident) => {
+    (# Iter<$typ:ty> | $field:ident : $method_name:ident) => {
         pub fn $method_name(&self) -> std::slice::Iter<'_, $typ> {
             self.module.$field.iter()
         }
     };
-    ([$typ:ty] | $field:ident <- $method_name:ident) => {
+    (# [$typ:ty] | $field:ident : $method_name:ident) => {
         pub fn $method_name(&self) -> &[$typ] {
             self.module.$field.as_slice()
         }
@@ -61,7 +77,7 @@ macro_rules! impl_program {
 impl_program! {
     | imports: ImportSpec<Id>, get_imports_iter & get_imports
     | infixes: FixityDecl<Id>, get_infixes_iter & get_infixes
-    | fundefs: FnDecl<Id, T>, get_fundefs_iter & get_fundefs
+    | fundefs: FnDecl<Id, T>, get_fundefs_iter & get_fundefs :map_t_fn_decl
     | datatys: DataDecl<Id, T>, get_datatys_iter & get_datatys
     | classes: ClassDecl<Id, T>, get_classes_iter & get_classes
     | implems: InstDecl<Id, T>, get_implems_iter & get_implems
@@ -83,6 +99,71 @@ pub struct Module<Id = Ident, Uid = (), T = Ident> {
     pub fundefs: Vec<FnDecl<Id, T>>,
     pub aliases: Vec<AliasDecl<Id, T>>,
     pub newtyps: Vec<NewtypeDecl<Id, T>>,
+}
+
+macro_rules! impl_functor {
+    ($mapper:ident for struct
+        #header $this:ident
+        #arrow $ty_in:tt -> $ty_out:tt
+        $(#params
+            [$p0:tt $(, $prs:tt)*]
+            [$gen:ty $(, $gens:ty)*]
+            [$out:ty $(, $outs:ty)*]
+        )?
+        $(#bounds |
+            $b0:ty : $tr0:ident $(+ $trs0:ident)*
+            $(, $bs:ty: $tr1:ident $(+ $trs1:ident)*)*
+            |
+        )?
+        #methods {
+            $($field:ident $($tails:ident)* => $method_name:ident -> $ret_ty:ty)+
+        }
+        $(#fixed $id0:ident $(, $ids:ident)*)?
+    ) => {
+        impl $(<$p0 $(, $prs)*>)? $this $(<$gen $(, $gens)*>)?
+        $(
+            where
+                $b0 : $tr0 $(+ $trs0)*
+                $(, $bs: $tr1 $(+ $trs1)*)*
+        )? {
+            $(
+                pub fn $method_name <$ty_out>(
+                    self,
+                    f: &mut impl FnMut($ty_in) -> $ty_out
+                ) -> $ret_ty {
+                    self.$field $(.$tails)* .fmap(|item| item.$mapper(|t| f(t)))
+                }
+            )+
+            pub fn map_t<$ty_out>(self, mut f: impl FnMut($ty_in) -> $ty_out) -> $this $(<$out $(, $outs)*>)? {
+                $(let $field = self.$field.fmap(|item| item.$mapper(&mut f));)+
+                $(
+                    let $id0 = self.$id0;
+                    $(let $ids = self.$ids;)*
+                )?
+                $this {
+                    $($id0 $(, $ids)*,)?
+                    $($field ,)+
+                }
+            }
+        }
+    };
+}
+
+impl_functor! {
+    map_t for struct
+        #header Module
+        #arrow T -> X
+        #params [U, T] [Ident, U, T] [Ident, U, X]
+        #bounds |T: Copy|
+        #methods {
+            datatys => map_t_datatys -> Vec<DataDecl<Ident, X>>
+            classes => map_t_classes -> Vec<ClassDecl<Ident, X>>
+            implems => map_t_implems -> Vec<InstDecl<Ident, X>>
+            fundefs => map_t_fundefs -> Vec<FnDecl<Ident, X>>
+            aliases => map_t_aliases -> Vec<AliasDecl<Ident, X>>
+            newtyps => map_t_newtyps -> Vec<NewtypeDecl<Ident, X>>
+        }
+        #fixed uid, modname, imports, infixes
 }
 
 impl Default for Module {
@@ -117,26 +198,7 @@ impl<Id, U, T> Module<Id, U, T> {
             newtyps: self.newtyps,
         }
     }
-    pub fn map_t<F, X>(self, mut f: F) -> Module<Id, U, X>
-    where
-        F: FnMut(T) -> X,
-    {
-        Module {
-            uid: self.uid,
-            modname: self.modname,
-            imports: self.imports,
-            infixes: self.infixes,
-            datatys: self.datatys.fmap(|data_decl| data_decl.map_t(|t| f(t))),
-            classes: self.classes.fmap(|class_decl| class_decl.map_t(|t| f(t))),
-            implems: self.implems.fmap(|inst_decl| inst_decl.map_t(|t| f(t))),
-            fundefs: self.fundefs.fmap(|fun_decl| fun_decl.map_t(|t| f(t))),
-            aliases: self.aliases.fmap(|alias_decl| alias_decl.map_t(|t| f(t))),
-            newtyps: self.newtyps.fmap(|newty_decl| newty_decl.map_t(|t| f(t))),
-        }
-    }
 }
-
-impl<Id, U, T> Module<Id, U, T> {}
 
 /// Describe the declared dependencies on other modules within a given module.
 /// Every import spec brings into scope the entities corresponding to the
@@ -375,8 +437,26 @@ pub struct DataDecl<Id = Ident, T = Ident> {
 }
 
 impl<Id, T> DataDecl<Id, T> {
+    /// Checks whether every data constructor is polymorphic over at *most* the
+    /// type variables in the `poly` field, i.e.,  every type variable in every
+    /// variant in the `vnts` field, as well as every type variable in the
+    /// `ctxt` field, is contained in the `poly` field.
+    pub fn no_unbound_tyvars(&self) -> bool
+    where
+        T: Copy + PartialEq,
+        Id: Identifier,
+    {
+        self.class_vars().all(|tv| self.depends_on(&tv))
+            && self.variants_iter().all(|vnt| {
+                vnt.iter_args()
+                    .all(|ty| ty.fv().iter().all(|tv| self.depends_on(tv)))
+            })
+    }
+
     /// Identifies whether the data type defined by this data declaration is
-    /// parametrized over the given type variable.
+    /// parametrized over the given type variable, i.e., whether a type variable
+    /// is contained in the `poly` field by testing a reference for containment.
+    #[inline]
     pub fn depends_on(&self, var: &T) -> bool
     where
         T: PartialEq,
@@ -384,6 +464,7 @@ impl<Id, T> DataDecl<Id, T> {
         self.poly.contains(var)
     }
 
+    #[inline]
     pub fn get_ctxt(&self, id: &Id) -> Option<&Context<Id, T>>
     where
         Id: PartialEq,
@@ -391,6 +472,7 @@ impl<Id, T> DataDecl<Id, T> {
         self.ctxt.iter().find(|c| c.class == *id)
     }
 
+    #[inline]
     pub fn get_variant(&self, id: &Id) -> Option<&Variant<Id, T>>
     where
         Id: PartialEq,
@@ -398,6 +480,7 @@ impl<Id, T> DataDecl<Id, T> {
         self.vnts.iter().find(|v| v.name == *id)
     }
 
+    #[inline]
     pub fn find_variant<F>(&self, f: F) -> Option<&Variant<Id, T>>
     where
         F: FnMut(&&Variant<Id, T>) -> bool,
@@ -414,14 +497,37 @@ impl<Id, T> DataDecl<Id, T> {
         }
     }
 
+    #[inline]
+    pub fn poly_iter(&self) -> std::slice::Iter<'_, T> {
+        self.poly.iter()
+    }
+
+    #[inline]
+    pub fn variants_iter(&self) -> std::slice::Iter<'_, Variant<Id, T>> {
+        self.vnts.iter()
+    }
+
+    #[inline]
+    pub fn context_iter(&self) -> std::slice::Iter<'_, Context<Id, T>> {
+        self.ctxt.iter()
+    }
+
+    #[inline]
     pub fn variant_names(&self) -> impl Iterator<Item = &Id> + '_ {
         self.vnts.iter().map(|v| &v.name)
     }
 
+    #[inline]
     pub fn class_names(&self) -> impl Iterator<Item = &Id> + '_ {
         self.ctxt.iter().map(|c| &c.class)
     }
 
+    #[inline]
+    pub fn class_vars(&self) -> impl Iterator<Item = &T> + '_ {
+        self.context_iter().map(|Context { tyvar, .. }| tyvar)
+    }
+
+    #[inline]
     pub fn derived_names(&self) -> impl Iterator<Item = &Id> + '_ {
         self.with.iter()
     }
@@ -456,9 +562,62 @@ impl<Id, T> DataDecl<Id, T> {
         }
     }
 
-    pub fn map_t<F, U>(self, mut f: F) -> DataDecl<Id, U>
+    pub fn duplicates(&self) -> Option<Vec<(usize, Id)>>
+    where
+        Id: Copy + PartialEq,
+    {
+        get_dupe_ids!(for self.variant_names().enumerate())
+    }
+}
+
+impl DataDecl {
+    pub fn normalize(self) -> DataDecl<Ident, Tv> {
+        let DataDecl {
+            name,
+            poly,
+            ctxt,
+            vnts,
+            with,
+        } = self;
+        let pair = poly
+            .into_iter()
+            .zip(0..)
+            .map(|(v, i)| (Tv::from_ident(v), Tv(i)))
+            .collect::<Map<_, _>>();
+        let ctxt = ctxt.fmap(|Context { class, tyvar }| Context {
+            class,
+            tyvar: pair[&Tv::from_ident(tyvar)],
+        });
+        let vnts = vnts.fmap(
+            |Variant {
+                 name,
+                 arity,
+                 tag,
+                 args,
+             }| Variant {
+                name,
+                arity,
+                tag,
+                args: args.fmap(|ty| ty.map_t(&mut |f| pair[&Tv::from_ident(f)])),
+            },
+        );
+        let mut poly = pair.into_iter().map(|(_, tv)| tv).collect::<Vec<_>>();
+        poly.sort();
+        DataDecl {
+            name,
+            with,
+            poly,
+            vnts,
+            ctxt,
+        }
+    }
+}
+
+impl<T> DataDecl<Ident, T> {
+    pub fn map_t<F, U>(self, mut f: F) -> DataDecl<Ident, U>
     where
         F: FnMut(T) -> U,
+        T: Copy,
     {
         DataDecl {
             name: self.name,
@@ -467,13 +626,6 @@ impl<Id, T> DataDecl<Id, T> {
             vnts: self.vnts.into_iter().map(|v| v.map_t(|t| f(t))).collect(),
             with: self.with,
         }
-    }
-
-    pub fn duplicates(&self) -> Option<Vec<(usize, Id)>>
-    where
-        Id: Copy + PartialEq,
-    {
-        get_dupe_ids!(for self.variant_names().enumerate())
     }
 }
 
@@ -511,8 +663,12 @@ impl<Id, T> Variant<Id, T> {
     pub fn fun_ty(&self, data_ty: Type<Id, T>) -> Type<Id, T>
     where
         Id: Clone,
-        T: Clone,
+        T: Copy,
     {
+        if self.args.is_empty() {
+            return data_ty;
+        };
+
         self.args
             .clone()
             .into_iter()
@@ -565,22 +721,6 @@ impl<Id, T> Variant<Id, T> {
         }
     }
 
-    /// Apply a closure to inner values of type parameter `T`, mapping a
-    /// `Variant<Id, T>` to a `Variant<Id, U>` for some given closure `f :: T ->
-    /// U`. This type parameter corresponds to the *type variable
-    /// representation* of the underlying `Type` arguments in the field `args`.
-    pub fn map_t<F, U>(self, mut f: F) -> Variant<Id, U>
-    where
-        F: FnMut(T) -> U,
-    {
-        Variant {
-            name: self.name,
-            args: self.args.into_iter().map(|ty| ty.map_t(&mut f)).collect(),
-            tag: self.tag,
-            arity: self.arity,
-        }
-    }
-
     /// Alternative version of `map_t` that takes the receiver by reference
     /// instead of by value. This allows for mapping (and effectively copying)
     /// without taking ownership of `Self`.
@@ -609,16 +749,60 @@ impl<Id, T> Variant<Id, T> {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+impl<T> Variant<Ident, T> {
+    /// Apply a closure to inner values of type parameter `T`, mapping a
+    /// `Variant<Id, T>` to a `Variant<Id, U>` for some given closure `f :: T ->
+    /// U`. This type parameter corresponds to the *type variable
+    /// representation* of the underlying `Type` arguments in the field `args`.
+    pub fn map_t<F, U>(self, mut f: F) -> Variant<Ident, U>
+    where
+        F: FnMut(T) -> U,
+        T: Copy,
+    {
+        Variant {
+            name: self.name,
+            args: self.args.into_iter().map(|ty| ty.map_t(&mut f)).collect(),
+            tag: self.tag,
+            arity: self.arity,
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Tag(pub u32);
+
 impl Default for Tag {
     fn default() -> Self {
         Self(0)
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+impl std::fmt::Debug for Tag {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Tag({})", &self.0)
+    }
+}
+
+impl std::fmt::Display for Tag {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Tag({})", &self.0)
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Arity(pub usize);
+
+impl std::fmt::Debug for Arity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Arity({})", &self.0)
+    }
+}
+
+impl std::fmt::Display for Arity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Arity({})", &self.0)
+    }
+}
 
 impl Arity {
     pub const ZERO: Self = Self(0);
@@ -692,6 +876,7 @@ impl<Id, T> AliasDecl<Id, T> {
     pub fn no_unused_tyvars(&self) -> bool
     where
         T: Copy + PartialEq,
+        Id: Identifier,
     {
         let fvs = self.sign.tipo.fv();
         self.poly.iter().all(|tv| fvs.contains(tv))
@@ -700,6 +885,7 @@ impl<Id, T> AliasDecl<Id, T> {
     pub fn no_unused_tyvars_in_ctxts(&self) -> bool
     where
         T: Copy + PartialEq,
+        Id: Identifier,
     {
         let fvs = self.sign.tipo.fv();
         self.sign.ctxt.iter().all(|ctx| fvs.contains(&ctx.tyvar))
@@ -714,6 +900,7 @@ impl<Id, T> AliasDecl<Id, T> {
     pub fn no_new_tyvar_in_type(&self) -> bool
     where
         T: Copy + PartialEq,
+        Id: Identifier,
     {
         self.sign
             .tipo
@@ -733,14 +920,31 @@ impl<Id, T> AliasDecl<Id, T> {
             sign: self.sign.map_id(f),
         }
     }
-    pub fn map_t<F, U>(self, mut f: F) -> AliasDecl<Id, U>
+
+    pub fn map_t_ref<F, U>(&self, mut f: F) -> AliasDecl<Id, U>
+    where
+        F: FnMut(&T) -> U,
+        Id: Copy,
+        T: Copy,
+    {
+        AliasDecl {
+            name: self.name,
+            poly: self.poly.iter().map(|t| f(&t)).collect(),
+            sign: self.sign.map_t_ref(|t| f(t)),
+        }
+    }
+}
+
+impl<T> AliasDecl<Ident, T> {
+    pub fn map_t<F, U>(self, mut f: F) -> AliasDecl<Ident, U>
     where
         F: FnMut(T) -> U,
+        T: Copy,
     {
         AliasDecl {
             name: self.name,
             poly: self.poly.into_iter().map(|t| f(t)).collect(),
-            sign: self.sign.map_t(|t| f(t)),
+            sign: self.sign.map_t(&mut f),
         }
     }
 }
@@ -780,16 +984,19 @@ impl<Id, T> NewtypeArg<Id, T> {
             NewtypeArg::Record(k, ss) => NewtypeArg::Record(f(k), ss.map_id(|id| f(id))),
         }
     }
+}
 
-    pub fn map_t<F, U>(self, mut f: F) -> NewtypeArg<Id, U>
+impl<T> NewtypeArg<Ident, T> {
+    pub fn map_t<F, U>(self, mut f: F) -> NewtypeArg<Ident, U>
     where
         F: FnMut(T) -> U,
+        T: Copy,
     {
         match self {
             NewtypeArg::Stacked(ts) => {
                 NewtypeArg::Stacked(ts.into_iter().map(|ty| ty.map_t(&mut f)).collect())
             }
-            NewtypeArg::Record(k, sig) => NewtypeArg::Record(k, sig.map_t(f)),
+            NewtypeArg::Record(k, sig) => NewtypeArg::Record(k, sig.map_t(&mut f)),
         }
     }
 }
@@ -803,10 +1010,11 @@ pub struct NewtypeDecl<Id = Ident, T = Ident> {
     pub with: Vec<Id>,
 }
 
-impl<Id, T> NewtypeDecl<Id, T> {
-    pub fn map_t<F, U>(self, mut f: F) -> NewtypeDecl<Id, U>
+impl<T> NewtypeDecl<Ident, T> {
+    pub fn map_t<F, U>(self, mut f: F) -> NewtypeDecl<Ident, U>
     where
         F: FnMut(T) -> U,
+        T: Copy,
     {
         NewtypeDecl {
             name: self.name,
@@ -823,19 +1031,20 @@ pub struct ClassDecl<Id = Ident, T = Ident> {
     pub name: Id,
     pub poly: Vec<T>,
     pub ctxt: Vec<Context<Id, T>>,
-    pub defs: Vec<Method<Id, T>>,
+    pub defs: Vec<MethodDef<Id, T>>,
 }
 
 impl<Id, T> ClassDecl<Id, T> {
     pub fn item_names(&self) -> impl Iterator<Item = &Id> + '_ {
-        self.defs.iter().map(|method| match method {
-            Method::Sig(name, _) | Method::Impl(Binding { name, .. }) => name,
-        })
+        self.defs.iter().map(|MethodDef { name, .. }| name)
     }
+}
 
-    pub fn map_t<F, U>(self, mut f: F) -> ClassDecl<Id, U>
+impl<T> ClassDecl<Ident, T> {
+    pub fn map_t<F, U>(self, mut f: F) -> ClassDecl<Ident, U>
     where
         F: FnMut(T) -> U,
+        T: Copy,
     {
         ClassDecl {
             name: self.name,
@@ -895,9 +1104,13 @@ impl<Id, T> InstDecl<Id, T> {
                 .collect(),
         }
     }
-    pub fn map_t<F, U>(self, mut f: F) -> InstDecl<Id, U>
+}
+
+impl<T> InstDecl<Ident, T> {
+    pub fn map_t<F, U>(self, mut f: F) -> InstDecl<Ident, U>
     where
         F: FnMut(T) -> U,
+        T: Copy,
     {
         InstDecl {
             name: self.name,
@@ -907,7 +1120,7 @@ impl<Id, T> InstDecl<Id, T> {
                 .into_iter()
                 .map(|ctx| ctx.map_t(|t| f(t)))
                 .collect(),
-            defs: self.defs.into_iter().map(|b| b.map_t(|t| f(t))).collect(),
+            defs: self.defs.into_iter().map(|b| b.map_t(&mut f)).collect(),
         }
     }
 }
@@ -919,16 +1132,118 @@ pub struct FnDecl<Id = Ident, T = Ident> {
     pub defs: Vec<Match<Id, T>>,
 }
 
-impl<Id, T> FnDecl<Id, T> {
-    pub fn map_t<F, U>(self, mut f: F) -> FnDecl<Id, U>
+impl<T> FnDecl<Ident, T> {
+    pub fn map_t<F, U>(self, mut f: F) -> FnDecl<Ident, U>
     where
         F: FnMut(T) -> U,
+        T: Copy,
     {
         FnDecl {
             name: self.name,
-            sign: self.sign.map(|sig| sig.map_t(|t| f(t))),
-            defs: self.defs.into_iter().map(|m| m.map_t(|t| f(t))).collect(),
+            sign: self.sign.map(|sig| sig.map_t(&mut |t| f(t))),
+            defs: self
+                .defs
+                .into_iter()
+                .map(|m| m.map_t(&mut |t| f(t)))
+                .collect(),
         }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MethodDef<Id = Ident, T = Ident> {
+    pub name: Id,
+    pub sign: Signature<Id, T>,
+    pub body: Vec<Match<Id, T>>,
+}
+impl<Id, T> MethodDef<Id, T> {
+    pub fn ctxt_iter(&self) -> std::slice::Iter<'_, Context<Id, T>> {
+        self.sign.ctxt_iter()
+    }
+
+    pub fn ctxt_iter_mut(&mut self) -> std::slice::IterMut<'_, Context<Id, T>> {
+        self.sign.ctxt_iter_mut()
+    }
+
+    pub fn map_ctxt<'x, X>(
+        &'x self,
+        f: impl FnMut(&'x Context<Id, T>) -> X + 'x,
+    ) -> impl Iterator<Item = X> + 'x {
+        self.ctxt_iter().map(f)
+    }
+
+    pub fn map_id<U>(self, mut f: impl FnMut(Id) -> U) -> MethodDef<U, T> {
+        MethodDef {
+            name: f(self.name),
+            sign: Signature {
+                each: self.sign.each.into_iter().map(|id| f(id)).collect(),
+                ctxt: self
+                    .sign
+                    .ctxt
+                    .into_iter()
+                    .map(|Context { class, tyvar }| Context {
+                        class: f(class),
+                        tyvar,
+                    })
+                    .collect(),
+                tipo: self.sign.tipo.map_id(&mut f),
+            },
+            body: self.body.into_iter().map(|m| m.map_id(|t| f(t))).collect(),
+        }
+    }
+    pub fn into_method(self) -> Method<Id, T> {
+        Method::Sig(self.name, self.sign)
+    }
+}
+
+impl<T> MethodDef<Ident, T> {
+    pub fn map_t<U>(self, mut f: impl FnMut(T) -> U) -> MethodDef<Ident, U>
+    where
+        T: Copy,
+    {
+        MethodDef {
+            name: self.name,
+            sign: Signature {
+                each: self.sign.each,
+                ctxt: self
+                    .sign
+                    .ctxt
+                    .into_iter()
+                    .map(|Context { class, tyvar }| Context {
+                        class,
+                        tyvar: f(tyvar),
+                    })
+                    .collect(),
+                tipo: self.sign.tipo.map_t(&mut |t| f(t)),
+            },
+            body: self.body.into_iter().map(|m| m.map_t(&mut f)).collect(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MethodImpl<Id = Ident, T = Ident>(pub Binding<Id, T>);
+impl<Id, T> MethodImpl<Id, T> {
+    pub fn new(binding: Binding<Id, T>) -> Self {
+        Self(binding)
+    }
+    pub fn name(&self) -> &Id {
+        &self.0.name
+    }
+    pub fn arms(&self) -> &[Match<Id, T>] {
+        &self.0.arms[..]
+    }
+    pub fn arms_iter(&self) -> std::slice::Iter<'_, Match<Id, T>> {
+        self.0.arms.iter()
+    }
+    pub fn arms_iter_mut(&mut self) -> std::slice::IterMut<'_, Match<Id, T>> {
+        self.0.arms.iter_mut()
+    }
+    pub fn signature(&self) -> Option<&Signature<Id, T>> {
+        self.0.tipo.as_ref()
+    }
+    pub fn into_method(self) -> Method<Id, T> {
+        Method::Impl(self.0)
     }
 }
 
@@ -959,14 +1274,17 @@ impl<Id, T> Method<Id, T> {
             Method::Impl(binding) => Method::Impl(binding.map_id(|id| f(id))),
         }
     }
+}
 
-    pub fn map_t<F, U>(self, f: F) -> Method<Id, U>
+impl<T> Method<Ident, T> {
+    pub fn map_t<F, U>(self, mut f: F) -> Method<Ident, U>
     where
         F: FnMut(T) -> U,
+        T: Copy,
     {
         match self {
-            Method::Sig(id, sig) => Method::Sig(id, sig.map_t(f)),
-            Method::Impl(binding) => Method::Impl(binding.map_t(f)),
+            Method::Sig(id, sig) => Method::Sig(id, sig.map_t(&mut f)),
+            Method::Impl(binding) => Method::Impl(binding.map_t(&mut f)),
         }
     }
 }
