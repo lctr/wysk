@@ -435,18 +435,34 @@ impl std::fmt::Display for Lexeme {
 /// used.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum LexKind {
+    /// Includes `LexKind::Upper`, `LexKind::Lower`, and `LexKind::Infix`
     Identifier,
+    /// Identifiers beginning with an uppercase alphabetic character
     Upper,
+    /// Identifiers beginning with a lowercase alphabetic character OR an
+    /// underscore followed by AT LEAST one alphanumeric character
     Lower,
+    /// Identifiers consisting of ascii symbols `~!@#$%%^&*-+:?/\\.<>=` with the
+    /// exception of `->`, `<-`, `=`, `|`, `::`, `.`, `..`, and `@`
     Infix,
+    /// The reserved symbols `->`, `<-`, `=`, `|`, `::`, `.`, `..`, and `@`
     Punct,
+    /// An open or left delimiter, such as `(`, `[`, or `{`
     LeftDelim,
+    /// An closing or right delimiter, such as `)`, `]`, or `}`
     RightDelim,
+    /// A reserved identifier lexed as a `Keyword`.
     Keyword,
+    /// A numeric, string, or character literal. This encompases
+    /// `LexKind::Number` and `LexKind::Character`
     Literal,
+    /// A numeric literal
     Number,
+    /// A character literal
     Character,
+    /// A specific lexeme (as opposed to a general class of lexemes)
     Specified(Lexeme),
+    /// Any of the listed specific lexemes
     AnyOf(&'static [Lexeme]),
 }
 
@@ -619,6 +635,15 @@ pub trait Lexlike<Tok = Token, Lex = Lexeme> {
         Lex: From<T>,
     {
         self.cmp_lex(&Lex::from(item))
+    }
+
+    fn is_eof(&self) -> bool
+    where
+        Lex: From<Lexeme> + PartialEq<Tok>,
+        Tok: PartialEq<Lexeme>,
+        Lexeme: PartialEq<Tok>,
+    {
+        self.compare(Lexeme::Eof.into())
     }
 }
 
