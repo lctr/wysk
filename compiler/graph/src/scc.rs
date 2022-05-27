@@ -143,6 +143,10 @@ impl<T> Graph<T> {
     pub fn node_count(&self) -> usize {
         self.nodes.len()
     }
+
+    pub fn strongly_connected_components(&self) -> Vec<Scc> {
+        Tarjan::from_graph(self).components()
+    }
 }
 
 impl<'a, T: 'a> std::ops::Index<NodeId> for Graph<T> {
@@ -191,6 +195,25 @@ impl Scc {
 
     pub fn node_ids(self) -> Vec<NodeId> {
         self.0
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, NodeId> {
+        self.0.iter()
+    }
+
+    pub fn into_iter(self) -> std::vec::IntoIter<NodeId> {
+        self.0.into_iter()
+    }
+
+    pub fn map<X>(self, f: impl FnMut(NodeId) -> X) -> impl Iterator<Item = X> {
+        self.0.into_iter().map(f)
+    }
+
+    pub fn map_ref<'x, F, X>(&'x self, mut f: F) -> impl Iterator<Item = X> + 'x
+    where
+        F: 'x + FnMut(&'x NodeId) -> X,
+    {
+        self.0.iter().map(move |node_id| f(node_id))
     }
 }
 
