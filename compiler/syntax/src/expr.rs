@@ -1,10 +1,12 @@
+use wy_common::{deque, Deque, Set};
 use wy_lexer::Literal;
 
 use crate::{
-    ident::Ident,
+    decl::Arity,
+    ident::{Ident, Identifier},
     stmt::Alternative,
     tipo::{Record, Type},
-    Binding,
+    Binding, Tag,
 };
 
 use super::{Pattern, Statement};
@@ -122,14 +124,218 @@ impl<Id, T> Expression<Id, T> {
         }
     }
 
+    #[inline]
+    pub fn is_lambda(&self) -> bool {
+        matches!(self, Self::Lambda(..))
+    }
+
+    /// If the expression is a lambda expression, this method will return the
+    /// `Arity` value, wrapped within a `Some` variant, corresponding to the
+    /// number of arguments it takes; otherwise, this returns `None`.
+    pub fn lambda_arity(&self) -> Option<Arity> {
+        let mut arity = 0;
+        let mut exp = self;
+        while let Self::Lambda(_pat, body) = exp {
+            arity += 1;
+            exp = body.as_ref();
+        }
+        if arity == 0 {
+            None
+        } else {
+            Some(Arity(arity))
+        }
+    }
+
+    #[inline]
+    pub fn is_let_expr(&self) -> bool {
+        matches!(self, Self::Let(..))
+    }
+
+    #[inline]
+    pub fn is_ident(&self) -> bool {
+        matches!(self, Self::Ident(_))
+    }
+
+    #[inline]
+    pub fn is_upper_ident(&self) -> bool
+    where
+        Id: Identifier,
+    {
+        matches!(self, Self::Ident(id) if id.is_upper())
+    }
+
+    #[inline]
+    pub fn is_infix_ident(&self) -> bool
+    where
+        Id: Identifier,
+    {
+        matches!(self, Self::Ident(id) if id.is_infix())
+    }
+
+    #[inline]
+    pub fn is_path(&self) -> bool {
+        matches!(self, Self::Path(..))
+    }
+
+    #[inline]
+    pub fn is_literal(&self) -> bool {
+        matches!(self, Self::Lit(..))
+    }
+
+    #[inline]
+    pub fn is_app(&self) -> bool {
+        matches!(self, Self::App(..))
+    }
+
+    /// If the given expression is an `App` expression, then this method will
+    /// unfold it into a flat `VecDeque` of references to each subexpression,
+    /// where the first element is the inner-most left-most expression.
+    ///
+    /// Note: an *argument* that happens to be an `App` expression *will not* be
+    /// flattened! Only the left-most `App` sub-expressions will iteratively
+    /// unfold. Thus, an expression like `(a (b c) d)` will return the deque
+    /// corresponding to `[a, (b c), d]`.
+    ///
+    /// If the expression is not an application, then the resulting `VecDeque`
+    /// will only contain a single expression.
+    pub fn flatten_app(&self) -> Deque<&Self> {
+        let mut sub_exprs = deque![];
+        let mut tmp = self;
+        while let Self::App(x, y) = tmp {
+            sub_exprs.push_front(y.as_ref());
+            tmp = x.as_ref();
+        }
+        sub_exprs.push_front(tmp);
+        sub_exprs
+    }
+
+    /// If the expression is an `App` expression, the left-hand-side is
+    /// continually unfolded until either a constructor is encountered *or* the
+    /// left-hand side is no longer an application. If a constructor is found,
+    /// then `true` is returned; otherwise, `false` is returned.
+    ///
+    /// For example, the expression corresponding to `(A b c d) = (((A b) c) d)`
+    /// returns `true` because
+    /// ```txt
+    ///     (((A b) c) d) -> ((A b) c) -> (A b)
+    /// ```
+    ///
+    /// Note that this only takes into account *literal* constructor
+    /// applications -- this does not take into account for example applications
+    /// where the innermost expression is a non-constructor identifier bound to
+    /// a constructor. Thus, if we had `foo = Bar`, the expression `(foo 5)`
+    /// would return *false*.
+    #[inline]
+    pub fn is_simple_ctor_app(&self) -> bool
+    where
+        Id: Identifier,
+    {
+        let mut expr = self;
+        while let Self::App(left, _) = expr {
+            match left.as_ref() {
+                Self::Ident(id) => return id.is_upper(),
+                Self::Path(_, ids) => {
+                    return matches!(ids.into_iter().last().map(|id| id.is_upper()), Some(true))
+                }
+                Self::App(x, _) => {
+                    let ex = x.as_ref();
+                    if matches!(ex, Self::Ident(id) if id.is_upper()) {
+                        return true;
+                    }
+                    expr = x.as_ref();
+                    continue;
+                }
+                _ => return false,
+            }
+        }
+        false
+    }
+
+    /// Identifies whether the expression is a `Range` expression with no endpoint
+    #[inline]
+    pub fn is_open_range(&self) -> bool {
+        matches!(self, Self::Range(_, None))
+    }
+
+    /// Identifies whether ther expression is a `Range` expression with a start
+    /// and an end. **Note** this may not *necessarily* imply the range is
+    /// *finite*, as the endpoint may be an expression that resolves to a
+    /// non-finite number
+    #[inline]
+    pub fn is_closed_range(&self) -> bool {
+        matches!(self, Self::Range(_, Some(_)))
+    }
+
     pub fn mk_app(head: Self, tail: Self) -> Self {
         Self::App(Box::new(head), Box::new(tail))
     }
 
-    pub fn map_id<F, X>(self, mut f: F) -> Expression<X, T>
+    pub fn free_vars(&self) -> Set<Id>
     where
-        F: FnMut(Id) -> X,
+        Id: Copy + Eq + std::hash::Hash,
     {
+        let mut vars = Set::new();
+        match self {
+            Expression::Ident(id) => {
+                vars.insert(*id);
+            }
+            Expression::Path(_, _) => {}
+            Expression::Lit(_) => {}
+            Expression::Infix { infix, left, right } => {
+                vars.insert(*infix);
+                vars.extend(left.free_vars());
+                vars.extend(right.free_vars());
+            }
+            Expression::Tuple(xs) | Expression::Array(xs) => {
+                xs.into_iter().for_each(|x| vars.extend(x.free_vars()))
+            }
+            Expression::List(head, quals) => {
+                let mut fvs = head.free_vars();
+                quals.into_iter().for_each(|s| match s {
+                    Statement::Generator(pat, exp) => {
+                        fvs.extend(exp.free_vars().difference(&pat.vars()).copied())
+                    }
+                    Statement::Predicate(ex) => fvs.extend(ex.free_vars()),
+                    Statement::JustLet(binds) => binds
+                        .into_iter()
+                        .for_each(|bind| fvs.extend(bind.free_vars())),
+                });
+                vars.extend(fvs);
+            }
+            Expression::Dict(_) => todo!(),
+            Expression::Lambda(arg, body) => {
+                vars.extend(body.free_vars().difference(&arg.vars()).copied())
+            }
+            Expression::Let(_, _) => todo!(),
+            Expression::App(x, y) => {
+                vars.extend(x.free_vars());
+                vars.extend(y.free_vars());
+            }
+            Expression::Cond(xyz) => {
+                for e in xyz.as_ref() {
+                    vars.extend(e.free_vars());
+                }
+            }
+            Expression::Case(scrut, arms) => {
+                vars.extend(scrut.free_vars());
+                arms.into_iter()
+                    .for_each(|alt| vars.extend(alt.free_vars()));
+            }
+            Expression::Do(_, _) => todo!(),
+            Expression::Range(x, y) => {
+                vars.extend(x.free_vars());
+                if let Some(y) = y {
+                    vars.extend(y.free_vars())
+                }
+            }
+            Expression::Cast(x, _) | Expression::Neg(x) | Expression::Group(x) => {
+                vars.extend(x.free_vars())
+            }
+        };
+        vars
+    }
+
+    pub fn map_id<X>(self, mut f: impl FnMut(Id) -> X) -> Expression<X, T> {
         match self {
             Expression::Ident(id) => Expression::Ident(f(id)),
             Expression::Path(p, rs) => {
@@ -192,17 +398,81 @@ impl<Id, T> Expression<Id, T> {
             Expression::Group(ex) => Expression::Group(Box::new(ex.map_id(|id| f(id)))),
         }
     }
-}
 
-impl<T> Expression<Ident, T> {
-    pub fn map_t<F, U>(self, f: &mut F) -> Expression<Ident, U>
+    pub fn map_id_ref<U>(&self, f: &mut impl FnMut(&Id) -> U) -> Expression<U, T>
     where
-        F: FnMut(T) -> U,
         T: Copy,
     {
-        fn iters<A>(vec: &mut Vec<A>, f: &mut impl FnMut() -> A) {
-            vec.push((*f)())
+        match self {
+            Expression::Ident(id) => Expression::Ident(f(id)),
+            Expression::Path(x, y) => {
+                Expression::Path(f(x), y.into_iter().map(|id| f(id)).collect())
+            }
+            Expression::Lit(l) => Expression::Lit(*l),
+            Expression::Neg(ex) => Expression::Neg(Box::new(ex.map_id_ref(f))),
+            Expression::Infix { infix, left, right } => Expression::Infix {
+                infix: f(infix),
+                left: Box::new(left.map_id_ref(f)),
+                right: Box::new(right.map_id_ref(f)),
+            },
+            Expression::Tuple(ts) => {
+                Expression::Tuple(ts.into_iter().map(|ex| ex.map_id_ref(f)).collect())
+            }
+            Expression::Array(ts) => {
+                Expression::Array(ts.into_iter().map(|ex| ex.map_id_ref(f)).collect())
+            }
+            Expression::List(ex, stms) => Expression::List(
+                Box::new(ex.map_id_ref(f)),
+                stms.into_iter().map(|st| st.map_id_ref(f)).collect(),
+            ),
+            Expression::Dict(rec) => Expression::Dict(rec.map_ref(&mut |a, b| {
+                let con = a.map(|id| f(id));
+                let es = b
+                    .into_iter()
+                    .map(|field| {
+                        field.map_ref(&mut |(x, y)| (f(x), y.map(|rhs| rhs.map_id_ref(f))))
+                    })
+                    .collect();
+                (con, es)
+            })),
+            Expression::Lambda(p, x) => {
+                Expression::Lambda(p.map_id_ref(f), Box::new(x.map_id_ref(f)))
+            }
+            Expression::Let(bs, x) => Expression::Let(
+                bs.into_iter().map(|b| b.map_id_ref(f)).collect(),
+                Box::new(x.map_id_ref(f)),
+            ),
+            Expression::App(x, y) => {
+                Expression::App(Box::new(x.map_id_ref(f)), Box::new(y.map_id_ref(f)))
+            }
+            Expression::Cond(xyz) => {
+                let [x, y, z] = xyz.as_ref();
+                Expression::Cond(Box::new([
+                    x.map_id_ref(f),
+                    y.map_id_ref(f),
+                    z.map_id_ref(f),
+                ]))
+            }
+            Expression::Case(scrut, arms) => Expression::Case(
+                Box::new(scrut.map_id_ref(f)),
+                arms.into_iter().map(|a| a.map_id_ref(f)).collect(),
+            ),
+            Expression::Cast(x, ty) => {
+                Expression::Cast(Box::new(x.map_id_ref(f)), ty.map_id_ref(f))
+            }
+            Expression::Do(sts, x) => Expression::Do(
+                sts.into_iter().map(|s| s.map_id_ref(f)).collect(),
+                Box::new(x.map_id_ref(f)),
+            ),
+            Expression::Range(a, b) => Expression::Range(
+                Box::new(a.map_id_ref(f)),
+                b.as_ref().map(|x| Box::new(x.map_id_ref(f))),
+            ),
+            Expression::Group(ex) => Expression::Group(Box::new(ex.map_id_ref(f))),
         }
+    }
+
+    pub fn map_t<U>(self, f: &mut impl FnMut(T) -> U) -> Expression<Id, U> {
         match self {
             Expression::Ident(id) => Expression::Ident(id),
             Expression::Path(a, bs) => Expression::Path(a, bs),
@@ -216,14 +486,14 @@ impl<T> Expression<Ident, T> {
             Expression::Tuple(ts) => {
                 let mut xs = vec![];
                 for t in ts {
-                    iters(&mut xs, &mut || t.clone().map_t(f));
+                    xs.push(t.map_t(f))
                 }
                 Expression::Tuple(xs)
             }
             Expression::Array(ts) => {
                 let mut xs = vec![];
                 for t in ts {
-                    iters(&mut xs, &mut || t.clone().map_t(f));
+                    xs.push(t.map_t(f))
                 }
                 Expression::Array(xs)
             }
@@ -231,20 +501,193 @@ impl<T> Expression<Ident, T> {
                 let h = Box::new(head.map_t(f));
                 let mut sts = vec![];
                 for s in stmts {
-                    iters(&mut sts, &mut || s.clone().map_t(f));
+                    sts.push(s.map_t(f));
+                }
+                Expression::List(h, sts)
+            }
+            Expression::Dict(rec) => Expression::Dict(rec.map_t(|ex| ex.map_t(f))),
+            Expression::Lambda(arg, body) => {
+                Expression::Lambda(arg.map_t(f), Box::new(body.map_t(f)))
+            }
+            Expression::Let(arms, body) => {
+                let body = Box::new(body.map_t(f));
+                let mut binds = vec![];
+                for b in arms {
+                    binds.push(b.map_t(f));
+                }
+                Expression::Let(binds, body)
+            }
+            Expression::App(x, y) => Expression::App(Box::new(x.map_t(f)), Box::new(y.map_t(f))),
+            Expression::Cond(xyz) => {
+                let [x, y, z] = *xyz;
+                Expression::Cond(Box::new([x.map_t(f), y.map_t(f), z.map_t(f)]))
+            }
+            Expression::Case(x, arms) => Expression::Case(
+                Box::new(x.map_t(f)),
+                arms.into_iter()
+                    .map(
+                        |Alternative {
+                             body,
+                             pat,
+                             pred,
+                             wher,
+                         }| Alternative {
+                            pat: pat.map_t(f),
+                            pred: if let Some(pred) = pred {
+                                Some(pred.map_t(f))
+                            } else {
+                                None
+                            },
+                            body: body.map_t(f),
+                            wher: wher.into_iter().map(|b| b.map_t(f)).collect(),
+                        },
+                    )
+                    .collect(),
+            ),
+            Expression::Cast(x, t) => Expression::Cast(Box::new(x.map_t(f)), t.map_t(f)),
+            Expression::Do(_, _) => todo!(),
+            Expression::Range(a, b) => Expression::Range(
+                Box::new(a.map_t(f)),
+                if let Some(b) = b {
+                    Some(Box::new(b.map_t(f)))
+                } else {
+                    None
+                },
+            ),
+            Expression::Group(x) => Expression::Group(Box::new(x.map_t(f))),
+        }
+    }
+    pub fn map_t_ref<U>(&self, f: &mut impl FnMut(&T) -> U) -> Expression<Id, U>
+    where
+        Id: Copy,
+    {
+        fn iters<A>(vec: &mut Vec<A>, f: &mut impl FnMut() -> A) {
+            vec.push((*f)())
+        }
+        match self {
+            Expression::Ident(id) => Expression::Ident(*id),
+            Expression::Path(a, bs) => Expression::Path(*a, bs.clone()),
+            Expression::Lit(l) => Expression::Lit(*l),
+            Expression::Neg(e) => {
+                let mut x = vec![];
+                iters(&mut x, &mut || e.map_t_ref(f));
+                Expression::Neg(Box::new(x.pop().unwrap()))
+            }
+            Expression::Infix { infix, left, right } => {
+                let left = Box::new(left.map_t_ref(f));
+                let right = Box::new(right.map_t_ref(f));
+                Expression::Infix {
+                    infix: *infix,
+                    left,
+                    right,
+                }
+            }
+            Expression::Tuple(ts) => {
+                let mut xs = vec![];
+                for t in ts {
+                    iters(&mut xs, &mut || t.map_t_ref(f));
+                }
+                Expression::Tuple(xs)
+            }
+            Expression::Array(ts) => {
+                let mut xs = vec![];
+                for t in ts {
+                    iters(&mut xs, &mut || t.map_t_ref(f));
+                }
+                Expression::Array(xs)
+            }
+            Expression::List(head, stmts) => {
+                let h = Box::new(head.map_t_ref(f));
+                let mut sts = vec![];
+                for s in stmts {
+                    iters(&mut sts, &mut || s.map_t_ref(f));
                 }
                 Expression::List(h, sts)
             }
             Expression::Dict(_) => todo!(),
-            Expression::Lambda(_, _) => todo!(),
-            Expression::Let(_, _) => todo!(),
-            Expression::App(_, _) => todo!(),
-            Expression::Cond(_) => todo!(),
-            Expression::Case(_, _) => todo!(),
-            Expression::Cast(_, _) => todo!(),
+            Expression::Lambda(arg, body) => {
+                Expression::Lambda(arg.map_t_ref(f), Box::new(body.map_t_ref(f)))
+            }
+            Expression::Let(arms, body) => {
+                let h = Box::new(body.map_t_ref(f));
+                let mut binds = vec![];
+                for b in arms {
+                    iters(&mut binds, &mut || b.map_t_ref(f))
+                }
+                Expression::Let(binds, h)
+            }
+            Expression::App(x, y) => {
+                Expression::App(Box::new(x.map_t_ref(f)), Box::new(y.map_t_ref(f)))
+            }
+            Expression::Cond(xyz) => {
+                let [x, y, z] = xyz.as_ref();
+                Expression::Cond(Box::new([x.map_t_ref(f), y.map_t_ref(f), z.map_t_ref(f)]))
+            }
+            Expression::Case(ex, arms) => Expression::Case(
+                Box::new(ex.map_t_ref(f)),
+                arms.into_iter()
+                    .map(
+                        |Alternative {
+                             body,
+                             pat,
+                             pred,
+                             wher,
+                         }| Alternative {
+                            pat: pat.map_t_ref(f),
+                            pred: if let Some(pred) = pred {
+                                Some(pred.map_t_ref(f))
+                            } else {
+                                None
+                            },
+                            body: body.map_t_ref(f),
+                            wher: wher.into_iter().map(|b| b.map_t_ref(f)).collect(),
+                        },
+                    )
+                    .collect(),
+            ),
+            Expression::Cast(x, ty) => Expression::Cast(Box::new(x.map_t_ref(f)), ty.map_t_ref(f)),
             Expression::Do(_, _) => todo!(),
-            Expression::Range(_, _) => todo!(),
-            Expression::Group(_) => todo!(),
+            Expression::Range(a, b) => Expression::Range(
+                Box::new(a.map_t_ref(f)),
+                if let Some(end) = b {
+                    Some(Box::new(end.map_t_ref(f)))
+                } else {
+                    None
+                },
+            ),
+            Expression::Group(x) => Expression::Group(Box::new(x.map_t_ref(f))),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use wy_common::Mappable;
+    use wy_intern::symbol;
+
+    use super::*;
+
+    #[test]
+    fn test_flatten_app() {
+        let [f, g, h]: [Expression; 3] =
+            symbol::intern_many(["f", "g", "h"]).fmap(|sym| Expression::Ident(Ident::Lower(sym)));
+        let [one, three, four]: [Expression; 3] =
+            [1, 3, 4].fmap(|n| Expression::Lit(Literal::Int(n)));
+
+        // (((f (g 1)) h) 3) 4)
+        let app = Expression::mk_app(
+            Expression::mk_app(
+                Expression::mk_app(Expression::mk_app(f, Expression::mk_app(g, one)), h),
+                three,
+            ),
+            four,
+        );
+        let deque = app.flatten_app();
+        assert_eq!(deque.len(), 5);
+        let re_app = deque
+            .into_iter()
+            .cloned()
+            .reduce(|a, c| Expression::App(Box::new(a), Box::new(c)));
+        assert_eq!(Some(app), re_app)
     }
 }
