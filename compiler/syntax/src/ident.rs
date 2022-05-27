@@ -1,11 +1,28 @@
-use wy_common::Deque;
+use wy_common::{deque, Deque};
 use wy_intern::symbol::{self, Symbol, Symbolic};
 
-pub trait Identifier: Eq + Copy {
+pub trait Identifier: Eq {
     fn is_upper(&self) -> bool;
     fn is_lower(&self) -> bool;
     fn is_infix(&self) -> bool;
     fn is_fresh(&self) -> bool;
+    fn pure(&self) -> fn(Symbol) -> Ident {
+        if self.is_upper() {
+            Ident::Upper
+        } else if self.is_lower() {
+            Ident::Lower
+        } else if self.is_infix() {
+            Ident::Infix
+        } else {
+            Ident::Fresh
+        }
+    }
+    fn map_symbol<X>(self, f: impl Fn(Symbol) -> X) -> X
+    where
+        Self: Sized + Symbolic,
+    {
+        self.get_symbol().pure(f)
+    }
 }
 
 impl Identifier for Ident {
@@ -20,6 +37,27 @@ impl Identifier for Ident {
     }
     fn is_infix(&self) -> bool {
         Ident::is_infix(&self)
+    }
+}
+
+impl<Id> Identifier for Option<Id>
+where
+    Id: Identifier,
+{
+    fn is_upper(&self) -> bool {
+        matches!(self, Some(id) if id.is_upper())
+    }
+
+    fn is_lower(&self) -> bool {
+        matches!(self, Some(id) if id.is_lower())
+    }
+
+    fn is_infix(&self) -> bool {
+        matches!(self, Some(id) if id.is_infix())
+    }
+
+    fn is_fresh(&self) -> bool {
+        matches!(self, Some(id) if id.is_fresh())
     }
 }
 
@@ -47,7 +85,12 @@ impl std::fmt::Debug for Ident {
 
 impl std::fmt::Display for Ident {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.symbol())
+        write!(
+            f,
+            "{}{}",
+            if self.is_fresh() { "#" } else { "" },
+            self.symbol()
+        )
     }
 }
 
@@ -105,6 +148,10 @@ impl Ident {
             &*(0..(extras + 1)).map(|_| ',').collect::<String>(),
         ))
     }
+
+    pub fn with_suffix(self, suffix: Self) -> Chain<Self> {
+        Chain(self, wy_common::deque!(suffix))
+    }
 }
 
 #[test]
@@ -161,10 +208,30 @@ impl<Id> Chain<Id> {
         self.1.iter()
     }
 
+    /// This returns a reference to the last (right-most) identifier in the
+    /// chain. If the chain is trivial, i.e., has only a head and not a tail,
+    /// then this method returns the same thing as `root`, i.e., the first
+    /// identifier.
+    pub fn last(&self) -> &Id {
+        self.1.iter().last().unwrap_or_else(|| &self.0)
+    }
+
     /// Deconstructs into a tuple of its inner parts, returning a pair
     /// containing the root identifier along with a vector of tail identifiers.
     pub fn parts(self) -> (Id, Deque<Id>) {
         (self.0, self.1)
+    }
+
+    pub fn parts_cloned(&self) -> (Id, Deque<Id>)
+    where
+        Id: Clone,
+    {
+        (self.0.clone(), self.1.clone())
+    }
+
+    /// Returns the number of identifiers in the entire identifier chain.
+    pub fn len(&self) -> usize {
+        1 + self.1.len()
     }
 
     /// Return the length of the vector containing non-root identifiers. For
@@ -179,7 +246,33 @@ impl<Id> Chain<Id> {
     /// Returns an iterator over references to all identifiers in the `Chain`,
     /// with the `&Id` yielded in order.
     pub fn iter(&self) -> impl Iterator<Item = &Id> {
-        vec![&self.0].into_iter().chain(self.1.iter())
+        std::iter::once(&self.0).chain(self.tail())
+    }
+
+    #[inline]
+    pub fn any(&self, f: impl FnMut(&Id) -> bool) -> bool {
+        self.iter().all(f)
+    }
+
+    pub fn contains(&self, id: &Id) -> bool
+    where
+        Id: PartialEq,
+    {
+        &self.0 == id || self.1.contains(id)
+    }
+
+    pub fn contains_root(&self, id: &Id) -> bool
+    where
+        Id: PartialEq,
+    {
+        &self.0 == id
+    }
+
+    pub fn contains_in_tail(&self, id: &Id) -> bool
+    where
+        Id: PartialEq,
+    {
+        self.1.contains(id)
     }
 
     /// Given a slice of `Id`s of length > 1, returns a new instance (wrapped in
@@ -214,27 +307,13 @@ impl<Id> Chain<Id> {
         Chain(f(x), xs.into_iter().map(f).collect())
     }
 
-    #[inline]
-    /// Alias for `map` method.
-    pub fn fmap<Y>(self, f: impl FnMut(Id) -> Y) -> Chain<Y> {
-        self.map(f)
-    }
-
     /// Analogous to `map`, but without taking ownership of `Self`.
     pub fn map_ref<F, Y>(&self, mut f: F) -> Chain<Y>
     where
         F: FnMut(&Id) -> Y,
-        Id: Copy,
     {
         let Chain(x, xs) = self;
         Chain(f(x), xs.iter().map(f).collect())
-    }
-
-    pub fn contains_in_tail(&self, id: &Id) -> bool
-    where
-        Id: PartialEq,
-    {
-        self.1.contains(id)
     }
 
     pub fn concat_right(self, rhs: Self) -> Self {
@@ -243,6 +322,21 @@ impl<Id> Chain<Id> {
         tail.push_back(rhs.0);
         tail.extend(rhs.1);
         Chain(head, tail)
+    }
+
+    pub fn add_prefix(&mut self, prefix: Id) {
+        self.1.push_front(std::mem::replace(&mut self.0, prefix));
+    }
+
+    pub fn add_suffix(&mut self, suffix: Id) {
+        self.1.push_back(suffix);
+    }
+
+    pub fn symbols(&self) -> impl Iterator<Item = Symbol> + '_
+    where
+        Id: Symbolic,
+    {
+        std::iter::once(self.0.get_symbol()).chain(self.tail().map(|id| id.get_symbol()))
     }
 
     pub fn into_string(&self) -> String
@@ -268,6 +362,33 @@ impl<Id> Chain<Id> {
         Id: std::fmt::Display,
     {
         symbol::intern_once(&*(self.into_string()))
+    }
+
+    pub fn as_ident(&self) -> Ident
+    where
+        Id: Identifier + std::fmt::Display,
+    {
+        self.pure()(self.canonicalize())
+    }
+}
+
+impl<Id, const N: usize> From<(Id, [Id; N])> for Chain<Id> {
+    fn from((root, ids): (Id, [Id; N])) -> Self {
+        let mut deque = deque!();
+        deque.extend(ids);
+        Chain(root, deque)
+    }
+}
+
+impl<Id> From<(Id, Id)> for Chain<Id> {
+    fn from((root, tail): (Id, Id)) -> Self {
+        Chain(root, deque![tail])
+    }
+}
+
+impl<Id> From<(Id, Id, Id)> for Chain<Id> {
+    fn from((root, tail_a, tail_b): (Id, Id, Id)) -> Self {
+        Chain(root, deque![tail_a, tail_b])
     }
 }
 
@@ -296,5 +417,26 @@ where
             write!(f, ".{}", id)?;
         }
         Ok(())
+    }
+}
+
+/// The categorization of a `Chain` depends on its last identifier, i.e., if
+/// the last identifier in the chain is an infix, then the `Chain` is
+/// categorized as an infix, etc.
+impl<Id: Identifier> Identifier for Chain<Id> {
+    fn is_upper(&self) -> bool {
+        self.last().is_upper()
+    }
+
+    fn is_lower(&self) -> bool {
+        self.last().is_lower()
+    }
+
+    fn is_infix(&self) -> bool {
+        self.last().is_infix()
+    }
+
+    fn is_fresh(&self) -> bool {
+        self.last().is_fresh()
     }
 }
