@@ -1,4 +1,7 @@
+use wy_common::{Mappable, Set};
+
 use crate::{
+    decl::Arity,
     expr::Expression,
     ident::Ident,
     pattern::Pattern,
@@ -28,72 +31,103 @@ pub struct Match<Id = Ident, T = Ident> {
     pub wher: Vec<Binding<Id, T>>,
 }
 
-impl<Id, T> Match<Id, T> {
-    pub fn map_id<F, X>(self, mut f: F) -> Match<X, T>
-    where
-        F: FnMut(Id) -> X,
-    {
-        let Match {
-            args,
-            pred,
-            body,
-            wher,
-        } = self;
-        Match {
-            args: args.into_iter().map(|pat| pat.map_id(|id| f(id))).collect(),
-            pred: pred.map(|ex| ex.map_id(|id| f(id))),
-            body: body.map_id(|id| f(id)),
-            wher: wher.into_iter().map(|bnd| bnd.map_id(|id| f(id))).collect(),
-        }
-    }
+wy_common::struct_field_iters! {
+    |Id, T| Match<Id, T>
+    | args => args_iter :: Pattern<Id, T>
+    | wher => wher_iter :: Binding<Id, T>
 }
 
-impl<T> Match<Ident, T> {
-    pub fn map_t<F, U>(self, mut f: &mut F) -> Match<Ident, U>
+impl<Id, T> Match<Id, T> {
+    pub fn free_vars(&self) -> Set<Id>
     where
-        F: FnMut(T) -> U,
+        Id: Copy + Eq + std::hash::Hash,
+    {
+        let mut vars = Set::new();
+        vars.extend(self.body.free_vars());
+        if let Some(pred) = &self.pred {
+            vars.extend(pred.free_vars());
+        }
+        self.wher_iter().for_each(|binding| {
+            vars.extend(binding.free_vars());
+        });
+        self.args_iter().for_each(|pat| {
+            pat.vars().iter().for_each(|id| {
+                vars.remove(id);
+            })
+        });
+        vars
+    }
+    pub fn map_id<X>(self, mut f: impl FnMut(Id) -> X) -> Match<X, T> {
+        Match {
+            args: self.args.fmap(|pat| pat.map_id(|id| f(id))),
+            pred: self.pred.map(|ex| ex.map_id(|id| f(id))),
+            body: self.body.map_id(|id| f(id)),
+            wher: self.wher.fmap(|bnd| bnd.map_id(|id| f(id))),
+        }
+    }
+
+    pub fn map_id_ref<X>(&self, f: &mut impl FnMut(&Id) -> X) -> Match<X, T>
+    where
         T: Copy,
     {
+        Match {
+            args: self.args.iter().map(|pat| pat.map_id_ref(f)).collect(),
+            pred: self.pred.as_ref().map(|x| x.map_id_ref(f)),
+            body: self.body.map_id_ref(f),
+            wher: self.wher.iter().map(|bnd| bnd.map_id_ref(f)).collect(),
+        }
+    }
+
+    pub fn map_t<U>(self, f: &mut impl FnMut(T) -> U) -> Match<Id, U> {
         fn iters<A>(vec: &mut Vec<A>, f: impl FnOnce() -> A) {
             let it = f();
             vec.push(it);
         }
-        let Match {
-            args,
-            pred,
-            body,
-            wher,
-        } = self;
-        let args = {
-            let mut args_ = vec![];
-            for a in args {
-                iters(&mut args_, || a.map_t(f));
-            }
-            args_
-        };
-        let pred = pred.map(|px| px.map_t(&mut |t| f(t)));
-        let body = body.map_t(&mut |t| f(t));
-        let wher = {
-            let mut args_ = vec![];
-            for m in wher {
-                let mut ws = vec![];
-                for a in m.arms {
-                    iters(&mut ws, || a.map_t(f));
-                }
-                let b = Binding {
-                    name: m.name,
-                    arms: ws,
-                    tipo: m.tipo.map(|s| s.map_t(f)),
-                };
-                args_.push(b);
-            }
-            args_
-        };
         Match {
-            args,
-            pred,
-            body,
-            wher,
+            args: {
+                let mut args = vec![];
+                for a in self.args {
+                    iters(&mut args, || a.map_t(f));
+                }
+                args
+            },
+            pred: self.pred.map(|px| px.map_t(&mut |t| f(t))),
+            body: self.body.map_t(&mut |t| f(t)),
+            wher: {
+                let mut args = vec![];
+                for Binding {
+                    name,
+                    arms: arms_,
+                    tipo,
+                } in self.wher
+                {
+                    let mut arms = vec![];
+                    for arm in arms_ {
+                        iters(&mut arms, || arm.map_t(f));
+                    }
+                    args.push(Binding {
+                        name,
+                        arms,
+                        tipo: tipo.map(|s| s.map_t(f)),
+                    });
+                }
+                args
+            },
+        }
+    }
+    pub fn map_t_ref<U>(&self, f: &mut impl FnMut(&T) -> U) -> Match<Id, U>
+    where
+        Id: Copy,
+    {
+        Match {
+            args: self.args_iter().map(|a| a.map_t_ref(f)).collect(),
+            pred: if let Some(p) = &self.pred {
+                Some(p.map_t_ref(f))
+            } else {
+                None
+            },
+            body: self.body.map_t_ref(f),
+            wher: self.wher_iter().map(|w| w.map_t_ref(f)).collect(),
         }
     }
 }
@@ -125,16 +159,15 @@ impl MatchArms {
     pub fn arities_equal<I, T>(arms: &[Match<I, T>]) -> bool {
         match arms {
             [] | [_] => true,
-            [head, rest @ ..] => {
-                let arity = head.args.len();
-                rest.iter().all(|m| m.args.len() == arity)
-            }
+            [head, rest @ ..] => rest
+                .into_iter()
+                .all(|Match { args, .. }| args.len() == head.args.len()),
         }
     }
 
-    pub fn map_t<F, I, T, U>(arms: &mut Vec<Match<I, U>>, mut f: impl FnOnce() -> Match<I, U>) {
-        let m = f();
-        arms.push(m);
+    pub fn simple_args<I, T>(arm: &Match<I, T>) -> bool {
+        arm.args_iter()
+            .all(|pat| matches!(pat, Pattern::Wild | Pattern::Var(_)))
     }
 }
 
@@ -170,7 +203,27 @@ pub struct Alternative<Id = Ident, T = Ident> {
     pub wher: Vec<Binding<Id, T>>,
 }
 
+wy_common::struct_field_iters! {
+    |Id, T| Alternative<Id, T>
+    | wher => wher_iter :: Binding<Id, T>
+}
+
 impl<Id, T> Alternative<Id, T> {
+    pub fn free_vars(&self) -> Set<Id>
+    where
+        Id: Copy + Eq + std::hash::Hash,
+    {
+        let mut vars = self.body.free_vars();
+        if let Some(pred) = &self.pred {
+            vars.extend(pred.free_vars());
+        }
+        self.wher_iter()
+            .for_each(|binding| vars.extend(binding.free_vars()));
+        self.pat.vars().iter().for_each(|id| {
+            vars.remove(id);
+        });
+        vars
+    }
     pub fn map_id<F, X>(self, mut f: F) -> Alternative<X, T>
     where
         F: FnMut(Id) -> X,
@@ -188,13 +241,23 @@ impl<Id, T> Alternative<Id, T> {
             wher: wher.into_iter().map(|b| b.map_id(|id| f(id))).collect(),
         }
     }
-}
 
-impl<T> Alternative<Ident, T> {
-    pub fn map_t<F, U>(self, mut f: F) -> Alternative<Ident, U>
+    pub fn map_id_ref<U>(&self, f: &mut impl FnMut(&Id) -> U) -> Alternative<U, T>
+    where
+        T: Copy,
+    {
+        Alternative {
+            pat: self.pat.map_id_ref(f),
+            pred: self.pred.as_ref().map(|ex| ex.map_id_ref(f)),
+            body: self.body.map_id_ref(f),
+            wher: self.wher_iter().map(|w| w.map_id_ref(f)).collect(),
+        }
+    }
+
+    pub fn map_t<F, U>(self, mut f: F) -> Alternative<Id, U>
     where
         F: FnMut(T) -> U,
-        T: Copy,
+        Id: Copy,
     {
         let Alternative {
             pat,
@@ -211,6 +274,22 @@ impl<T> Alternative<Ident, T> {
             pred,
             body,
             wher,
+        }
+    }
+
+    pub fn map_t_ref<U>(&self, f: &mut impl FnMut(&T) -> U) -> Alternative<Id, U>
+    where
+        Id: Copy,
+    {
+        Alternative {
+            pat: self.pat.map_t_ref(f),
+            pred: if let Some(pred) = &self.pred {
+                Some(pred.map_t_ref(f))
+            } else {
+                None
+            },
+            body: self.body.map_t_ref(f),
+            wher: self.wher.iter().map(|b| b.map_t_ref(f)).collect(),
         }
     }
 }
@@ -231,11 +310,62 @@ pub struct Binding<Id = Ident, T = Ident> {
     pub tipo: Option<Signature<Id, T>>,
 }
 
+wy_common::struct_field_iters! {
+    |Id, T| Binding<Id, T>
+    | arms => arms_iter :: Match<Id, T>
+}
+
 impl<Id, T> Binding<Id, T> {
-    pub fn map_id<F, X>(self, mut f: F) -> Binding<X, T>
+    /// Returns the arity of a binding if all of its match arms contain the same
+    /// number of patterns.
+    pub fn arity(&self) -> Option<Arity> {
+        debug_assert!(self.arms.len() > 0);
+        if MatchArms::arities_equal(&self.arms[..]) {
+            Some(Arity(self.arms[0].args.len()))
+        } else {
+            None
+        }
+    }
+
+    pub fn arg_vars(&self) -> Vec<Id>
     where
-        F: FnMut(Id) -> X,
+        Id: Copy + PartialEq,
+        T: Copy,
     {
+        let mut vars = vec![];
+        self.arms_iter().for_each(|m| {
+            m.args_iter().for_each(|p| {
+                p.map_id_ref(&mut |id| {
+                    if !vars.contains(id) {
+                        vars.push(*id)
+                    }
+                });
+            })
+        });
+        vars
+    }
+
+    pub fn free_vars(&self) -> Set<Id>
+    where
+        Id: Copy + Eq + std::hash::Hash,
+    {
+        let mut vars = Set::new();
+        self.arms_iter().for_each(|m| {
+            let mut fvs = m.body.free_vars();
+            if let Some(pred) = &m.pred {
+                fvs.extend(pred.free_vars());
+            }
+            m.args_iter().for_each(|pat| {
+                pat.vars().iter().for_each(|id| {
+                    fvs.remove(id);
+                })
+            });
+            vars.extend(fvs)
+        });
+        vars.remove(&self.name);
+        vars
+    }
+    pub fn map_id<X>(self, mut f: impl FnMut(Id) -> X) -> Binding<X, T> {
         let Binding { name, arms, tipo } = self;
         Binding {
             name: f(name),
@@ -243,13 +373,33 @@ impl<Id, T> Binding<Id, T> {
             tipo: tipo.map(|sig| sig.map_id(|id| f(id))),
         }
     }
-}
 
-impl<T> Binding<Ident, T> {
-    pub fn map_t<F, U>(self, f: &mut F) -> Binding<Ident, U>
+    pub fn map_id_ref<X>(&self, f: &mut impl FnMut(&Id) -> X) -> Binding<X, T>
     where
-        F: FnMut(T) -> U,
         T: Copy,
+    {
+        Binding {
+            name: f(&self.name),
+            arms: self.arms_iter().map(|m| m.map_id_ref(f)).collect(),
+            tipo: self.tipo.as_ref().map(|s| s.map_id_ref(f)),
+        }
+    }
+
+    pub fn map_t<U>(self, f: &mut impl FnMut(T) -> U) -> Binding<Id, U> {
+        let mut arms = vec![];
+        for arm in self.arms {
+            arms.push(arm.map_t(f))
+        }
+        Binding {
+            name: self.name,
+            arms,
+            tipo: self.tipo.map(|sig| sig.map_t(f)),
+        }
+    }
+
+    pub fn map_t_ref<U>(&self, f: &mut impl FnMut(&T) -> U) -> Binding<Id, U>
+    where
+        Id: Copy,
     {
         fn iters<A>(vec: &mut Vec<A>, f: &mut impl FnMut() -> A) {
             let it = f();
@@ -258,12 +408,16 @@ impl<T> Binding<Ident, T> {
 
         let mut arms = vec![];
         for arm in &self.arms[..] {
-            iters(&mut arms, &mut || arm.clone().map_t(f));
+            iters(&mut arms, &mut || arm.map_t_ref(f));
         }
         Binding {
             name: self.name,
             arms,
-            tipo: self.tipo.map(|sig| sig.map_t(f)),
+            tipo: if let Some(sig) = &self.tipo {
+                Some(sig.map_t_ref(f))
+            } else {
+                None
+            },
         }
     }
 }
@@ -294,20 +448,36 @@ impl<Id, T> Statement<Id, T> {
             }
         }
     }
-}
-
-impl<T> Statement<Ident, T> {
-    pub fn map_t<U>(self, f: &mut impl FnMut(T) -> U) -> Statement<Ident, U>
+    pub fn map_id_ref<U>(&self, f: &mut impl FnMut(&Id) -> U) -> Statement<U, T>
     where
         T: Copy,
     {
-        fn iters<A>(vec: &mut Vec<A>, f: &mut impl FnMut() -> A) {
-            let it = f();
-            vec.push(it)
+        match self {
+            Statement::Generator(p, x) => Statement::Generator(p.map_id_ref(f), x.map_id_ref(f)),
+            Statement::Predicate(x) => Statement::Predicate(x.map_id_ref(f)),
+            Statement::JustLet(bns) => {
+                Statement::JustLet(bns.into_iter().map(|b| b.map_id_ref(f)).collect())
+            }
         }
+    }
+    pub fn map_t<U>(self, f: &mut impl FnMut(T) -> U) -> Statement<Id, U> {
         match self {
             Statement::Generator(pat, expr) => Statement::Generator(pat.map_t(f), expr.map_t(f)),
             Statement::Predicate(expr) => Statement::Predicate(expr.map_t(f)),
+            Statement::JustLet(_binds) => {
+                todo!()
+            }
+        }
+    }
+    pub fn map_t_ref<U>(&self, f: &mut impl FnMut(&T) -> U) -> Statement<Id, U>
+    where
+        Id: Copy,
+    {
+        match self {
+            Statement::Generator(pat, expr) => {
+                Statement::Generator(pat.map_t_ref(f), expr.map_t_ref(f))
+            }
+            Statement::Predicate(expr) => Statement::Predicate(expr.map_t_ref(f)),
             Statement::JustLet(_binds) => {
                 todo!()
             }

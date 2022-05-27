@@ -1,9 +1,9 @@
-use wy_common::{functor::Bifunctor, Mappable};
+use wy_common::{functor::Bifunctor, Mappable, Set};
 use wy_lexer::Literal;
 
 use crate::{
     ident::Ident,
-    tipo::{Field, Record, Type},
+    tipo::{Con, Field, Record, Type},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -54,6 +54,45 @@ impl<Id, T> Pattern<Id, T> {
     pub fn is_empty_record(&self) -> bool {
         matches!(self, Self::Rec(Record::Anon(fs)|Record::Data(_, fs)) if fs.is_empty() )
     }
+    pub fn vars(&self) -> Set<Id>
+    where
+        Id: Copy + Eq + std::hash::Hash,
+    {
+        let mut vars = Set::new();
+        match self {
+            Pattern::Wild => todo!(),
+            Pattern::Var(id) => {
+                vars.insert(*id);
+            }
+            Pattern::Lit(_) => todo!(),
+            Pattern::Dat(_, ps) | Pattern::Tup(ps) | Pattern::Vec(ps) | Pattern::Or(ps) => {
+                for p in ps {
+                    vars.extend(p.vars())
+                }
+            }
+            Pattern::Lnk(x, y) => {
+                vars.extend(x.vars());
+                vars.extend(y.vars());
+            }
+            Pattern::At(x, y) => {
+                vars.insert(*x);
+                vars.extend(y.vars());
+            }
+            Pattern::Rec(rec) => rec.fields().into_iter().for_each(|field| {
+                if let Some(key) = field.get_key() {
+                    vars.insert(*key);
+                }
+                if let Some(val) = field.get_value() {
+                    vars.extend(val.vars())
+                }
+            }),
+            Pattern::Cast(p, _) => {
+                vars.extend(p.vars());
+            }
+        };
+        vars
+    }
+
     pub fn map_id<F, X>(self, mut f: F) -> Pattern<X, T>
     where
         F: FnMut(Id) -> X,
@@ -78,8 +117,46 @@ impl<Id, T> Pattern<Id, T> {
             ),
             Pattern::At(id, p) => Pattern::At(f(id), Box::new(p.map_id(|id| f(id)))),
             Pattern::Or(ps) => Pattern::Or(ps.into_iter().map(|p| p.map_id(|id| f(id))).collect()),
-            Pattern::Rec(_) => todo!(),
-            Pattern::Cast(_, _) => todo!(),
+            Pattern::Rec(rec) => {
+                Pattern::Rec(rec.map_id(|id| f(id)).map_t(|pat| pat.map_id(|id| f(id))))
+            }
+            Pattern::Cast(pat, ty) => {
+                Pattern::Cast(Box::new(pat.map_id(|id| f(id))), ty.map_id(&mut f))
+            }
+        }
+    }
+    pub fn map_id_ref<U>(&self, f: &mut impl FnMut(&Id) -> U) -> Pattern<U, T>
+    where
+        T: Copy,
+    {
+        match self {
+            Pattern::Wild => Pattern::Wild,
+            Pattern::Var(id) => Pattern::Var(f(id)),
+            Pattern::Lit(k) => Pattern::Lit(*k),
+            Pattern::Dat(id, tail) => {
+                Pattern::Dat(f(id), tail.into_iter().map(|p| p.map_id_ref(f)).collect())
+            }
+            Pattern::Tup(ts) => Pattern::Tup(ts.into_iter().map(|p| p.map_id_ref(f)).collect()),
+            Pattern::Vec(ts) => Pattern::Vec(ts.into_iter().map(|p| p.map_id_ref(f)).collect()),
+            Pattern::Lnk(x, y) => {
+                Pattern::Lnk(Box::new(x.map_id_ref(f)), Box::new(y.map_id_ref(f)))
+            }
+            Pattern::At(id, p) => Pattern::At(f(id), Box::new(p.map_id_ref(f))),
+            Pattern::Or(ps) => Pattern::Or(ps.into_iter().map(|p| p.map_id_ref(f)).collect()),
+            Pattern::Rec(rec) => Pattern::Rec(rec.map_ref(&mut |con, fields| {
+                (
+                    con.as_ref().map(|id| f(id)),
+                    fields
+                        .into_iter()
+                        .map(|field| {
+                            field.map_ref(&mut |(lhs, rhs)| {
+                                (f(&lhs), rhs.as_ref().map(|pat| pat.map_id_ref(f)))
+                            })
+                        })
+                        .collect(),
+                )
+            })),
+            Pattern::Cast(pat, ty) => Pattern::Cast(Box::new(pat.map_id_ref(f)), ty.map_id_ref(f)),
         }
     }
     pub fn map_t<F, U>(self, f: &mut F) -> Pattern<Id, U>
@@ -160,6 +237,111 @@ impl<Id, T> Pattern<Id, T> {
                 }
 
                 let pat = Box::new(pat.map_t(f));
+                let tipo = map_ty(ty, f);
+                Pattern::Cast(pat, tipo)
+            }
+        }
+    }
+
+    pub fn map_t_ref<U>(&self, f: &mut impl FnMut(&T) -> U) -> Pattern<Id, U>
+    where
+        Id: Copy,
+    {
+        match self {
+            Pattern::Wild => Pattern::Wild,
+            Pattern::Var(t) => Pattern::Var(*t),
+            Pattern::Lit(lit) => Pattern::Lit(*lit),
+            Pattern::Dat(id, args) => {
+                Pattern::Dat(*id, args.into_iter().map(|pat| pat.map_t_ref(f)).collect())
+            }
+            Pattern::Tup(ts) => {
+                if ts.is_empty() {
+                    Pattern::UNIT
+                } else {
+                    Pattern::Tup(ts.into_iter().map(|p| p.map_t_ref(f)).collect())
+                }
+            }
+            Pattern::Vec(ts) => {
+                if ts.is_empty() {
+                    Pattern::NIL
+                } else {
+                    Pattern::Vec(ts.into_iter().map(|p| p.map_t_ref(f)).collect())
+                }
+            }
+            Pattern::Lnk(x, y) => {
+                let x = Box::new(x.map_t_ref(f));
+                let y = Box::new(y.map_t_ref(f));
+                Pattern::Lnk(x, y)
+            }
+            Pattern::At(id, ps) => Pattern::At(*id, Box::new(ps.map_t_ref(f))),
+            Pattern::Or(ps) => Pattern::Or(ps.into_iter().map(|p| p.map_t_ref(f)).collect()),
+            Pattern::Rec(rec) => {
+                let (cted, fields) = match rec {
+                    Record::Anon(fs) => (None, fs),
+                    Record::Data(con, fs) => (Some(*con), fs),
+                };
+                let fields = fields
+                    .into_iter()
+                    .map(|field| match field {
+                        Field::Rest => Field::Rest,
+                        Field::Key(k) => Field::Key(*k),
+                        Field::Entry(k, v) => Field::Entry(*k, v.map_t_ref(f)),
+                    })
+                    .collect();
+                let record = match cted {
+                    Some(k) => Record::Data(k, fields),
+                    None => Record::Anon(fields),
+                };
+                Pattern::Rec(record)
+            }
+            Pattern::Cast(pat, ty) => {
+                fn map_ty<A: Copy, B, C>(
+                    ty: &Type<A, B>,
+                    f: &mut impl FnMut(&B) -> C,
+                ) -> Type<A, C> {
+                    match ty {
+                        Type::Var(v) => Type::Var(f(v)),
+                        Type::Con(id, args) => Type::Con(
+                            match id {
+                                Con::List => Con::List,
+                                Con::Tuple(n) => Con::Tuple(*n),
+                                Con::Arrow => Con::Arrow,
+                                Con::Data(d) => Con::Data(*d),
+                                Con::Free(t) => Con::Free(f(t)),
+                            },
+                            args.into_iter().map(|ty| map_ty(ty, f)).collect(),
+                        ),
+                        Type::Fun(x, y) => Type::Fun(
+                            Box::new(map_ty(x.as_ref(), f)),
+                            Box::new(map_ty(y.as_ref(), f)),
+                        ),
+                        Type::Tup(ts) => {
+                            Type::Tup(ts.into_iter().map(|ty| map_ty(ty, f)).collect())
+                        }
+                        Type::Vec(t) => Type::Vec(Box::new(map_ty(t, f))),
+                        Type::Rec(recs) => {
+                            let (k, fs) = match recs {
+                                Record::Anon(fs) => (None, fs),
+                                Record::Data(k, fs) => (Some(*k), fs),
+                            };
+                            let fields = fs
+                                .into_iter()
+                                .map(|field| match field {
+                                    Field::Rest => Field::Rest,
+                                    Field::Key(k) => Field::Key(*k),
+                                    Field::Entry(k, v) => Field::Entry(*k, map_ty(v, f)),
+                                })
+                                .collect();
+                            Type::Rec(if let Some(k) = k {
+                                Record::Data(k, fields)
+                            } else {
+                                Record::Anon(fields)
+                            })
+                        }
+                    }
+                }
+
+                let pat = Box::new(pat.map_t_ref(f));
                 let tipo = map_ty(ty, f);
                 Pattern::Cast(pat, tipo)
             }
