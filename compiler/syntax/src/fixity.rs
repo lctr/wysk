@@ -159,6 +159,23 @@ where
         self.0.get(id).copied().unwrap_or_default()
     }
 
+    pub fn map<X: Eq + std::hash::Hash>(self, mut f: impl FnMut(Id) -> X) -> FixityTable<X> {
+        FixityTable(
+            self.0
+                .into_iter()
+                .map(|(id, fixity)| (f(id), fixity))
+                .collect::<Map<_, _>>(),
+        )
+    }
+
+    pub fn iter(&self) -> std::collections::hash_map::Iter<'_, Id, Fixity> {
+        self.0.iter()
+    }
+
+    pub fn iter_mut(&mut self) -> std::collections::hash_map::IterMut<'_, Id, Fixity> {
+        self.0.iter_mut()
+    }
+
     /// Apply this fixity table's fixities to an expression, rearranging an
     /// `Infix` expression to adhere to the fixities defined.
     pub fn apply(
@@ -293,7 +310,8 @@ impl From<Ident> for Expression {
     }
 }
 
-mod test {
+#[cfg(test)]
+mod tests {
     use super::*;
     /// let's take a stab at reordering expressions based on fixities we will be
     /// using simple arithmetic operators, whose fixities are (to be) defined (and
