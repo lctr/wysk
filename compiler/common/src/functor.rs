@@ -115,6 +115,17 @@ where
     }
 }
 
+impl<X> Mappable<X> for () {
+    type M<A> = ();
+
+    fn fmap<F, Y>(self, _f: F) -> Self::M<Y>
+    where
+        F: FnMut(X) -> Y,
+    {
+        ()
+    }
+}
+
 impl<X> Mappable<X> for (X,) {
     type M<A> = (A,);
 
