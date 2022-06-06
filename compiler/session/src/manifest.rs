@@ -208,7 +208,7 @@ mod test {
 
     #[test]
     fn test_deserialize_example_manifest() {
-        match std::fs::read_to_string("../../language/manifest.toml") {
+        match std::fs::read_to_string("../../language/prelude/manifest.toml") {
             Ok(source) => match toml::from_str::<Manifest>(&*source) {
                 Ok(cfg) => {
                     println!("Manifest successfully deseralized:\n\n{:#?}", &cfg);
