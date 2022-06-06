@@ -7,6 +7,52 @@ use wy_lexer::{
 use wy_span::Span;
 use wy_syntax::ident::Ident;
 
+pub trait Report {
+    fn get_srcloc(&mut self) -> SrcLoc;
+    fn get_source(&self) -> String;
+    fn next_token(&mut self) -> Token;
+    fn expected(&mut self, lexes: LexKind) -> ParseError {
+        ParseError::Expected(
+            self.get_srcloc(),
+            lexes,
+            self.next_token(),
+            self.get_source(),
+        )
+    }
+    fn unknown_lexeme(&mut self) -> ParseError {
+        ParseError::InvalidLexeme(self.get_srcloc(), self.next_token(), self.get_source())
+    }
+    fn pattern_error(&mut self) -> ParseError {
+        ParseError::InvalidPattern(self.get_srcloc(), self.next_token(), self.get_source())
+    }
+    fn custom_error(&mut self, message: &'static str) -> ParseError {
+        ParseError::Custom(
+            self.get_srcloc(),
+            self.next_token(),
+            message,
+            self.get_source(),
+        )
+    }
+
+    fn unbalanced(&mut self, delim: Lexeme) -> ParseError {
+        ParseError::Unbalanced {
+            srcloc: self.get_srcloc(),
+            found: self.next_token(),
+            delim,
+            source: self.get_source(),
+        }
+    }
+    fn unbalanced_paren(&mut self) -> ParseError {
+        self.unbalanced(Lexeme::ParenR)
+    }
+    fn unbalanced_brack(&mut self) -> ParseError {
+        self.unbalanced(Lexeme::BrackR)
+    }
+    fn unbalanced_curly(&mut self) -> ParseError {
+        self.unbalanced(Lexeme::CurlyR)
+    }
+}
+
 pub type Parsed<X> = Result<X, ParseError>;
 /// Error messages provided by the `Parser`. A general message *should* have the
 /// following components:
@@ -29,6 +75,7 @@ pub enum ParseError {
     Expected(SrcLoc, LexKind, Token, String),
     InvalidLexeme(SrcLoc, Token, String),
     InvalidPrec(SrcLoc, Token, String),
+    InvalidPattern(SrcLoc, Token, String),
     FixityExists(SrcLoc, Ident, Span, String),
     BadContext(SrcLoc, Ident, Span, String),
     Custom(SrcLoc, Token, &'static str, String),
@@ -51,6 +98,7 @@ impl ParseError {
             | ParseError::Expected(srcloc, ..)
             | ParseError::InvalidLexeme(srcloc, ..)
             | ParseError::InvalidPrec(srcloc, ..)
+            | ParseError::InvalidPattern(srcloc, ..)
             | ParseError::FixityExists(srcloc, ..)
             | ParseError::BadContext(srcloc, ..)
             | ParseError::Custom(srcloc, ..)
@@ -83,6 +131,12 @@ impl std::fmt::Display for ParseError {
                 f,
                 "expected a precedence value between 0 and 9, but found `{}`",
                 &found.lexeme
+            )
+            .map(|_| src),
+            ParseError::InvalidPattern(_, tok, src) => write!(
+                f,
+                "expected a pattern, but found `{}` which does not begin a valid pattern",
+                tok
             )
             .map(|_| src),
             ParseError::FixityExists(_, infix, _, src) => {
