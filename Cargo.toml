@@ -9,7 +9,7 @@ repository = "https://github.com/lctr/wysk"
 
 [workspace]
 members = [
-    "compiler/driver",
+    "compiler/driver"
 ]
 exclude = ["language/*"]
 
