@@ -1,16 +1,31 @@
 use wy_common::newtype;
 
 newtype! {
-    { u32 in Row | Show Usize Deref (+=) (-)
+    { u32 in Row | New Show Usize Deref (+=) (-)
         (+ usize |rhs| rhs as u32)
         (- usize |rhs| rhs as u32)
     }
-    { u32 in Col | Show Usize Deref (+=) (-)
+    { u32 in Col | New Show Usize Deref (+=) (-)
         (+ usize |rhs| rhs as u32)
         (- usize |rhs| rhs as u32)
     }
     { u32 in BytePos | Show Usize Deref (+=) (-)
         (+= char |rhs| rhs.len_utf8() as u32)
+        (+ &str |rhs| rhs.len() as u32)
+    }
+}
+
+impl BytePos {
+    pub fn str_range(s: &str) -> std::ops::Range<Self> {
+        Self(0)..Self(s.len() as u32)
+    }
+
+    pub fn str_bounds(s: &str) -> (Self, Self) {
+        (Self::ZERO, Self(s.len() as u32))
+    }
+
+    pub fn from_char(c: char) -> Self {
+        Self(c.len_utf8() as u32)
     }
 }
 
@@ -74,24 +89,102 @@ pub trait WithSpan {
         let end = self.get_pos();
         Spanned(ret, Span(start, end))
     }
+
+    fn while_pos<X>(
+        &mut self,
+        mut pred: impl FnMut(BytePos) -> bool,
+        mut f: impl FnMut(&mut Self) -> X,
+    ) -> Vec<Spanned<X>> {
+        std::iter::from_fn(|| {
+            if pred(self.get_pos()) {
+                Some(self.spanned(|this| f(this)))
+            } else {
+                None
+            }
+        })
+        .collect()
+    }
 }
 
 pub trait WithLoc {
-    fn get_loc(&self) -> Coord;
+    fn get_coord(&self) -> Coord;
     fn get_row(&self) -> Row {
-        WithLoc::get_loc(self).row
+        WithLoc::get_coord(self).row
     }
     fn get_col(&self) -> Col {
-        WithLoc::get_loc(self).col
+        WithLoc::get_coord(self).col
     }
-    fn with_loc<F, X>(&mut self, mut f: F) -> Located<X>
-    where
-        F: FnMut(&mut Self) -> X,
-    {
-        let start = WithLoc::get_loc(self);
+    fn located<X>(&mut self, mut f: impl FnMut(&mut Self) -> X) -> Located<X> {
+        let start = WithLoc::get_coord(self);
         let x = f(self);
-        let end = WithLoc::get_loc(self);
+        let end = WithLoc::get_coord(self);
         Located(x, Location { start, end })
+    }
+    fn while_loc<X>(
+        &mut self,
+        mut pred: impl FnMut(Coord) -> bool,
+        mut f: impl FnMut(&mut Self) -> X,
+    ) -> Vec<Located<X>> {
+        std::iter::from_fn(|| {
+            if pred(self.get_coord()) {
+                Some(self.located(|this| f(this)))
+            } else {
+                None
+            }
+        })
+        .collect()
+    }
+    fn while_row<X>(
+        &mut self,
+        mut pred: impl FnMut(Row) -> bool,
+        mut f: impl FnMut(&mut Self) -> X,
+    ) -> Vec<Located<X>> {
+        std::iter::from_fn(|| {
+            if pred(self.get_row()) {
+                Some(self.located(|this| f(this)))
+            } else {
+                None
+            }
+        })
+        .collect()
+    }
+    fn while_col<X>(
+        &mut self,
+        mut pred: impl FnMut(Col) -> bool,
+        mut f: impl FnMut(&mut Self) -> X,
+    ) -> Vec<Located<X>> {
+        std::iter::from_fn(|| {
+            if pred(self.get_col()) {
+                Some(self.located(|this| f(this)))
+            } else {
+                None
+            }
+        })
+        .collect()
+    }
+}
+
+pub trait WithPosition: WithSpan + WithLoc {
+    fn get_position(&self) -> Position;
+    fn get_span(&self) -> Span {
+        self.get_position().span()
+    }
+    fn get_location(&self) -> Location {
+        self.get_position().location()
+    }
+    fn positioned<X>(&mut self, mut f: impl FnMut(&mut Self) -> X) -> Positioned<X> {
+        let pos_a = WithSpan::get_pos(self);
+        let start = WithLoc::get_coord(self);
+        let x = f(self);
+        let pos_b = WithSpan::get_pos(self);
+        let end = WithLoc::get_coord(self);
+        Positioned(
+            x,
+            Position {
+                span: Span(pos_a, pos_b),
+                location: Location { start, end },
+            },
+        )
     }
 }
 
@@ -125,12 +218,25 @@ impl Span {
         Self(start.into(), end.into())
     }
 
+    pub fn from_pair((start, end): (impl Into<BytePos>, impl Into<BytePos>)) -> Self {
+        Self(start.into(), end.into())
+    }
+
+    pub fn from_str(s: &impl AsRef<str>) -> Self {
+        let (a, b) = BytePos::str_bounds(s.as_ref());
+        Self(a, b)
+    }
+
     pub fn tuple(self) -> (BytePos, BytePos) {
         (self.0, self.1)
     }
 
     pub fn len(&self) -> usize {
         (self.1 - self.0).as_usize()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0 == self.1
     }
 
     pub fn start(&self) -> BytePos {
@@ -154,7 +260,11 @@ impl Span {
         (self.start().as_usize())..(self.end().as_usize())
     }
 
-    pub fn union(&self, other: Span) -> Self {
+    pub fn byte_range(&self) -> std::ops::Range<BytePos> {
+        self.0..self.1
+    }
+
+    pub fn union(&self, other: &Span) -> Self {
         let mut poss = [self.0, self.1, other.0, other.1];
         poss.sort_unstable();
         Span(poss[0], poss[3])
@@ -201,17 +311,55 @@ impl Span {
         };
         self
     }
+
+    pub fn in_str(&self, s: &str) -> Box<str> {
+        std::ops::Index::index(&Str(s), *self).into()
+    }
 }
 
 impl Dummy for Span {
     const DUMMY: Self = Self(BytePos::ZERO, BytePos::ZERO);
 
     fn is_dummy(&self) -> bool {
-        self.0.is_dummy() && self.1.is_dummy() || (self.0 >= self.1)
+        self.0.is_dummy() && self.1.is_dummy() || self.is_empty()
     }
 
     fn partial_dummy(&self) -> bool {
         self.0.is_dummy() || self.1.is_dummy()
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+pub struct Str<'a>(pub &'a str);
+
+impl<'a> Str<'a> {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+    pub fn bytelen(&self) -> BytePos {
+        BytePos::strlen(self.0)
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl std::ops::Index<Span> for Str<'_> {
+    type Output = str;
+
+    fn index(&self, index: Span) -> &Self::Output {
+        let start = index.start().as_usize();
+        let end = index.end().as_usize();
+        let lim = self.0.len();
+        if start == end || start >= lim || end >= lim {
+            ""
+        } else {
+            if start > end {
+                &self.0[end..start]
+            } else {
+                &self.0[start..end]
+            }
+        }
     }
 }
 
@@ -228,8 +376,13 @@ impl<T> Spanned<T> {
     }
 
     #[inline]
-    pub fn item(self) -> T {
+    pub fn take_item(self) -> T {
         self.0
+    }
+
+    #[inline]
+    pub fn item(&self) -> &T {
+        &self.0
     }
 
     #[inline]
@@ -237,21 +390,93 @@ impl<T> Spanned<T> {
         self.1
     }
 
-    pub fn map<U, F: FnMut(T) -> U>(self, mut f: F) -> Spanned<U> {
+    #[inline]
+    pub fn map<U>(self, mut f: impl FnMut(T) -> U) -> Spanned<U> {
         Spanned(f(self.0), self.1)
+    }
+
+    pub fn map_ref<U>(&self, f: &mut impl FnMut(&T) -> U) -> Spanned<U> {
+        Spanned(f(&self.0), self.1)
     }
 
     /// Given a span, returns a new span containing the minimum `Pos` as the
     /// starting point and the maximum `Pos` as the ending point.
-    pub fn union(&self, other: Span) -> Self
-    where
-        T: Clone,
-    {
-        let Spanned(t, Span(a1, a2)) = self.clone();
+    pub fn union(&self, other: &Span) -> Spanned<&T> {
+        let Spanned(t, Span(a1, a2)) = self;
         let Span(b1, b2) = other;
         let mut ss = [a1, a2, b1, b2];
         ss.sort();
-        Spanned(t, Span(ss[0], ss[3]))
+        let [start, _, _, end] = ss;
+        Spanned(t, Span(*start, *end))
+    }
+}
+
+impl<T> Spanned<&T> {
+    pub fn cloned(self) -> Spanned<T>
+    where
+        T: Clone,
+    {
+        let Spanned(t, span) = self;
+        Spanned(t.clone(), span)
+    }
+
+    pub fn copied(self) -> Spanned<T>
+    where
+        T: Copy,
+    {
+        let Spanned(t, span) = self;
+        Spanned(*t, span)
+    }
+}
+
+impl<X> Spanned<Option<X>> {
+    pub fn transpose(self) -> Option<Spanned<X>> {
+        let Spanned(x, span) = self;
+        x.map(|x2| Spanned(x2, span))
+    }
+
+    pub fn transpose_ref(&self) -> Option<Spanned<&X>> {
+        let Spanned(x, span) = self;
+        x.as_ref().map(|x2| Spanned(x2, *span))
+    }
+}
+
+impl<X> From<Spanned<Option<X>>> for Option<Spanned<X>> {
+    fn from(sp: Spanned<Option<X>>) -> Self {
+        sp.transpose()
+    }
+}
+
+impl<T, E> Spanned<Result<T, E>> {
+    pub fn as_result(self) -> Result<Spanned<T>, E> {
+        match self {
+            Spanned(Ok(t), span) => Ok(Spanned(t, span)),
+            Spanned(Err(e), _span) => Err(e),
+        }
+    }
+    pub fn ok(self) -> Result<Spanned<T>, Spanned<E>> {
+        match self {
+            Spanned(Ok(t), span) => Ok(Spanned(t, span)),
+            Spanned(Err(e), span) => Err(Spanned(e, span)),
+        }
+    }
+    pub fn ok_or<A>(self, mut f: impl FnMut(E, Span) -> A) -> Result<Spanned<T>, A> {
+        let Spanned(result, span) = self;
+        match result {
+            Ok(res) => Ok(Spanned(res, span)),
+            Err(e) => Err(f(e, span)),
+        }
+    }
+    pub fn flat_map<U>(self, mut f: impl FnMut(T) -> Result<U, E>) -> Result<Spanned<U>, E> {
+        self.0.and_then(|t| f(t).map(|u| Spanned(u, self.1)))
+    }
+}
+
+impl<T, E> TryFrom<Spanned<Result<T, E>>> for Spanned<T> {
+    type Error = Spanned<E>;
+
+    fn try_from(value: Spanned<Result<T, E>>) -> Result<Self, Self::Error> {
+        value.ok()
     }
 }
 
@@ -305,7 +530,7 @@ impl WithSpan for BytePos {
 }
 
 impl WithLoc for Coord {
-    fn get_loc(&self) -> Coord {
+    fn get_coord(&self) -> Coord {
         *self
     }
 }
@@ -401,12 +626,18 @@ impl Coord {
         self.row == rhs.row || (self.row < rhs.row && self.col < rhs.col)
     }
 
-    pub fn rows_between(&self, rhs: &Self) -> u32 {
-        self.row.abs_diff(rhs.row.0)
+    #[inline]
+    pub fn row_diff(&self, rhs: &Self) -> usize {
+        self.row.abs_diff(rhs.row.0) as usize
     }
 
-    pub fn cols_between(&self, rhs: &Self) -> u32 {
-        self.col.abs_diff(rhs.col.0)
+    #[inline]
+    pub fn cols_between(&self, rhs: &Self) -> usize {
+        self.col.abs_diff(rhs.col.0) as usize
+    }
+
+    pub fn sol(&self, line_offset: usize) -> bool {
+        self.col.as_usize() == line_offset
     }
 }
 
@@ -448,28 +679,47 @@ impl Location {
         let mut cols = [self.start.col, self.end.col, other.start.col, other.end.col];
         rows.sort();
         cols.sort();
+        let [row_start, _, _, row_end] = rows;
+        let [col_start, _, _, col_end] = cols;
         Location {
             start: Coord {
-                row: rows[0],
-                col: cols[0],
+                row: row_start,
+                col: col_start,
             },
             end: Coord {
-                row: rows[3],
-                col: cols[3],
+                row: row_end,
+                col: col_end,
             },
         }
     }
 
     /// Returns the number of rows between the starting `Loc` and the ending
     /// `Loc`. Note: this does NOT take sign into account.
-    pub fn rows(&self) -> u32 {
-        self.start.row.abs_diff(self.end.row.0)
+    #[inline]
+    pub fn row_diff(&self) -> usize {
+        self.start.row.abs_diff(self.end.row.0) as usize
     }
 
     /// Returns the number of columns between the starting `Loc` and the ending
     /// `Loc`. Note: this does NOT take sign into account.
-    pub fn cols(&self) -> u32 {
-        self.start.col.abs_diff(self.end.col.0)
+    #[inline]
+    pub fn col_diff(&self) -> usize {
+        self.start.col.abs_diff(self.end.col.0) as usize
+    }
+
+    #[inline]
+    pub fn row_range(&self) -> std::ops::Range<Row> {
+        self.start.row..self.end.row
+    }
+
+    #[inline]
+    pub fn col_range(&self) -> std::ops::Range<Col> {
+        self.start.col..self.end.col
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.start == self.end
     }
 }
 
@@ -487,6 +737,10 @@ impl Dummy for Location {
         start: Coord::DUMMY,
         end: Coord::DUMMY,
     };
+
+    fn is_dummy(&self) -> bool {
+        self.start.is_dummy() || self.end.is_dummy() || self.is_empty()
+    }
 
     fn partial_dummy(&self) -> bool {
         self.start.is_dummy()
@@ -526,28 +780,355 @@ impl<T> Located<T> {
         Self(item, location)
     }
 
+    #[inline]
     pub fn as_tuple(self) -> (T, Location) {
         (self.0, self.1)
     }
-
-    pub fn item(self) -> T {
+    #[inline]
+    pub fn take_item(self) -> T {
         self.0
     }
 
+    #[inline]
+    pub fn item(&self) -> &T {
+        &self.0
+    }
+
+    pub fn item_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+
+    #[inline]
     pub fn location(&self) -> Location {
         self.1
     }
 
-    pub fn map<U, F>(self, mut f: F) -> Located<U>
-    where
-        F: FnMut(T) -> U,
-    {
+    #[inline]
+    pub fn map<U>(self, mut f: impl FnMut(T) -> U) -> Located<U> {
         Located(f(self.0), self.1)
+    }
+
+    #[inline]
+    pub fn map_ref<U>(&self, f: &mut impl FnMut(&T) -> U) -> Located<U> {
+        Located(f(&self.0), self.1)
     }
 
     pub fn union(self, other: Location) -> Self {
         let Located(t, location) = self;
         Located(t, location.union(&other))
+    }
+
+    #[inline]
+    pub fn replace_item(&mut self, new_item: T) -> T {
+        std::mem::replace(&mut self.0, new_item)
+    }
+
+    pub fn join_vec(self, other: Self) -> Located<Vec<T>> {
+        let (item_1, loc_1) = self.as_tuple();
+        let (item_2, loc_2) = other.as_tuple();
+        Located(vec![item_1, item_2], loc_1.union(&loc_2))
+    }
+}
+impl<T> Located<Vec<T>> {
+    pub fn veclen(&self) -> usize {
+        self.0.len()
+    }
+    pub fn as_slice(&self) -> &[T] {
+        self.0.as_slice()
+    }
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
+        self.0.as_mut_slice()
+    }
+    pub fn items_iter(&self) -> std::slice::Iter<'_, T> {
+        self.0.iter()
+    }
+
+    pub fn items_iter_mut(&mut self) -> std::slice::IterMut<'_, T> {
+        self.0.iter_mut()
+    }
+
+    pub fn push(&mut self, located: Located<T>) {
+        let (item, loc) = located.as_tuple();
+        self.1 = self.1.union(&loc);
+        self.0.push(item);
+    }
+
+    pub fn extend(&mut self, iter: impl IntoIterator<Item = Located<T>>) {
+        iter.into_iter().for_each(|Located(item, loc)| {
+            self.0.push(item);
+            self.1 = self.1.union(&loc);
+        })
+    }
+
+    pub fn reverse(&mut self) {
+        self.0.reverse()
+    }
+}
+
+impl<X, E> Located<Result<X, E>> {
+    pub fn as_result(self) -> Result<Located<X>, E> {
+        self.0.map(|x| Located(x, self.1))
+    }
+    pub fn ok(self) -> Result<Located<X>, Located<E>> {
+        self.0
+            .map(|x| Located(x, self.1))
+            .map_err(|e| Located(e, self.1))
+    }
+    pub fn ok_or<A>(self, mut f: impl FnMut(E, Location) -> A) -> Result<Located<X>, A> {
+        self.0.map(|x| Located(x, self.1)).map_err(|e| f(e, self.1))
+    }
+    pub fn flat_map<Y>(self, mut f: impl FnMut(X) -> Result<Y, E>) -> Result<Located<Y>, E> {
+        self.0.and_then(|x| f(x).map(|y| Located(y, self.1)))
+    }
+    pub fn is_ok(&self) -> bool {
+        self.0.is_ok()
+    }
+    pub fn is_err(&self) -> bool {
+        self.0.is_err()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Position {
+    span: Span,
+    location: Location,
+}
+
+impl Position {
+    pub fn from_pairs([(pos0, start), (pos1, end)]: [(BytePos, Coord); 2]) -> Self {
+        Position {
+            span: Span(pos0, pos1),
+            location: Location { start, end },
+        }
+    }
+    pub fn new(span: Span, location: Location) -> Position {
+        Position { span, location }
+    }
+
+    pub fn parts(self) -> (Span, Location) {
+        let Position { span, location } = self;
+        (span, location)
+    }
+
+    pub fn span(&self) -> Span {
+        self.span
+    }
+
+    #[inline]
+    pub fn location(&self) -> Location {
+        self.location
+    }
+
+    #[inline]
+    pub fn coord_start(&self) -> Coord {
+        self.location.start
+    }
+    #[inline]
+    pub fn coord_end(&self) -> Coord {
+        self.location.end
+    }
+    #[inline]
+    pub fn row_start(&self) -> Row {
+        self.location.start.row
+    }
+    #[inline]
+    pub fn row_end(&self) -> Row {
+        self.location.end.row
+    }
+    #[inline]
+    pub fn multiline(&self) -> bool {
+        self.location.start.row < self.location.end.row
+    }
+    #[inline]
+    pub fn byte_start(&self) -> BytePos {
+        self.span.start()
+    }
+    #[inline]
+    pub fn byte_end(&self) -> BytePos {
+        self.span.end()
+    }
+    #[inline]
+    pub fn byte_diff(&self) -> usize {
+        (self.byte_end() - self.byte_start()).as_usize()
+    }
+    #[inline]
+    pub fn row_diff(&self) -> usize {
+        (self.row_end() - self.row_start()).as_usize()
+    }
+    #[inline]
+    pub fn col_diff(&self) -> usize {
+        (self.location.start.col - self.location.end.col).as_usize()
+    }
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.span.is_empty() || self.location.is_empty()
+    }
+    pub fn union(&self, other: &Position) -> Position {
+        Position {
+            span: self.span.union(&other.span),
+            location: self.location.union(&other.location),
+        }
+    }
+}
+
+impl Dummy for Position {
+    const DUMMY: Self = Self {
+        span: Span::DUMMY,
+        location: Location::DUMMY,
+    };
+
+    fn is_dummy(&self) -> bool {
+        self.span.is_dummy() || self.location.is_dummy() || self.is_empty()
+    }
+
+    fn partial_dummy(&self) -> bool {
+        self.span.partial_dummy()
+            || self.location.partial_dummy()
+            || self.span.is_empty()
+            || self.location.is_empty()
+    }
+}
+
+pub struct Positioned<X>(X, Position);
+impl<X> Positioned<X> {
+    pub fn new(item: X, position: Position) -> Self {
+        Positioned(item, position)
+    }
+    pub fn parts(self) -> (X, Position) {
+        (self.0, self.1)
+    }
+
+    pub fn from_pairs(item: X, [(pos0, start), (pos1, end)]: [(BytePos, Coord); 2]) -> Self {
+        Positioned(
+            item,
+            Position {
+                span: Span(pos0, pos1),
+                location: Location { start, end },
+            },
+        )
+    }
+
+    pub fn position(&self) -> Position {
+        self.1
+    }
+    pub fn take_item(self) -> X {
+        self.0
+    }
+    pub fn item(&self) -> &X {
+        &self.0
+    }
+    pub fn item_mut(&mut self) -> &mut X {
+        &mut self.0
+    }
+    pub fn replace_item(&mut self, new_item: X) -> X {
+        std::mem::replace(&mut self.0, new_item)
+    }
+    pub fn span(&self) -> Span {
+        self.1.span
+    }
+    pub fn location(&self) -> Location {
+        self.1.location
+    }
+    pub fn byte_start(&self) -> BytePos {
+        self.1.span.0
+    }
+    pub fn byte_end(&self) -> BytePos {
+        self.1.span.1
+    }
+    pub fn byte_diff(&self) -> usize {
+        self.1.byte_diff()
+    }
+    pub fn row_diff(&self) -> usize {
+        self.1.row_diff()
+    }
+    pub fn col_diff(&self) -> usize {
+        self.1.col_diff()
+    }
+    pub fn byte_range(&self) -> std::ops::Range<BytePos> {
+        self.span().byte_range()
+    }
+    pub fn row_range(&self) -> std::ops::Range<Row> {
+        self.location().row_range()
+    }
+    pub fn col_range(&self) -> std::ops::Range<Col> {
+        self.location().col_range()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.1.is_empty()
+    }
+    /// Note: this takes the union of the *positions* and doesn't touch the
+    /// inner item contained.
+    pub fn union(&self, other: &Positioned<X>) -> Position {
+        self.1.union(&other.1)
+    }
+}
+
+impl<X, E> Positioned<Result<X, E>> {
+    pub fn as_result(self) -> Result<Positioned<X>, E> {
+        self.0.map(|x| Positioned(x, self.1))
+    }
+    pub fn ok(self) -> Result<Positioned<X>, Positioned<E>> {
+        self.0
+            .map(|x| Positioned(x, self.1))
+            .map_err(|e| Positioned(e, self.1))
+    }
+    pub fn ok_or<A>(self, mut f: impl FnMut(E, Position) -> A) -> Result<Positioned<X>, A> {
+        self.0
+            .map(|x| Positioned(x, self.1))
+            .map_err(|e| f(e, self.1))
+    }
+    pub fn flat_map<Y>(self, mut f: impl FnMut(X) -> Result<Y, E>) -> Result<Positioned<Y>, E> {
+        self.0.and_then(|x| f(x).map(|y| Positioned(y, self.1)))
+    }
+    pub fn map_err<A>(self, mut f: impl FnMut(E) -> A) -> Result<Positioned<X>, A> {
+        self.0.map(|x| Positioned(x, self.1)).map_err(|e| f(e))
+    }
+    pub fn is_ok(&self) -> bool {
+        self.0.is_ok()
+    }
+    pub fn is_err(&self) -> bool {
+        self.0.is_err()
+    }
+    pub fn contains_item(&self, item: &X) -> bool
+    where
+        X: PartialEq,
+    {
+        matches!(self.0.as_ref(), Ok(x) if x == item)
+    }
+}
+impl<T> Positioned<Vec<T>> {
+    pub fn veclen(&self) -> usize {
+        self.0.len()
+    }
+    pub fn as_slice(&self) -> &[T] {
+        self.0.as_slice()
+    }
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
+        self.0.as_mut_slice()
+    }
+    pub fn items_iter(&self) -> std::slice::Iter<'_, T> {
+        self.0.iter()
+    }
+
+    pub fn items_iter_mut(&mut self) -> std::slice::IterMut<'_, T> {
+        self.0.iter_mut()
+    }
+
+    pub fn push(&mut self, positioned: Positioned<T>) {
+        let (item, loc) = positioned.parts();
+        self.1 = self.1.union(&loc);
+        self.0.push(item);
+    }
+
+    pub fn extend(&mut self, iter: impl IntoIterator<Item = Positioned<T>>) {
+        iter.into_iter().for_each(|Positioned(item, loc)| {
+            self.0.push(item);
+            self.1 = self.1.union(&loc);
+        })
+    }
+
+    pub fn reverse(&mut self) {
+        self.0.reverse()
     }
 }
 
