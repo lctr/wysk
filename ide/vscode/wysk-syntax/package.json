@@ -1,0 +1,30 @@
+{
+  "name": "wysk-syntax",
+  "displayName": "Wysk Syntax",
+  "description": "Syntax highlighting for the Wysk lang",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.46.0"
+  },
+  "categories": [ "Programming Languages" ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "wysk",
+        "aliases": [ "Wysk", "wysk" ],
+        "extensions": [ ".wy" ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "wysk",
+        "scopeName": "source.wysk",
+        "path": "./syntaxes/wysk.tmLanguage.json"
+      }
+    ]
+  },
+  "devDependencies": {
+    "js-yaml": "^4.1.0"
+  }
+}
