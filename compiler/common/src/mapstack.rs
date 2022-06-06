@@ -3,14 +3,16 @@ use std::hash::Hash;
 
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub enum Scoped<K> {
-    /// Used to delineate the boundary of a collection of scopes. When a new
-    /// scope is created, and a stack of scoped items is being recorded, this
-    /// variant is included before the addition of other scoped items. This
-    /// ensures clear boundaries between clusters of scopes.
+    /// Used to delineate the boundaries of a collection of scoped items. When a
+    /// new scope is created, and a stack of scoped items is being recorded,
+    /// this variant is included before the addition of other scoped items. This
+    /// ensures clear boundaries between clusters of scopes. Note that it is
+    /// more efficient to wrap *keys* to a hashmap, or indices into a vector as
+    /// scoped items.
     ///
-    /// The sequence `Init, Local(k1), Local(k2), Local(k3)` indicates
-    /// that a scope was entered, and three keys -- `k1`, `k2`, `k3` --
-    /// originate from said scope.
+    /// The sequence `Init, Local(k1), Local(k2), Local(k3)` indicates that a
+    /// scope was entered, and three keys -- `k1`, `k2`, `k3` -- originate from
+    /// said scope.
     Init,
     /// A "locally scoped" entity.
     Local(K),
@@ -209,12 +211,11 @@ where
     ///
     /// ```rust,no-test
     /// [
-    ///     // START OF FIRST SCOPE
+    ///     // START OF FIRST SCOPE     => last one to go out of scope
     ///     Scoped::Init,
     ///     Scoped::Local(k1),
-    ///     // END OF FIRST SCOPE
     ///     // START OF SECOND SCOPE
-    ///     Scoped::Init,
+    ///     Scoped::Init,               => first one to go out of scope
     ///     Scoped::Local(k2),
     ///     Scoped::Local(k3)
     /// ]
@@ -236,6 +237,7 @@ where
     /// Returns an iterator over key-value pairs held by the inner `store`
     /// containing immutable references to keys and their corresponding stacks
     /// of values.
+    #[inline]
     pub fn iter(&self) -> impl Iterator<Item = (&K, &Vec<V>)> {
         self.store.iter()
     }
@@ -243,6 +245,7 @@ where
     /// Returns an iterator ove key-value pairs held by the inner `store`
     /// containing immutable references to the key with *mutable* references to
     /// each key's corresponding stack of values.
+    #[inline]
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (&K, &mut Vec<V>)> {
         self.store.iter_mut()
     }
@@ -250,6 +253,7 @@ where
     /// Returns a reference to a given key's *most recently stored* value. In
     /// other words, this returns a reference to the top of the stack of values
     /// for a given key. If no values were stored, `None` is returned.
+    #[inline]
     pub fn get(&self, k: &K) -> Option<&V> {
         self.store.get(k).and_then(|vs| vs.last())
     }
@@ -276,12 +280,20 @@ where
     where
         K: Copy,
     {
-        let vals = self.store.entry(k).or_insert({
-            self.scopes.push(Scoped::Local(k));
-            vec![]
-        });
+        let vals = self.bump(k);
         vals.push(v);
         vals.len()
+    }
+
+    #[inline]
+    fn bump(&mut self, k: K) -> &mut Vec<V>
+    where
+        K: Copy,
+    {
+        self.store.entry(k).or_insert_with_key(|k| {
+            self.scopes.push(Scoped::Local(*k));
+            vec![]
+        })
     }
 
     /// Equivalent to the `insert` method but for keys that only implement
