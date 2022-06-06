@@ -1,12 +1,11 @@
-use wy_common::{deque, newtypes::Newtype, Map, Mappable};
-use wy_intern::symbol::{self, Symbol};
+use wy_common::{Map, Mappable};
 
 pub use wy_lexer::{
     comment::{self, Comment},
     Literal,
 };
 
-use crate::{expr::*, fixity::*, ident::*, pattern::*, stmt::*, tipo::*};
+use crate::{attr::*, fixity::*, ident::*, stmt::*, tipo::*};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FixityDecl<Id = Ident> {
@@ -96,6 +95,83 @@ impl<Id: Copy + Eq + std::hash::Hash> From<&[FixityDecl<Id>]> for FixityTable<Id
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Constructor<Id, T> {
+    pub parent: Id,
+    pub name: Id,
+    pub tag: Tag,
+    pub arity: Arity,
+    pub tipo: Type<Id, T>,
+}
+
+wy_common::struct_getters! {
+    |Id, T| Constructor<Id, T>
+    | parent => get_parent :: Id
+    | name => get_name :: Id
+    | tag => get_tag :: Tag
+    | arity => get_arity :: Arity
+    | tipo => get_tipo :: Type<Id, T>
+}
+
+impl<Id, T> Constructor<Id, T> {
+    pub fn ty_vars(&self) -> impl Iterator<Item = Var<T>>
+    where
+        T: Eq + Copy,
+    {
+        self.tipo.enumerate()
+    }
+
+    pub fn var_map(&self) -> Map<T, Tv>
+    where
+        T: Eq + Copy + std::hash::Hash,
+    {
+        self.ty_vars().map(Var::as_pair).collect()
+    }
+
+    pub fn map_id<X>(self, mut f: impl FnMut(Id) -> X) -> Constructor<X, T> {
+        Constructor {
+            parent: f(self.parent),
+            name: f(self.name),
+            tag: self.tag,
+            arity: self.arity,
+            tipo: self.tipo.map_id(&mut f),
+        }
+    }
+    pub fn map_id_ref<X>(&self, mut f: impl FnMut(&Id) -> X) -> Constructor<X, T>
+    where
+        T: Copy,
+    {
+        Constructor {
+            parent: f(&self.parent),
+            name: f(&self.name),
+            tag: self.tag,
+            arity: self.arity,
+            tipo: self.tipo.map_id_ref(&mut f),
+        }
+    }
+    pub fn map_t<X>(self, mut f: impl FnMut(T) -> X) -> Constructor<Id, X> {
+        Constructor {
+            parent: self.parent,
+            name: self.name,
+            tag: self.tag,
+            arity: self.arity,
+            tipo: self.tipo.map_t(&mut f),
+        }
+    }
+    pub fn map_t_ref<X>(&self, f: &mut impl FnMut(&T) -> X) -> Constructor<Id, X>
+    where
+        Id: Copy,
+    {
+        Constructor {
+            parent: self.parent,
+            name: self.name,
+            tag: self.tag,
+            arity: self.arity,
+            tipo: self.tipo.map_t_ref(f),
+        }
+    }
+}
+
 ///
 /// ```wysk
 /// ~~        `name` `poly`
@@ -129,7 +205,32 @@ wy_common::struct_field_iters! {
     | with => derives_iter :: Id
 }
 
+pub const TAG_MIN: u32 = 1;
+
 impl<Id, T> DataDecl<Id, T> {
+    pub fn constructor_types(&self) -> Vec<Constructor<Id, T>>
+    where
+        Id: Copy,
+        T: Copy,
+    {
+        let data_ty = Type::Con(
+            Con::Data(self.name),
+            self.poly_iter().map(|t| Type::Var(*t)).collect(),
+        );
+        self.variants_iter()
+            .map(|variant| {
+                let tipo = variant.fun_ty(data_ty.clone());
+                Constructor {
+                    parent: self.name,
+                    name: variant.name,
+                    tag: variant.tag,
+                    arity: variant.arity,
+                    tipo,
+                }
+            })
+            .collect()
+    }
+
     /// Checks whether every data constructor is polymorphic over at *most* the
     /// type variables in the `poly` field, i.e.,  every type variable in every
     /// variant in the `vnts` field, as well as every type variable in the
@@ -186,7 +287,7 @@ impl<Id, T> DataDecl<Id, T> {
         if self.vnts.len() <= idx {
             None
         } else {
-            Some(&self.vnts[idx])
+            Some(&self.vnts[idx - (TAG_MIN as usize)])
         }
     }
 
@@ -211,10 +312,8 @@ impl<Id, T> DataDecl<Id, T> {
     }
 
     pub fn enumer_tags(mut self) -> Self {
-        let mut i = 0;
-        for Variant { tag, .. } in self.vnts.iter_mut() {
-            *tag = Tag(i);
-            i += 1;
+        for (n, Variant { tag, .. }) in self.vnts.iter_mut().enumerate() {
+            *tag = Tag(n as u32 + TAG_MIN);
         }
         self
     }
@@ -553,12 +652,23 @@ impl Arity {
         let n = self.0;
         n.cmp(&iter.len())
     }
+
+    pub fn increment(&mut self) {
+        self.0 += 1;
+    }
+
+    pub fn decrement(&mut self) {
+        if !self.is_zero() {
+            self.0 -= 1
+        }
+    }
 }
 
 // make it easy to compare Arity using usizes by implementing PartialEq<usize>
 // and PartialOrd<usize>
 wy_common::newtype!(Arity | usize | PartialEq);
 wy_common::newtype!(Arity | usize | PartialOrd);
+wy_common::newtype!(Arity | usize | (+= usize |rhs| rhs) );
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AliasDecl<Id = Ident, T = Ident> {
@@ -689,8 +799,13 @@ pub enum NewtypeArg<Id = Ident, T = Ident> {
     Record(Id, Signature<Id, T>),
 }
 
+wy_common::variant_preds! {
+    NewtypeArg
+    | is_stacked => Stacked(_)
+    | is_record => Record(..)
+}
+
 impl<Id, T> NewtypeArg<Id, T> {
-    pub fn get_ty(&self) {}
     pub fn map_id<X>(self, mut f: impl FnMut(Id) -> X) -> NewtypeArg<X, T> {
         match self {
             NewtypeArg::Stacked(ts) => {
@@ -1160,6 +1275,12 @@ pub enum Method<Id = Ident, T = Ident> {
     Impl(Binding<Id, T>),
 }
 
+wy_common::variant_preds! {
+    Method
+    | is_sig => Sig(..)
+    | is_impl => Impl(_)
+}
+
 impl<Id, T> Method<Id, T> {
     #[inline]
     pub fn is_signature(&self) -> bool {
@@ -1216,4 +1337,32 @@ pub enum Declaration<Id = Ident, T = Ident> {
     Instance(InstDecl<Id, T>),
     Function(FnDecl<Id, T>),
     Newtype(NewtypeDecl<Id, T>),
+    Attribute(Attribute<Id, T>),
+}
+
+wy_common::variant_preds! {
+    Declaration
+    | is_data => Data(_)
+    | is_alias => Alias(_)
+    | is_fixity => Fixity(_)
+    | is_class => Class(_)
+    | is_instance => Instance(_)
+    | is_function => Function(_)
+    | is_newtype => Newtype(_)
+    | is_attribute => Attribute(_)
+}
+
+impl<Id, T> Declaration<Id, T> {
+    pub fn name(&self) -> &Id {
+        match self {
+            Declaration::Data(d) => &d.name,
+            Declaration::Alias(a) => &a.name,
+            Declaration::Fixity(f) => &f.infixes[0],
+            Declaration::Class(c) => &c.name,
+            Declaration::Instance(i) => &i.name,
+            Declaration::Function(f) => &f.name,
+            Declaration::Newtype(n) => &n.name,
+            Declaration::Attribute(a) => a.name(),
+        }
+    }
 }
