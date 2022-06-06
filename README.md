@@ -45,7 +45,7 @@ The following may not necessarily be directly involved within the development of
 * [[1992] Simon Peyton Jones. *Implementing lazy functional languages on stock
   hardware: the Spineless Tagless
   G-machine*](https://www.microsoft.com/en-us/research/wp-content/uploads/1992/04/spineless-tagless-gmachine.pdf)
-* [[1997] Simon Peyton Jones, Mark Hones, Erik Meijer. *Type classes: an exploration of the design space*](https://www.microsoft.com/en-us/research/wp-content/uploads/1997/01/multi.pdf)
+* [[1997] Simon Peyton Jones, Jones & Meijer. *Type classes: an exploration of the design space*](https://www.microsoft.com/en-us/research/wp-content/uploads/1997/01/multi.pdf)
 * [[1999] Simon Peyton Jones, Simon Marlow. *Secrets of the Glasgow Haskell
   Compiler inliner*](https://www.microsoft.com/en-us/research/wp-content/uploads/2002/07/inline.pdf)
 * [[2005] Daan Leijen. *Extensible records with scoped labels*](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/scopedlabels.pdf)
@@ -54,5 +54,5 @@ The following may not necessarily be directly involved within the development of
 * [[2013] Susan B. Horwitz. *UW CS704 notes*](https://pages.cs.wisc.edu/~horwitz/CS704-NOTES/)
 * [[2013] Dunfield and Krishnaswami. *Complete and easy bidirectional typechecking for higher-rank polymorphism*](https://research.cs.queensu.ca/home/jana/papers/bidir/)
 * [[2015] Stephen Diehl. *Write you a Haskell*](http://dev.stephendiehl.com/fun/WYAH.pdf)
-* [[2020] Serrano, Have, Jones, Vytiniotis. *A Quick Look at Impredicativity*](https://www.microsoft.com/en-us/research/uploads/prod/2020/01/quick-look.pdf)
+* [[2020] Serrano, Have, Jones & Vytiniotis. *A Quick Look at Impredicativity*](https://www.microsoft.com/en-us/research/uploads/prod/2020/01/quick-look.pdf)
 * [[2022] Gonglin Li. *An Affine Type System with Hindley-Milner Style Type Inference*](https://arxiv.org/pdf/2203.17125v1.pdf)
