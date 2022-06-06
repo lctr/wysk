@@ -1,14 +1,18 @@
-pub fn lower_latin_alphabet() -> [char; 26] {
-    [
-        'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r',
-        's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
-    ]
-}
+pub const LOWER_LATIN: [char; 26] = [
+    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's',
+    't', 'u', 'v', 'w', 'x', 'y', 'z',
+];
+
+// pub const UPPER_LATIN: [char; 26] = [
+//     'A', 'B', 'C', 'D', 'E', 'F', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'
+// ];
+
+// pub const LOWER_CONS: [char; 6] = ['f', 'm', 't', 's', 'p', 'w'];
 
 /// Generate a textual representation of a variable not bound to a specific name.
 /// This is useful when generating type variables whose actual *names* only matter when displayed to the user.
 pub fn display_var(n: u32) -> String {
-    let azs = lower_latin_alphabet();
+    let azs = LOWER_LATIN;
     let mut buf = String::new();
     let mut tmp = n as usize;
     let lim = azs.len();
@@ -25,6 +29,23 @@ pub fn display_var(n: u32) -> String {
     }
 }
 
+/// Similar to `display_var`, but writes to a given string buffer instead of
+/// allocating a new string.
+pub fn write_display_var(n: u32, buf: &mut String) {
+    let mut tmp = n as usize;
+    let mut ct = 0;
+    loop {
+        if tmp < 26 {
+            buf.push(LOWER_LATIN[tmp]);
+            break;
+        } else {
+            buf.push(LOWER_LATIN[ct % 26]);
+            ct += 1;
+            tmp -= 26;
+        }
+    }
+}
+
 /// Enums corresponding to a literal, but that *don't* hold any data values,
 /// instead dynamically converting between literal and enum. Literal values are
 /// automatically recorded in doc comments for each enum variant.
@@ -33,7 +54,10 @@ macro_rules! strenum {
     (
         $name:ident
         $(@short: $prefix:ident)?
+        $(@test_str: $test_str:ident)?
+        $(@any_case: $any_case:ident)?
         $(@label: $label:ident)?
+        // $(::)?
         $(
            $(:)? $kind:ident $lit:literal $(| $alt:literal)* $(=> $lower:ident)?
         )+
@@ -57,7 +81,7 @@ macro_rules! strenum {
             pub const KINDS: [Self; $crate::strenum!(# $($kind)+)]
                 = [$($name::$kind,)+];
 
-            fn from_str(s: &str) -> Option<Self> {
+            pub fn from_str(s: &str) -> Option<Self> {
                 match s {
                     $($lit $(| $alt)* => { Some($name::$kind) })+
                     _ => None
@@ -84,10 +108,25 @@ macro_rules! strenum {
 
             pub fn is_kind(word: &str) -> bool {
                 match word {
-                    $($lit $(| $alt)* => {true})+
+                    $($lit $(| $alt)* => { true })+
                     _ => false
                 }
             }
+
+            $(
+                pub fn $test_str(word: &str) -> bool {
+                    Self::is_kind(word)
+                }
+            )?
+
+
+            pub fn eq_ignore_ascii_case(word: &str) -> bool {
+                Self::is_kind(word) $(
+                    || word.eq_ignore_ascii_case($lit)
+                    $(|| word.eq_ignore_ascii_case($alt))*
+                )+
+            }
+
 
             pub fn alt_strs(&self) -> &[&'static str] {
                 match self {
@@ -114,74 +153,6 @@ macro_rules! strenum {
                 $name::from_str(s).ok_or(())
             }
         }
-
-        $(
-            #[allow(unused)]
-            pub struct $kind<T = ()>(T);
-
-            impl<T> $kind<T> {
-                pub const fn parent() -> $name { $name::$kind }
-
-                pub const fn text() -> [&'static str; $crate::strenum!(# $lit $($alt)*)] {
-                    [ $lit, $($alt ,)* ]
-                }
-
-                pub fn new(t: T) -> $kind<T> {
-                    $kind(t)
-                }
-
-                pub fn map<F, U>(self, mut f: F) -> $kind<U>
-                where F: FnMut(T) -> U {
-                    $kind(f(self.0))
-                }
-
-                pub fn get(&self) -> &T { &self.0 }
-
-                pub fn take(self) -> T { self.0 }
-
-                pub fn replace(&mut self, t: T) -> T {
-                    std::mem::replace(&mut self.0, t)
-                }
-            }
-
-            impl PartialEq<$name> for $kind {
-                fn eq(&self, other: &$name) -> bool {
-                    matches!(other, $name::$kind)
-                }
-            }
-
-            impl PartialEq<$kind> for $name {
-                fn eq(&self, _: &$kind) -> bool {
-                    matches!(self, $name::$kind)
-                }
-            }
-
-            impl<T> From<$kind<T>> for ($name, T) {
-                fn from(k: $kind<T>) -> ($name, T) {
-                    ($name::$kind, k.0)
-                }
-            }
-
-            impl<T> AsRef<str> for $kind<T> {
-                fn as_ref(&self) -> &str {
-                    $name::$kind.as_str()
-                }
-            }
-
-            impl std::str::FromStr for $kind<()> {
-                type Err = ();
-                fn from_str(s: &str) -> Result<$kind<()>, Self::Err> {
-                   match $name::from_str(s) {
-                       Some($name::$kind) => { Ok($kind(())) }
-                       _ => Err(())
-                   }
-                }
-            }
-
-            $crate::generic! { $name, T, T
-                | Copy Clone Debug Display PartialEq Eq Hash Default }
-        )+
-
     };
     (
         $opk:ident :: $(
@@ -213,6 +184,12 @@ macro_rules! strenum {
                     $($opk::$name => {$lit})+
                 }
             }
+            pub fn from_char(c: char) -> Option<Self> {
+                $(if matches!($lit.chars().next(), Some(ch) if ch == c) {
+                    return Some($opk::$name);
+                })+
+                None
+            }
         }
 
         impl AsRef<str> for $opk {
@@ -241,7 +218,7 @@ macro_rules! strenum {
         $opk:ident
         $is_kind:tt :: $(
             $name:ident
-            $lit:literal
+            $lit:literal $(| $alt:literal)*
         )+) => {
         $crate::strenum! {
             $opk :: $(
@@ -296,6 +273,22 @@ macro_rules! strenum {
                     })+
                 }
             }
+            pub fn eq_ignore_ascii_case(word: &str) -> bool {
+                Self::$is_kind(word) $(
+                    || word.eq_ignore_ascii_case($lit)
+                    $(|| word.eq_ignore_ascii_case($alt))*
+                )+
+            }
+
+
+            pub fn alt_strs(&self) -> &[&'static str] {
+                match self {
+                    $($opk::$name => {
+                        &[$($alt,)*]
+                    })+
+                    // _ => &[]
+                }
+            }
         }
     };
 }
@@ -311,9 +304,9 @@ mod test {
             Bye "bye" | "goodbye" | "later" => bye
         }
 
-        let x = 5;
-        let alts = Greeting::Hello.alt_strs();
-        let g = Greeting::Hello;
-        let x = Greeting::hello("hi");
+        let _x = 5;
+        let _alts = Greeting::Hello.alt_strs();
+        let _g = Greeting::Hello;
+        let _x = Greeting::hello("hi");
     }
 }
