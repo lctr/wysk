@@ -1,5 +1,5 @@
 #![cfg(test)]
-use wy_intern::{Symbol, Symbolic};
+use wy_intern::{symbol, Symbol, Symbolic};
 use wy_lexer::Literal;
 use wy_syntax::expr::Expression;
 
@@ -191,7 +191,7 @@ fn test_lambda_expr() {
         )
     });
     assert_eq!(expr, expected);
-    println!("{:?}", expr);
+    println!("{:?}", &expr);
 }
 
 #[test]
@@ -231,16 +231,16 @@ fn test_arrow_ty_assoc() {
     let expected = with_vars! { |a b c d| {
         Type::Fun(
             Box::new(
-                Type::Var(Ident::Fresh(a))
+                Type::Var(Ident::Lower(a))
             ),
             Box::new(
                 Type::Fun(
-                    Box::new(Type::Var(Ident::Fresh(b))),
+                    Box::new(Type::Var(Ident::Lower(b))),
                     Box::new(Type::Fun(
                         Box::new(
-                            Type::Var(Ident::Fresh(c))
+                            Type::Var(Ident::Lower(c))
                         ), Box::new(
-                            Type::Var(Ident::Fresh(d))
+                            Type::Var(Ident::Lower(d))
                         )
                     ))
                 )
@@ -310,13 +310,13 @@ fn parse_prim_module() {
     let src = include_str!("../../../language/prim.wy");
     let result = Parser::from_str(src).parse();
     // let dcons = result.as_ref().map(|prog| prog.module.data_ctors());
-    println!("{:#?}", result);
-    let mut parser = Parser::from_str(src);
-    for _ in 0..10 {
-        println!("{:?}", parser.get_loc());
-        println!("{:?}", parser.peek());
-        println!("{:?}", parser.get_loc());
-        println!("{:?}", parser.bump());
+    match result {
+        Ok(program) => {
+            println!("{:?}", program.module)
+        }
+        Err(err) => {
+            println!("{}", err)
+        }
     }
 }
 
@@ -336,25 +336,25 @@ fn test_ty_sigs() {
     let src = r#"forall a b. m a -> (a -> m b) -> m b"#;
     let sig = Parser::from_str(src).total_signature().unwrap();
     let expected = with_vars!(|a b m| { Signature {
-        each: vec![Ident::Fresh(a), Ident::Fresh(b)],
+        each: vec![Ident::Lower(a), Ident::Lower(b)],
         ctxt: vec![],
         tipo: Type::Fun(
             Box::new(
+                Type::Con(Con::Free(Ident::Lower(m)), vec![Type::Var(Ident::Lower(a))])
+            ),
+            Box::new(
                 Type::Fun(
                     Box::new(
-                        Type::Con(Con::Free(Ident::Lower(m)), vec![Type::Var(Ident::Fresh(a))])
+                        Type::Fun(
+                            Box::new(Type::Var(Ident::Lower(a))),
+                            Box::new(Type::Con(Con::Free(Ident::Lower(m)),
+                                vec![Type::Var(Ident::Lower(b))])))
                     ),
                     Box::new(
-                        Type::Fun(
-                            Box::new(Type::Var(Ident::Fresh(a))),
-                            Box::new(Type::Con(Con::Free(Ident::Lower(m)),
-                                vec![Type::Var(Ident::Fresh(b))])))
+                        Type::Con(Con::Free(Ident::Lower(m)), vec![Type::Var(Ident::Lower(b))])
                     )
                 )
             ),
-            Box::new(
-                Type::Con(Con::Free(Ident::Lower(m)), vec![Type::Var(Ident::Fresh(b))])
-            )
         )
     }});
     println!("{:#?}\n{}", &sig, &sig.tipo);
@@ -368,17 +368,17 @@ fn test_newtype_decl() {
     let expected = with_vars! { |Parser a parse String| {
         NewtypeDecl {
             name: Ident::Upper(Parser),
-            poly: vec![Ident::Fresh(a)],
+            poly: vec![Ident::Lower(a)],
             ctor: Ident::Upper(Parser),
             narg: NewtypeArg::Record(Ident::Lower(parse), Signature {
                 each: vec![],
                 ctxt: vec![],
-                tipo: Type::Fun(
-                    Box::new(Type::Con(Con::Data(Ident::Upper(String)), vec![])),
-                    Box::new(Type::Tup(vec![
-                        Type::Var(Ident::Fresh(a)),
+                tipo: Type::mk_fun(
+                    Type::Con(Con::Data(Ident::Upper(String)), vec![]),
+                    Type::Tup(vec![
+                        Type::Var(Ident::Lower(a)),
                         Type::Con(Con::Data(Ident::Upper(String)), vec![])
-                    ]))
+                    ])
                 )
             }),
             with: vec![]
@@ -389,14 +389,13 @@ fn test_newtype_decl() {
 
 #[test]
 fn test_caf() {
-    let src = "fn womp :: a => 3";
     let tests = [
-        "fn womp :: a = 3",
-        "fn womp :: a | = 3",
-        "fn womp :: a => 3",
+        "fn womp :: |Num a| a = 3",
+        "fn womp :: |Num a| a | = 3",
+        "fn womp :: |Num a| a => 3",
     ]
     .into_iter()
-    .map(|s| Parser::from_str(src).function_decl().unwrap())
+    .map(|s| Parser::from_str(s).function_decl().unwrap())
     .collect::<Vec<_>>();
     assert_eq!(tests[0], tests[1]);
     assert_eq!(tests[1], tests[2]);
@@ -404,7 +403,74 @@ fn test_caf() {
 
 #[test]
 fn test_record_expr() {
-    let src = "fn set 
-    | A { b, c } = a { b = 2, c = 3 }";
+    let src = "
+fn some_record_function 
+    | a @ A { b, c } = a { 
+        b = b + 2,
+        c = c a 3 
+    }
+    | a @ A { b = (1 | 2), c } = a { 
+        b, 
+        c = c a 3 
+    }
+";
     println!("{:?}", Parser::from_str(src).function_decl())
+}
+
+#[test]
+fn test_do_expr() {
+    let src = "do { (a, b) <- get'pair; x <- [1..m]; print (a, b) }";
+    println!("{:?}", Parser::from_str(src).do_expr())
+}
+
+#[test]
+fn test_section_expr() {
+    use Expression as E;
+    use Literal::*;
+    use Section::*;
+    let src = "map (+5) [1, 2, 3]";
+    let [map, plus] = symbol::intern_many(["map", "+"]);
+    let map = Ident::Lower(map);
+    let plus = Ident::Infix(plus);
+    let expected: Expression = E::App(
+        Box::new(E::App(
+            Box::new(E::Ident(map)),
+            Box::new(E::Section(Prefix {
+                prefix: plus,
+                right: Box::new(E::Lit(Int(5))),
+            })),
+        )),
+        Box::new(E::Array(vec![
+            E::Lit(Int(1)),
+            E::Lit(Int(2)),
+            E::Lit(Int(3)),
+        ])),
+    );
+    assert_eq!(Parser::from_str(src).expression(), Ok(expected))
+}
+
+#[test]
+fn test_list_comprehension() {
+    let src = "[ f x | x <- [0..n] ]";
+    let mut parser = Parser::from_str(src);
+    let expr = parser.expression();
+    println!("{:?}", &expr);
+    println!("{:?}", &parser);
+}
+
+#[test]
+fn test_data_ctor() {
+    let mut it = Parser::from_str("a [a]");
+    println!("{:?}", it.ty_atom());
+    println!("{:?}", it.ty_atom());
+    let mut it = Parser::from_str("a [a -> a]");
+    println!("{:?}", it.ty_atom());
+    println!("{:?}", it.ty_atom());
+    let src = "data NonEmpty a = NonEmpty a [a]";
+    let mut parser = Parser::from_str(src);
+    let expr = parser.data_decl();
+    match expr {
+        Ok(decl) => println!("{:?}", decl),
+        Err(e) => println!("{}", e),
+    }
 }
