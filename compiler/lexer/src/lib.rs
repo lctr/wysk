@@ -1,28 +1,40 @@
+use meta::{Placement, Pragma, Attr, Digit, Associativity};
+use stream::Mode;
 use wy_intern as intern;
 use wy_span as span;
 
 use intern::symbol;
 
-use span::{Span, Spanned, WithSpan};
-use token::Base;
-pub use token::{LexError, Keyword, Lexeme, Literal, Token};
+use comment::{Comment, CommentId, LineKind};
+use literal::Base;
+
+use span::{BytePos, Span, Spanned, WithSpan};
+
+pub use literal::Literal;
 pub use stream::{Lexer, Source};
+pub use token::{Keyword, LexError, Lexeme, Token};
 
-use comment::{LineKind, Comment, CommentId};
 
-pub mod token;
 pub mod comment;
+pub mod literal;
+pub mod meta;
 pub mod stream;
+pub mod token;
+pub mod identifier;
 
+#[inline]
+fn lex_eof(lexer: &mut Lexer) -> Token {
+    lexer.source.spanned(|_| Lexeme::Eof).into()
+}
+
+impl From<Spanned<Lexeme>> for Token {
+    fn from(Spanned(lexeme, span): Spanned<Lexeme>) -> Self {
+        Token { lexeme, span }
+    }
+}
 
 impl<'t> Lexer<'t> {
     pub fn token(&mut self) -> Token {
-        #[inline]
-        fn lex_eof(this: &mut Lexer) -> Token {
-            let Spanned(lexeme, span) = this.source.spanned(|_| Lexeme::Eof);
-            Token { lexeme, span }
-        }
-
         if let Some(t) = self.stack.pop() {
             t
         } else {
@@ -35,97 +47,92 @@ impl<'t> Lexer<'t> {
         }
     }
 
-    fn tokenize(&mut self, c: char) -> Token {
-        let lex = |this: &mut Self, lexeme| {
-            let Spanned(lexeme, span) = this.source.spanned(|s| {
+    fn lexed_with(&mut self, lexeme: Lexeme) -> Token {
+        self.source
+            .spanned(|s| {
                 s.next();
                 lexeme
-            });
-            Token { lexeme, span }
-        };
+            })
+            .into()
+    }
+
+    fn tokenize(&mut self, c: char) -> Token {
         match c {
             '~' => self.tilde(),
-            ';' => lex(self, Lexeme::Semi),
+            ';' => self.lexed_with(Lexeme::Semi),
             '\'' => self.character(),
             '"' => self.string(),
             '`' => self.backtick(),
             c if c.is_digit(10) => self.number(c),
             c if is_ident_start(c) => self.identifier(c),
-            '(' => lex(self, Lexeme::ParenL),
-            ')' => lex(self, Lexeme::ParenR),
-            '[' => lex(self, Lexeme::BrackL),
-            ']' => lex(self, Lexeme::BrackR),
-            '{' => lex(self, Lexeme::CurlyL),
-            '}' => lex(self, Lexeme::CurlyR),
-            ',' => lex(self, Lexeme::Comma),
+            '(' => self.lexed_with(Lexeme::ParenL),
+            ')' => self.lexed_with(Lexeme::ParenR),
+            '[' => self.lexed_with(Lexeme::BrackL),
+            ']' => self.lexed_with(Lexeme::BrackR),
+            '{' => self.lexed_with(Lexeme::CurlyL),
+            '}' => self.lexed_with(Lexeme::CurlyR),
+            ',' => self.lexed_with(Lexeme::Comma),
             c if is_infix_char(c) => self.infix(),
             _ => self.unknown(),
         }
     }
 
     fn character(&mut self) -> Token {
+        use Lexeme::Lit;
+        use Literal::Char;
         let start = self.source.get_pos();
         self.source.next();
         match self.source.peek().copied() {
             Some(c) if c != '\\' => {
                 self.source.next();
-                if self.source.on_char('\'') {
+                let lexeme = if self.source.on_char('\'') {
                     self.source.next();
-                    Token {
-                        lexeme: Lexeme::Lit(Literal::Char(c)),
-                        span: Span(start, self.source.get_pos()),
-                    }
+                    Lit(Char(c))
                 } else {
-                    // TODO: report on unterminated character
-                    eprintln!("Character lexeme not terminated at {}! Expected `'`, but found `{}` while reading `'{}`", 
-                    start, 
-                    self.source.peek().unwrap_or_else(|| &'\0'),
-                    c
-                );
-                todo!()
+                    Lexeme::Unknown(LexError::UnterminatedChar)
+                };
+                Token {
+                    lexeme,
+                    span: self.source.span_from(start),
                 }
             }
             Some(c) if c == '\\' => {
                 self.source.next();
-                let _pos2 = self.source.get_pos();
-                if matches!(self.source.peek(), Some(c) if is_escapable(*c)) {
+                let lexeme = if matches!(self.source.peek(), Some(c) if is_escapable(*c)) {
                     self.source.next();
-                    let _pos3 = self.source.get_pos();
                     if self.source.on_char('\'') {
                         self.source.next();
-                        Token {
-                            lexeme: Lexeme::Lit(Literal::Char(get_escaped(c))),
-                            span: Span(start, self.source.get_pos()),
-                        }
+                        Lit(Char(get_escaped(c)))
                     } else {
-                        // TODO: report on unterminated character
-                        eprintln!("Character lexeme not terminated at {}! Expected `'`, but found `{}` ", 
-                            _pos3, 
-                            self.source.peek().unwrap_or_else(|| &'\0')
-                        );
-                        todo!()
+                        Lexeme::Unknown(LexError::UnterminatedChar)
                     }
                 } else {
-                    // TODO: report on invalid escape!
-                    eprintln!("Invalid escape found at {}! `\\{}` is not a valid escape!", _pos2, c);
-                    todo!()
+                    Lexeme::Unknown(LexError::InvalidEscape)
+                };
+                Token {
+                    lexeme,
+                    span: self.span_from(start),
                 }
             }
-            // unreachable??
+            // unreachable?? since every char is either equal to a given
+            // character or not (in this case, the escape, but regardless, c !=
+            // d => !(c == d), and !(c == d) => c != d, so the only case left is
+            // no character... hence this is unreachable)
             Some(_invalid) => {
-                self.source.next();
-                // TODO: report on invalid character
-                todo!()
+                unreachable!()
             }
             None => {
                 // TODO: report on unexpected EOF (or non-terminated character?)
-                todo!()
+                Token {
+                    lexeme: Lexeme::Unknown(LexError::UnterminatedChar),
+                    span: self.source.span_from(start),
+                }
             }
         }
     }
 
     fn infix(&mut self) -> Token {
-        let (span, _) = self.source.eat_while(is_infix_char);
+        let span = self.source.eat_while(is_infix_char).span();
         let lexeme = match &self.source[span] {
             "->" => Lexeme::ArrowR,
             "<-" => Lexeme::ArrowL,
@@ -136,93 +143,149 @@ impl<'t> Lexer<'t> {
             "=" => Lexeme::Equal,
             "\\" => Lexeme::Lambda,
             "@" => Lexeme::At,
-            "#" => Lexeme::Pound,
+            "#" => {
+                let hash = Lexeme::Pound;
+                let bang = self.source.spanned(|s| {
+                    if s.bump_on('!') { 
+                        Some(Lexeme::Bang) 
+                    } else {
+                        None
+                    }
+                }).transpose();
+                if self.source.on_char('[') {
+                    let placement = if let Some(b) = bang {
+                        self.stack.push(Token::from(b));
+                        Placement::After
+                    } else { Placement::Before };
+                    self.set_meta_mode(placement);
+                };
+                hash
+            },
             "." => Lexeme::Dot,
             ".." => Lexeme::Dot2,
-            // these shouldn't be possible at this point!!
+            // this shouldn't be possible at this point!!
             "~" => Lexeme::Tilde,
+            "-" => Lexeme::Infix(*symbol::reserved::MINUS),
             s => Lexeme::Infix(symbol::intern_once(s)),
         };
         Token { lexeme, span }
     }
 
+    fn hash(&mut self) -> Lexeme {
+        let hash = Lexeme::Pound;
+        let bang = self.source.spanned(|s| {
+            if s.bump_on('!') { 
+                Some(Lexeme::Bang) 
+            } else {
+                None
+            }
+        }).transpose();
+        if self.source.on_char('[') {
+            let placement = if let Some(b) = bang {
+                self.stack.push(Token::from(b));
+                Placement::After
+            } else { 
+                Placement::Before 
+            };
+            self.set_meta_mode(placement);
+        };
+        hash
+    }
+
+    fn shebang(&mut self) {
+        todo!()
+    }
+
     fn backtick(&mut self) -> Token {
+        use LexError::{EmptyInfix, InvalidInfix, UnterminatedInfix};
+        use Lexeme::{Eof, Infix, Lower, Unknown};
+        fn not_tick(c: char) -> bool {
+            c != '`'
+        }
         let start = self.source.get_pos();
         self.source.next();
         match self.source.peek().copied() {
             Some(c) if is_ident_start(c) => {
                 let start = self.get_pos();
                 match self.identifier(c) {
-                    Token { lexeme: Lexeme::Lower(sym), span } => {
+                    Token {
+                        lexeme: Lower(sym),
+                        span,
+                    } => {
                         if self.source.on_char('`') {
                             self.source.next();
-                            Token { 
-                                lexeme: Lexeme::Infix(sym), 
-                                span
+                            Token {
+                                lexeme: Infix(sym),
+                                span,
                             }
                         } else {
                             match self.source.peek() {
                                 Some(_) => {
-                                    let (sp, _) = self.source.eat_while(|c| c != '`');
-                                    Token { lexeme: Lexeme::Unknown(LexError::InvalidInfix), span: Span(start, sp.end())}
+                                    let sp = self.source.eat_while(not_tick).span();
+                                    Token {
+                                        lexeme: Unknown(InvalidInfix),
+                                        span: Span(start, sp.end()),
+                                    }
                                 }
                                 None => {
                                     let span = self.source.span_from(start);
-                                    self.stack.push(Token { 
-                                        lexeme: Lexeme::Eof,
-                                        span
-                                    });
-                                    Token { lexeme: Lexeme::Unknown(LexError::UnterminatedInfix), span }
+                                    self.stack.push(Token { lexeme: Eof, span });
+                                    Token {
+                                        lexeme: Unknown(UnterminatedInfix),
+                                        span,
+                                    }
                                 }
                             }
                         }
                     }
                     _token => {
-                        let (sp, _loc) = self.source.eat_while(|c| c != '`');
-                        let span = Span(start, sp.end());
-                        
-                        Token { lexeme: if self.source.on_char('`') {
-                            self.source.next();
-                            Lexeme::Unknown(LexError::InvalidInfix)
-                        } else { Lexeme::Eof 
-                        }, span }
+                        let (sp, _loc) = self.source.eat_while(not_tick).parts();
+                        Token {
+                            lexeme: if self.source.on_char('`') {
+                                self.source.next();
+                                Unknown(InvalidInfix)
+                            } else {
+                                Lexeme::Eof
+                            },
+                            span: Span(start, sp.end()),
+                        }
                     }
                 }
             }
             Some('`') => {
                 self.source.next();
-                Token { lexeme: Lexeme::Unknown(LexError::EmptyInfix), span: Span(start, self.source.get_pos())}
-            } 
-            Some(_) => {
-                let (sp, _loc) = self.source.eat_while(|c| c != '`');
-                let span = Span(start, sp.end());
-                
-                Token { 
-                    span,
-                    lexeme: if self.source.on_char('`') {
-                        self.source.next();
-                        Lexeme::Unknown(LexError::InvalidInfix)
-                    } else { 
-                        Lexeme::Eof 
-                    }, 
+                Token {
+                    lexeme: Unknown(EmptyInfix),
+                    span: self.span_from(start),
                 }
             }
-            None => Token { 
-                lexeme: Lexeme::Unknown(LexError::UnterminatedInfix), 
-                span: self.source.span_from(start)
+            Some(_) => {
+                let (sp, _loc) = self.source.eat_while(not_tick).parts();
+                Token {
+                    span: Span(start, sp.end()),
+                    lexeme: if self.source.on_char('`') {
+                        self.source.next();
+                        Unknown(InvalidInfix)
+                    } else {
+                        Eof
+                    },
+                }
             }
+            None => Token {
+                lexeme: Unknown(UnterminatedInfix),
+                span: self.source.span_from(start),
+            },
         }
     }
-
-    fn string(&mut self) -> Token {
-        let start = self.source.get_pos();
-        let mut buf = String::new();
-        self.source.next();
-        let mut escaped = false;
-        let mut terminated = false;
+    fn mid_string(
+        &mut self,
+        escaped: &mut bool,
+        terminated: &mut bool,
+        buf: &mut String,
+    ) -> BytePos {
         while let Some(c) = self.source.next() {
-            if escaped {
-                escaped = false;
+            if *escaped {
+                *escaped = false;
                 match c {
                     esc if is_escapable(esc) => buf.push(get_escaped(esc)),
                     // preserve indentation/ignore whitespace on new line
@@ -236,39 +299,41 @@ impl<'t> Lexer<'t> {
                     }
                 };
             } else if c == '"' {
-                terminated = true;
+                *terminated = true;
                 break;
             } else if c == '\\' {
-                escaped = true;
+                *escaped = true;
             } else {
                 buf.push(c);
             }
         }
-        let span = Span(start, self.source.get_pos());
-        if !terminated {
-            Token { 
-                lexeme: Lexeme::Unknown(LexError::UnterminatedString), 
-                span 
-            }
+        self.source.get_pos()
+    }
+
+    fn string(&mut self) -> Token {
+        let start = self.source.get_pos();
+        let mut buf = String::new();
+        self.source.next();
+        let mut escaped = false;
+        let mut terminated = false;
+        let end = self.mid_string(&mut escaped, &mut terminated, &mut buf);
+        let span = Span(start, end);
+        let lexeme = if !terminated {
+            Lexeme::Unknown(LexError::UnterminatedString)
         } else {
-            let sym = symbol::intern_once(buf.as_str());
-            Token {
-                lexeme: Lexeme::Lit(Literal::Str(sym)),
-                span,
-            }
-        }
+            Lexeme::Lit(Literal::Str(symbol::intern_once(buf.as_str())))
+        };
+        Token { lexeme, span }
     }
 
     fn identifier(&mut self, first: char) -> Token {
-        debug_assert!(
-            matches!(self.source.peek(), Some(c) if is_ident_start(*c))
-        );
+        debug_assert!(matches!(self.source.peek(), Some(c) if is_ident_start(*c)));
         let name = if first.is_uppercase() {
             Lexeme::Upper
         } else {
             Lexeme::Lower
         };
-        let (span, _) = self.source.eat_while(is_ident_char);
+        let (span, _) = self.source.eat_while(is_ident_char).parts();
         let text = &self.source[span];
         let token = |lexeme: Lexeme| Token { lexeme, span };
 
@@ -279,6 +344,116 @@ impl<'t> Lexer<'t> {
         } else {
             token(name(symbol::intern_once(text)))
         }
+    }
+
+    pub fn pragma(&mut self, span: Span) -> Option<Token> {
+        use Associativity as A;
+        if self.mode.is_meta() {
+            match Attr::scan(&mut self.source) {
+                Some(Spanned(atr, sp_at)) => {
+                    match atr {
+                        Attr::Fixity => {
+                            if self.source.on_char(Digit::digit_char) {
+                                Digit::scan(&mut self.source)
+                                    .map(|Spanned(digit, sp_d)| {
+                                        match A::scan(&mut self.source) {
+                                            Some(Spanned(assoc, sp_a)) => {
+                                                Token {
+                                                    lexeme: Lexeme::Meta(
+                                                    Pragma::Fixity(assoc, digit)
+                                                ), span: sp_d.union(&sp_a.union(&sp_at)) 
+                                                }
+                                            },
+                                            None => Token { 
+                                                lexeme: Lexeme::Meta(Pragma::Fixity(A::None, digit)), span: sp_at.union(&sp_d)
+                                            }
+                                            
+                                        }
+                                    })
+                            } else {
+                                A::scan(&mut self.source)
+                                    .map(|Spanned(aso, sp_a)| {
+                                        match Digit::scan(&mut self.source) {
+                                            Some(Spanned(digit, sp_d)) => {
+                                                Token {
+                                                    lexeme: Lexeme::Meta(
+                                                        Pragma::Fixity(
+                                                            aso, digit
+                                                        )
+                                                    ),
+                                                    span: sp_a.union(&sp_d)
+                                                }
+                                            },
+                                            None => Token {
+                                                lexeme: Lexeme::Meta(Pragma::Fixity(aso, Digit::Nine)),
+                                                span: sp_a.union(&sp_at)
+                                            },
+                                        }
+                                    })
+                            }
+                        },
+                        attr => Some(Token {
+                            lexeme: Lexeme::Meta(Pragma::Attr(attr)),
+                            span
+                        }),
+                    }
+                },
+                None => {
+                    let pos = self.get_pos();
+                    if let Some(&'|') = self.source.peek() {
+                        self.reset_mode();
+                        return Some(Token {
+                            lexeme: Lexeme::Pipe,
+                            span: self.span_from(pos)
+                        })
+                    };
+                    None
+                },
+            }
+        } else { None }
+    }
+
+    /// Utility method called only by `number` method when encountering 0 as the
+    /// first digit. This is a separate method as prefixed integers follow a
+    /// different set of lexical rules than general numeric literals. 
+    fn zero_first_int(&mut self, start: BytePos, has_exp: &mut bool, empty_exp: &mut Option<bool>, sign_positive: &mut Option<bool>) -> Option<Token> {
+        self.source.next();
+        if self.source.test_char(|c| c.is_whitespace()) {
+            return Some(Token {
+                lexeme: Lexeme::Lit(Literal::Int(0)),
+                span: self.source.span_from(start),
+            });
+        };
+        
+        let base = match self.source.peek() {
+            Some(&('b' | 'B')) => Some(Base::Bin),
+            Some(&('o' | 'O')) => Some(Base::Oct),
+            Some(&('x' | 'X')) => Some(Base::Hex),
+            Some(&('e' | 'E')) => {
+                *has_exp = true;
+                *empty_exp = Some(false);
+                None
+            }
+            _ => None,
+        };
+        if let Some(base) = base {
+            self.source.next();
+            let mut tok = self.integer(base);
+            tok.span.0 = start;
+            return Some(tok);
+        }
+        if *has_exp || matches!(empty_exp, Some(false)) {
+            self.source.next();
+            if self.source.on_char('-') {
+                self.source.next();
+                *sign_positive = Some(false);
+            } else if self.source.on_char('+') {
+                self.source.next();
+                *sign_positive = Some(true);
+            };
+        };
+
+        None
     }
 
     fn number(&mut self, c: char) -> Token {
@@ -298,46 +473,28 @@ impl<'t> Lexer<'t> {
         let mut sign_positive = None;
         let start = self.source.get_pos();
         if c == '0' {
-            self.source.next();
-            if self.source.test_char(|c| c.is_whitespace()) {
-                return Token {
-                    lexeme: Lexeme::Lit(Literal::Int(0)),
-                    span: self.source.span_from(start),
-                };
-            };
-
-            let base = match self.source.peek() {
-                Some(&('b' | 'B')) => Some(Base::Bin),
-                Some(&('o' | 'O')) => Some(Base::Oct),
-                Some(&('x' | 'X')) => Some(Base::Hex),
-                Some(&('e' | 'E')) => {
-                    has_exp = true;
-                    empty_exp = Some(false);
-                    None
-                }
-                Some(&'.') => {
-                    has_dot = true;
-                    None
-                }
-                _ => None,
-            };
-            if let Some(base) = base {
-                self.source.next();
-                let mut tok = self.integer(base);
-                tok.span.0 = start;
-                return tok;
+            if let Some(token) = self.zero_first_int(start, &mut has_exp, &mut empty_exp, &mut sign_positive) {
+                return token 
             }
-            if has_dot || has_exp || matches!(empty_exp, Some(false)) {
-                self.source.next();
-                if self.source.on_char('-') {
-                    self.source.next();
-                    sign_positive = Some(false);
-                } else if self.source.on_char('+') {
-                    self.source.next();
-                    sign_positive = Some(true);
-                };
-            };
         };
+
+        if self.source.on_char('.') {
+            let a = self.get_pos();
+            self.source.next();
+            if self.source.on_char('.') {
+                self.source.next();
+                self.stack.push(Token { 
+                    lexeme: Lexeme::Dot2, 
+                    span: self.span_from(a)
+                });
+                return Token { 
+                    lexeme: Lexeme::Lit(Literal::Int(0)), 
+                    span: Span(start, a) 
+                }
+            } else {
+                has_dot = true;
+            }
+        }
 
         while let Some(&c) = self.source.peek() {
             match c {
@@ -365,45 +522,26 @@ impl<'t> Lexer<'t> {
                         };
                     }
                 }
-                '.' if has_dot || has_exp => {
-                    let span = Span(start, self.source.get_pos());
-                    let (Span(_, end), _) =
-                        self.source.eat_while(|c| !c.is_whitespace());
-                    eprintln!("Invalid number! A number may only have a single decimal (dot), but a second one was found at {}: `{}`",
-                    self.source.get_loc(),
-                    &self.source[Span(span.0, end)]);
-                    return Token {
-                        lexeme: Lexeme::Unknown(LexError::MissingIntegral),
-                        span,
-                    };
-                }
                 '.' if !has_dot && !has_exp => {
                     let end = self.source.get_pos();
                     has_dot = true;
                     self.source.next();
-                    if self.source.on_char('.') {
-                        self.source.next();
+                    if self.source.bump_on(',') {
                         self.stack.push(Token {
                             lexeme: Lexeme::Dot2,
-                            span: Span(start, self.source.get_pos()),
+                            span: self.span_from(start),
                         });
                         let span = Span(start, end);
                         return Token {
-                            lexeme: Literal::parse_int(
-                                &self.source[span],
-                                Base::Dec,
-                            )
-                            .ok()
-                            .map(Literal::Int)
-                            .map(Lexeme::Lit)
-                            .unwrap_or_else(|| {
-                                let span = Span(start, self.source.get_pos());
-                                eprintln!(
-                                    "Invalid number `{}`",
-                                    &self.source[span]
-                                );
-                                Lexeme::Unknown(LexError::MalformedNumber)
-                            }),
+                            lexeme: Literal::parse_int(&self.source[span], Base::Dec)
+                                .ok()
+                                .map(Literal::Int)
+                                .map(Lexeme::Lit)
+                                .unwrap_or_else(|| {
+                                    let span = self.span_from(start);
+                                    eprintln!("Invalid number `{}`", &self.source[span]);
+                                    Lexeme::Unknown(LexError::MalformedNumber)
+                                }),
                             span,
                         };
                     };
@@ -434,7 +572,7 @@ impl<'t> Lexer<'t> {
 
     fn integer(&mut self, base: Base) -> Token {
         let radix = base.radix();
-        let (span, _) = self.source.eat_while(|c| c.is_digit(radix));
+        let (span, _) = self.source.eat_while(|c| c.is_digit(radix)).parts();
         let src = &self.source[span];
         let lexeme = Literal::parse_int(src, base)
             .ok()
@@ -450,17 +588,22 @@ impl<'t> Lexer<'t> {
     /// - a doc comment (multiple tildes followed by a `|`,`>`, `:`, or `<`)
     /// - a line comment (multiple tildes followed by any other character)
     fn tilde(&mut self) -> Token {
+        use Lexeme::{Infix, Tilde};
         let start = self.source.get_pos();
         assert!(self.source.on_char('~'));
         self.source.next();
         let span = self.source.span_from(start);
+        let tilde = Token {
+            lexeme: Tilde,
+            span,
+        };
         if let Some(c) = self.source.peek() {
             if c == &'~' {
                 // if we strictly need TWO tildes for doc comments
-                    // self.source.next();
                 // or do we not care how many tildes there are aslong
                 // there is more than 1?
-                self.source.eat_while(|c| c == '~');
+                // => ANY >= 2
+                self.source.eat_while_on('~');
                 self.maybe_doc_comment();
                 self.token()
             } else if c == &'{' {
@@ -468,34 +611,27 @@ impl<'t> Lexer<'t> {
                 self.block_comment();
                 self.token()
             } else if is_infix_char(*c) {
-                // note that we know c is not a tilde, so 
+                // note that we know c is not a tilde, so
                 // we have something like TILDE INFIX where INFIX does NOT
                 // start with a tilde (otherwise it would be a comment!)
-                let span = span.union(self.source.eat_while(is_infix_char).0);
-                let lexeme = Lexeme::Infix(symbol::intern_once(&self.source[span]));
-                Token { lexeme , span }
-            } 
-            else {
+                let span = span.union(&self.source.eat_while(is_infix_char).span());
+                let lexeme = Infix(self.span_symbol(span));
+                Token { lexeme, span }
+            } else {
                 let tok = self.token();
                 self.stack.push(tok);
-                Token {
-                    lexeme: Lexeme::Tilde,
-                    span,
-                }
+                tilde
             }
         } else {
-            Token {
-                lexeme: Lexeme::Tilde,
-                span,
-            }
+            tilde
         }
     }
 
     fn block_comment(&mut self) {
-        // when we see `~`, was it immediately after a `}`? 
+        // when we see `~`, was it immediately after a `}`?
         let mut penult = false;
         // consume characters until reaching the sequence `}~`, stopping on `~`
-        let (block_span, _) = self.source.eat_while(|c| match (penult, c) {
+        let block = self.source.eat_while(|c| match (penult, c) {
             // we saw `}` before this `~`
             (true, '~') => false,
             // we saw `}` before this `}`, so no state change necessary
@@ -516,47 +652,46 @@ impl<'t> Lexer<'t> {
         });
         // since the span we got included the terminating `}` from `}~`,
         // we shave it off
-        let span = block_span.shrink_right('}');
+        let span = block.span().shrink_right('}');
         // since we stopped at the last `~`, we eat it
         self.source.next();
         self.comments.push(Comment::Block(span));
     }
 
-    
-    /// Doc comments may be specialized in a layout-specific fashion based 
+    /// Doc comments may be specialized in a layout-specific fashion based
     /// on the character found following the initial `~~`:
-    /// - `~~>` marks the *beginning* of a paragraph, and hence will render 
-    ///   a line break before the commented text, and should be found 
-    ///   *above* the entity being commented. 
+    /// - `~~>` marks the *beginning* of a paragraph, and hence will render
+    ///   a line break before the commented text, and should be found
+    ///   *above* the entity being commented.
     /// - `~~|` marks the *middle* of a paragraph, and will *not* render any
-    ///   new lines before or after its contents, instead inheriting the 
+    ///   new lines before or after its contents, instead inheriting the
     ///   style followed by the immediately preceding documentation lines.
     /// - `~~:` marks documentation that has been added *after* (or *below*)
     ///   the source code entity being documented.
-    /// 
-    /// Additionally, if we encounter `~~<X>` for some identifier `X`, 
-    /// then the line's doc style will be preserved until reaching a `~~;`, 
+    ///
+    /// Additionally, if we encounter `~~<X>` for some identifier `X`,
+    /// then the line's doc style will be preserved until reaching a `~~;`,
     /// which is idiomatically expected to be found on the next line
-    /// 
+    ///
     /// Below we see an example of all the doc flags listed above in use:
     /// ```wysk
-    /// ~~> This would be the beginning of a paragraph descibing the entity 
+    /// ~~> This would be the beginning of a paragraph descibing the entity
     /// ~~| described by the source code following this doc comment block.
-    /// ~~| Notice how `~~|` is used as a *line continuation*, and hence 
-    /// ~~| will *only* render a single whitespace character ` ` *before* 
-    /// ~~| and *after* its contents. Notice that this block documents the 
+    /// ~~| Notice how `~~|` is used as a *line continuation*, and hence
+    /// ~~| will *only* render a single whitespace character ` ` *before*
+    /// ~~| and *after* its contents. Notice that this block documents the
     /// ~~| function `foo` below.
     /// fn foo :: a -> (a, a)
     /// | x = (x, x)
-    /// ~~: This doc comment here would be grouped with the above doc 
+    /// ~~: This doc comment here would be grouped with the above doc
     /// ~~| comments for the item `foo`.
-    /// ~~| To show embedded code within doc comments, we will show below 
-    /// ~~| the equivalent code in Rust using the embedded doc code syntax, 
-    /// ~~| where we specify that the following block of code is *Rust* 
-    /// ~~| code. Note that the language identifier is read in a 
-    /// ~~| case-insensitive manner, with the text between `<` and `>` 
-    /// ~~| trimmed for whitespace on both ends so that the flags 
-    /// ~~| `~~<Rust>`, `~~<RUST>`, `~~< RUST>`, 
+    /// ~~| To show embedded code within doc comments, we will show below
+    /// ~~| the equivalent code in Rust using the embedded doc code syntax,
+    /// ~~| where we specify that the following block of code is *Rust*
+    /// ~~| code. Note that the language identifier is read in a
+    /// ~~| case-insensitive manner, with the text between `<` and `>`
+    /// ~~| trimmed for whitespace on both ends so that the flags
+    /// ~~| `~~<Rust>`, `~~<RUST>`, `~~< RUST>`,
     /// ~~| `~~< rusT >`, etc., are all equivalent!
     /// ~~<rust>
     /// ~~| fn foo<A>(a: A) -> (A, A) {
@@ -565,7 +700,7 @@ impl<'t> Lexer<'t> {
     /// ~~;
     /// ```
     fn maybe_doc_comment(&mut self) {
-        // let's get the rest of the non-whitespace chars into a str 
+        // let's get the rest of the non-whitespace chars into a str
         // then we can use this to get the line kind
         // examples:
         // 1.) `~~> abcd efgh`
@@ -574,21 +709,22 @@ impl<'t> Lexer<'t> {
         //        ^^^^        <- consume `this`, giving us `Ignored`
         // 3.) `~~ | this is also ignored!`
         //        *because of the space here, this line is `Ignored`*
-        // 4.) `~~<abc> ...`  <- consume `<abc>`, giving us `Embedded` 
-        //        ^^^^^ 
-        let (first, _) = self.source.eat_until_whitespace();
+        // 4.) `~~<abc> ...`  <- consume `<abc>`, giving us `Embedded`
+        //        ^^^^^
+        let (first, _) = self.source.eat_until_whitespace().parts();
         let linekind = LineKind::from_str(&self.source[first]);
-        // now we consume the rest of the line, ensuring to join the 
-        let (rest, _) = self.source.eat_while(|c| c != '\n');
+        // now we consume the rest of the line, ensuring to join the
+        let (rest, _) = self.source.eat_while(|c| c != '\n').parts();
         // ignore newlines
         self.source.next();
-        let span = first.union(rest);
+        let span = first.union(&rest);
         let id = CommentId::new(self.comments.len());
         self.comments.push(Comment::Doc { id, span, linekind });
     }
 
     fn unknown(&mut self) -> Token {
-        todo!()
+        self.spanned(|_| Lexeme::Unknown(LexError::Unsupported))
+            .into()
     }
 
     pub fn get_source(&'t self) -> &Source {
@@ -613,8 +749,7 @@ impl<'t> Iterator for Lexer<'t> {
             None => match self.token() {
                 t if t.lexeme.is_eof() => None,
                 t => Some(t),
-
-            }
+            },
         }
     }
 }
@@ -669,9 +804,49 @@ pub fn is_infix_char(c: char) -> bool {
     )
 }
 
+/// Helper enum used to describe the sign of the exponent of a number in the
+/// process of being lexed. Defaults to `Plus`
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
+pub enum Sign {
+    Plus,
+    Minus,
+}
+
+// pub struct NumBuilder {
+//     /// The base of a number. Defaults to Base::Dec, and may change based on
+//     /// whether integer prefixes are found.
+//     base: Base,
+//     /// Flag marking whether to continue reading for the same token
+//     ready: bool,
+//     /// Whether an 'e' or 'E' was encountered, indicating an exponential number
+//     has_exp: bool,
+//     /// Whether a decimal has been encountered, indicating a floating point
+//     /// numeric literal
+//     has_decimal: bool,
+//     /// Byte position that the number began on. For numbers prefixed with
+//     /// `0b/0o/0x`, this starting position must be incremented by the bytelength
+//     /// of the prefix to exclude the prefix when parsing into a Rust value.
+//     start_pos: BytePos,
+//     /// Stores the sign of a number's exponent. `None` is interpreted as
+//     /// `Sign::Plus` if a number has an exponent, i.e., if the value in the
+//     /// field `has_exp` is `true`.
+//     exp_sign: Option<Sign>,
+//     /// Flags whether the number being lexed has a prefix, and if so, which
+//     prefix: Option<IntPrefix>,
+//     /// Flags whether the number being lexed has a suffix, and if so, which
+//     suffix: Option<NumSuffix>,
+//     /// Stores the error message returned to the lexer upon failure
+//     error: Option<LexError>,
+//     /// In the event of inevitable lookahead, this field stores any *other*
+//     /// tokens the lexer should know about that were produced while lexing a
+//     /// number
+//     queue: Deque<Token>,
+// }
+
+
 #[cfg(test)]
 mod test {
-    use wy_intern::{symbol, intern_many};
+    use wy_intern::{intern_many, symbol};
 
     use super::*;
 
@@ -686,7 +861,7 @@ mod test {
             println!("peek #{}: {:?}", i, lexer.peek());
             println!("bump #{}: {}", i - 1, lexer.bump());
             println!("post-bump peek #{}: {:?}", i - 1, lexer.peek());
-        };
+        }
     }
 
     #[test]
@@ -736,7 +911,7 @@ mod test {
 
     #[test]
     fn test_dots() {
-        let mut lexer = Lexer::new("4..5 4.5 a.b a..b 1.1.1");
+        let mut lexer = Lexer::new("4..5 4.5 a.b a..b [1..2]");
         let [a, b] = symbol::intern_many(["a", "b"]);
         assert_eq!(lexer.token().lexeme, Lexeme::Lit(Literal::Int(4)));
         assert_eq!(lexer.token().lexeme, Lexeme::Dot2);
@@ -751,42 +926,69 @@ mod test {
         assert_eq!(lexer.token().lexeme, Lexeme::Lower(a));
         assert_eq!(lexer.token().lexeme, Lexeme::Dot2);
         assert_eq!(lexer.token().lexeme, Lexeme::Lower(b));
-        assert_eq!(lexer.token().lexeme, Lexeme::Unknown(LexError::MissingIntegral));
+        assert_eq!(lexer.token().lexeme, Lexeme::BrackL);
+        assert_eq!(lexer.token().lexeme, Lexeme::Lit(Literal::Int(1)));
+        assert_eq!(lexer.token().lexeme, Lexeme::Dot2);
+        assert_eq!(lexer.token().lexeme, Lexeme::Lit(Literal::Int(2)));
+        assert_eq!(lexer.token().lexeme, Lexeme::BrackR);
         assert_eq!(lexer.token().lexeme, Lexeme::Eof);
+
+        println!(
+            "{:#?}",
+            Lexer::new("[ x | _ <- [0..n] ]").collect::<Vec<_>>()
+        )
     }
 
     #[test]
     fn test_infixes() {
         use Lexeme::*;
-        // also testing for tilde-related lexemes, since a tilde can be 
-        // found in either the single tilde lexeme, as comment markers, OR 
+        // also testing for tilde-related lexemes, since a tilde can be
+        // found in either the single tilde lexeme, as comment markers, OR
         // as *ONE OF* the characters in an infix
         let source = r#"\ \\ \> = == : ~{ im ignored!!! }~ :: ~ . .. ~> ~| `boop`"#;
         let mut lexer = Lexer::new(source);
         println!("collected: {:#?}", lexer.clone().collect::<Vec<_>>());
-        let [lamr, lam2, eq2, tarrow, tpipe, boop] = intern_many([r#"\>"#, r#"\\"#, "==", "~>", "~|", "boop"]);
+        let [lamr, lam2, eq2, tarrow, tpipe, boop] =
+            intern_many([r#"\>"#, r#"\\"#, "==", "~>", "~|", "boop"]);
         let expected = [
-            (Lambda, "\\"), 
+            (Lambda, "\\"),
             (Infix(lam2), "\\\\"),
-            (Infix(lamr), "\\>"), 
-            (Equal, "="), 
-            (Infix(eq2), "=="), 
-            (Colon, ":"), 
-            (Colon2, "::"), 
-            (Tilde, "~"), 
-            (Dot, "."), 
-            (Dot2, ".."), 
-            (Infix(tarrow), "~>"), 
+            (Infix(lamr), "\\>"),
+            (Equal, "="),
+            (Infix(eq2), "=="),
+            (Colon, ":"),
+            (Colon2, "::"),
+            (Tilde, "~"),
+            (Dot, "."),
+            (Dot2, ".."),
+            (Infix(tarrow), "~>"),
             (Infix(tpipe), "~|"),
             (Infix(boop), "boop"),
-            (Eof, "")];
-        lexer.by_ref().zip(expected).for_each(|(token, (lexeme, txt))| {
-            assert_eq!(token.lexeme, lexeme);
-            assert_eq!(&source[token.span.range()], txt);
-        });
+            (Eof, ""),
+        ];
+        lexer
+            .by_ref()
+            .zip(expected)
+            .for_each(|(token, (lexeme, txt))| {
+                assert_eq!(token.lexeme, lexeme);
+                assert_eq!(&source[token.span.range()], txt);
+            });
         let comment = lexer.comments[0];
         assert!(matches!(comment, Comment::Block(..)));
         println!("{}", &source[comment.span().range()]);
         println!("{:#?}", lexer)
+    }
+
+    #[test]
+    fn test_meta() {
+        let src = 
+"module Main where
+
+#[fixity 3L]
+fn (&&) :: Bool -> Bool -> Bool | False _ = False | True x = x 
+";
+        for (n, token) in Lexer::new(src).enumerate() {
+            println!("{}\t{:?}", n, token)
+        }
     }
 }
