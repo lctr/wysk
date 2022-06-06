@@ -1,118 +1,34 @@
+use std::iter;
+
+use meta::*;
 use token::*;
+
+use wy_intern::Symbol;
 use wy_lexer::*;
 use wy_span::{Dummy, WithLoc, WithSpan};
 use wy_syntax::{
-    expr::Expression,
+    attr::Attribute,
+    decl::{
+        AliasDecl, Arity, ClassDecl, DataDecl, Declaration, FixityDecl, FnDecl, InstDecl, Method,
+        MethodDef, NewtypeArg, NewtypeDecl, Tag, Variant,
+    },
+    expr::{Expression, Section},
     fixity::{Assoc, Fixity, FixityTable, Prec},
     ident::{Chain, Ident},
     pattern::Pattern,
     stmt::{Alternative, Binding, Match, Statement},
-    tipo::{Con, Context, Field, Record, Signature, Type},
-    AliasDecl, Arity, ClassDecl, DataDecl, Declaration, FixityDecl, FnDecl, Import, ImportSpec,
-    InstDecl, Method, MethodDef, Module, NewtypeArg, NewtypeDecl, Program, Tag, Variant,
+    tipo::{Con, Context, Field, Record, Signature, Tv, Type},
+    Ast, Import, ImportSpec, Module, Program,
 };
 
 use wy_common::Deque;
 
 pub mod error;
+pub mod stream;
 
 use error::*;
 
-pub trait Streaming {
-    type Peeked: Lexlike;
-    type Lexeme: Lexlike;
-    type Err;
-    fn peek(&mut self) -> Option<&Self::Peeked>;
-
-    /// Peeks at the current `Peeked` item and calls the `Lexlike::cmp_tok`
-    /// method on the provided input, returning whether a match was found.
-    fn peek_on<T>(&mut self, item: T) -> bool
-    where
-        T: Lexlike<Self::Peeked, Self::Lexeme>,
-    {
-        match self.peek() {
-            Some(t) => item.cmp_tok(t),
-            None => false, // item.cmp_lex(&Lexeme::Eof),
-        }
-    }
-
-    /// Advance the underlying stream of tokens. If the stream
-    /// is not over, then the *current* token is returned; otherwise the token
-    /// corresponding to the `EOF` lexeme is returned.
-    ///
-    /// Note that this method first checks the internal lexeme queue before
-    /// calling the lexer. If the buffer is non-empty, it simply pops the next
-    /// element from the front of the qeueue.
-    fn bump(&mut self) -> Self::Peeked;
-
-    /// Conditionally advances the token stream based on the given argument
-    /// matching -- via the `Lexlike::cmp_tok` method -- the inner token
-    /// referenced by the result of calling `Stream::peek`. Returns the same
-    /// boolean value used to decide whether to advance or not.
-    ///
-    ///
-    /// This method is useful as a shortcut to the pattern involved in
-    /// conditionally advancing the inner stream of tokens as the side effect of
-    /// a predicate (as in the following code snippet):
-    /// ```rust,no-test
-    /// if self.peek_on(...) {
-    ///     self.bump();
-    ///     /* do something */
-    /// } /* do something else */
-    /// ```
-    fn bump_on<T>(&mut self, item: T) -> bool
-    where
-        T: Lexlike<Self::Peeked, Self::Lexeme>,
-    {
-        let on_it = self.peek_on(item);
-        if on_it {
-            self.bump();
-        }
-        on_it
-    }
-
-    fn ignore<T>(&mut self, item: T)
-    where
-        T: Lexlike<Self::Peeked, Self::Lexeme>,
-    {
-        self.bump_on(item);
-    }
-
-    fn is_done(&mut self) -> bool;
-
-    /// Given a predicate `pred` and a parser, applies the given parser `parse`
-    /// repeatedly as long as the predicate returns `true` and returning the
-    /// results in a vector.
-    ///
-    /// This method will always check the predicate prior to running
-    /// the given parser.
-    ///
-    /// **Note:** the given predicate *must* be coercible to
-    /// `fn` pointer, and hence **must not** capture any variables.
-    fn many_while<F, G, X>(&mut self, mut pred: G, mut f: F) -> Result<Vec<X>, Self::Err>
-    where
-        G: FnMut(&mut Self) -> bool,
-        F: FnMut(&mut Self) -> Result<X, Self::Err>,
-    {
-        let mut xs = vec![];
-        while pred(self) {
-            xs.push(f(self)?);
-        }
-        Ok(xs)
-    }
-
-    fn many_while_on<L, F, X>(&mut self, item: L, mut f: F) -> Result<Vec<X>, Self::Err>
-    where
-        L: Lexlike<Self::Peeked, Self::Lexeme>,
-        F: FnMut(&mut Self) -> Result<X, Self::Err>,
-    {
-        let mut xs = vec![];
-        while matches!(self.peek(), Some(t) if item.cmp_tok(t)) {
-            xs.push(f(self)?)
-        }
-        Ok(xs)
-    }
-}
+use stream::Streaming;
 
 type Spath = std::path::PathBuf;
 
@@ -122,6 +38,7 @@ pub struct Parser<'t> {
     queue: Deque<Token>,
     pub fixities: FixityTable,
     pub filepath: Option<Spath>,
+    pub pragmas: Vec<(Pragma, Placement)>,
 }
 
 impl<'t> WithSpan for Parser<'t> {
@@ -131,8 +48,8 @@ impl<'t> WithSpan for Parser<'t> {
 }
 
 impl<'t> WithLoc for Parser<'t> {
-    fn get_loc(&self) -> Coord {
-        self.lexer.get_loc()
+    fn get_coord(&self) -> Coord {
+        self.lexer.get_coord()
     }
 }
 
@@ -143,6 +60,7 @@ impl<'t> Parser<'t> {
             filepath,
             queue: Deque::new(),
             fixities: FixityTable::new(Ident::Infix),
+            pragmas: Vec::new(),
         }
     }
 
@@ -152,16 +70,17 @@ impl<'t> Parser<'t> {
             filepath: None,
             queue: Deque::new(),
             fixities: FixityTable::new(Ident::Infix),
+            pragmas: Vec::new(),
         }
     }
 
-    pub fn peek(&mut self) -> Option<&Token> {
-        if self.queue.is_empty() {
-            self.lexer.peek()
-        } else {
-            self.queue.front()
-        }
-    }
+    // pub fn peek(&mut self) -> Option<&Token> {
+    //     if self.queue.is_empty() {
+    //         self.lexer.peek()
+    //     } else {
+    //         self.queue.front()
+    //     }
+    // }
 
     /// Advance the underlying stream of tokens, retuning the unwrapped result
     /// of `Lexer::next`. If `Lexer::next` returns `None`, then the token
@@ -178,13 +97,13 @@ impl<'t> Parser<'t> {
         }
     }
 
-    pub fn get_srcloc(&mut self) -> SrcLoc {
+    pub fn srcloc(&mut self) -> SrcLoc {
         let pathstr = self
             .filepath
             .as_ref()
             .and_then(|p| p.to_str())
             .map(String::from);
-        let coord = self.lexer.get_loc();
+        let coord = self.lexer.get_coord();
         SrcLoc { pathstr, coord }
     }
 
@@ -195,21 +114,21 @@ impl<'t> Parser<'t> {
         Lexeme: From<T>,
     {
         match self.peek() {
+            None
+            | Some(Token {
+                lexeme: Lexeme::Eof,
+                ..
+            }) => Err(ParseError::UnexpectedEof(self.srcloc(), self.text())),
+
             Some(t) if &item == t => Ok(self.bump()),
+
             Some(t) => match Lexeme::from(item) {
                 delim @ (Lexeme::CurlyR | Lexeme::ParenR | Lexeme::BrackR) => {
-                    let found = t.clone();
-                    let srcloc = self.get_srcloc();
-                    Err(ParseError::Unbalanced {
-                        srcloc,
-                        found,
-                        delim,
-                        source: self.text(),
-                    })
+                    Err(self.unbalanced(delim))
                 }
                 found => {
                     let tok = t.clone();
-                    let src_loc = self.get_srcloc();
+                    let src_loc = self.srcloc();
                     Err(ParseError::Expected(
                         src_loc,
                         LexKind::Specified(found),
@@ -218,35 +137,22 @@ impl<'t> Parser<'t> {
                     ))
                 }
             },
-            None => Err(ParseError::UnexpectedEof(self.get_srcloc(), self.text())),
         }
     }
 
-    fn text(&self) -> String {
+    pub fn text(&self) -> String {
         let mut buf = String::new();
         self.lexer.write_to_string(&mut buf);
         buf
     }
 
-    pub fn is_done(&mut self) -> bool {
-        match self.peek() {
-            Some(t) if t.lexeme.is_eof() => true,
-            None => true,
-            _ => false,
+    pub fn peek_ahead(&mut self) -> &Token {
+        if self.queue.len() < 2 {
+            let tok = self.bump();
+            self.queue.push_back(tok);
         }
+        &self.queue[1]
     }
-
-    // pub fn ignore<T>(&mut self, item: T)
-    // where
-    //     T: Lexlike,
-    // {
-    //     match self.peek() {
-    //         Some(t) if item.cmp_tok(t) => {
-    //             self.bump();
-    //         }
-    //         _ => (),
-    //     }
-    // }
 
     pub fn lookahead<const N: usize>(&mut self) -> [Token; N] {
         let mut array = [Token {
@@ -321,9 +227,10 @@ impl<'t> Streaming for Parser<'t> {
     /// element from the front of the qeueue.
     fn bump(&mut self) -> Token {
         if let Some(token) = self.queue.pop_front() {
-            return token;
+            token
+        } else {
+            self.lexer.bump()
         }
-        self.lexer.bump()
     }
 
     fn is_done(&mut self) -> bool {
@@ -354,6 +261,30 @@ macro_rules! expect {
             ))
         }
     }};
+    ($self:ident in [$lexeme:ident $(, $rest:ident)*]) => {{
+        let src = $self.get_srcloc();
+        let tok = $self.peek().map(|Token {lexeme, ..}| lexeme).copied().unwrap_or_else(|| Lexeme::Eof);
+        let any = [$lexeme(_) $(, $rest(_))*];
+        if any.cmp_tok(&tok) {
+            Ok(tok)
+        } else {
+            Err($self.expected(LexKind::Any(&[$lexeme(_) $(, $rest(_))*])))
+        }
+    }};
+}
+
+impl<'t> Report for Parser<'t> {
+    fn get_srcloc(&mut self) -> SrcLoc {
+        Parser::srcloc(self)
+    }
+
+    fn get_source(&self) -> String {
+        Parser::text(self)
+    }
+
+    fn next_token(&mut self) -> Token {
+        *self.peek_ahead()
+    }
 }
 
 // IDENTIFIERS AND LITERAL
@@ -386,7 +317,7 @@ impl<'t> Parser<'t> {
                 Ok(Ident::Infix(s))
             }
             _ => Err(ParseError::Expected(
-                self.get_srcloc(),
+                self.srcloc(),
                 LexKind::Identifier,
                 self.lookahead::<1>()[0],
                 self.text(),
@@ -395,21 +326,16 @@ impl<'t> Parser<'t> {
     }
 
     fn expect_literal(&mut self) -> Parsed<Literal> {
-        let srcloc = self.get_srcloc();
         if let Some(Token {
             lexeme: Lexeme::Lit(lit),
             ..
-        }) = self.peek().copied()
+        }) = self.peek()
         {
+            let lit = *lit;
             self.bump();
             Ok(lit)
         } else {
-            Err(ParseError::Expected(
-                srcloc,
-                LexKind::Literal,
-                self.bump(),
-                self.text(),
-            ))
+            Err(self.expected(LexKind::Literal))
         }
     }
 }
@@ -417,24 +343,29 @@ impl<'t> Parser<'t> {
 // TOP-LEVEL
 type ModuleParser<'t> = Parser<'t>;
 impl<'t> ModuleParser<'t> {
+    pub fn id_chain(&mut self) -> Parsed<Chain> {
+        self.expect_upper().and_then(|root| {
+            self.many_while(|p| p.bump_on(Lexeme::Dot), Self::expect_ident)
+                .map(|tail| Chain::new(root, tail.into()))
+        })
+    }
+
     pub fn module(&mut self) -> Parsed<Module> {
         self.eat(Keyword::Module)?;
-        let rootname = self.expect_upper()?;
-        let tailnames = self.many_while(|p| p.bump_on(Lexeme::Dot), Self::expect_upper)?;
+        let modname = self.id_chain()?;
         self.eat(Keyword::Where)?;
         let imports = self.imports()?;
         let mut module = Module {
-            modname: Chain::new(rootname, tailnames.into_iter().collect()),
+            modname,
             imports,
             ..Default::default()
         };
 
-        self.unfold_decls(&mut module)?;
-
+        self.populate_module(&mut module)?;
         Ok(module)
     }
 
-    fn unfold_decls(&mut self, module: &mut Module) -> Parsed<()> {
+    fn populate_module(&mut self, module: &mut Module) -> Parsed<()> {
         while !self.is_done() {
             match self.declaration()? {
                 Declaration::Data(data) => module.datatys.push(data),
@@ -444,96 +375,86 @@ impl<'t> ModuleParser<'t> {
                 Declaration::Instance(inst) => module.implems.push(inst),
                 Declaration::Function(fun) => module.fundefs.push(fun),
                 Declaration::Newtype(newty) => module.newtyps.push(newty),
+                Declaration::Attribute(attr) => module.pragmas.push(attr),
             }
-            if !self.is_done() {
-                self.ignore(Lexeme::Semi)
-            }
+            self.ignore(Lexeme::Semi)
         }
         Ok(())
     }
 
     fn imports(&mut self) -> Parsed<Vec<ImportSpec>> {
-        self.many_while(
-            |p| p.bump_on(Keyword::Import) || p.bump_on(Lexeme::Pipe),
-            Self::import_spec,
-        )
+        use Keyword::Import;
+        use Lexeme::{Kw, Pipe};
+        self.many_while(|p| p.bump_on([Kw(Import), Pipe]), Self::import_spec)
     }
 
     fn import_spec(&mut self) -> Parsed<ImportSpec> {
         use Keyword::{Hiding, Qualified};
         use Lexeme::{At, Comma, CurlyL, CurlyR};
 
-        let qualified = self.bump_on(Qualified);
-        let name = Chain::new(
-            self.expect_upper()?,
-            // todo: specialize/optimize this
-            self.id_path_tail()?.into_iter().collect(),
-        );
-        let rename = if self.bump_on(At) {
-            Some(self.expect_upper()?)
-        } else {
-            None
-        };
-        let hidden = self.bump_on(Hiding);
-        let imports = if self.peek_on(CurlyL) {
-            self.delimited([CurlyL, Comma, CurlyR], Self::import_item)?
-        } else {
-            vec![]
-        };
         Ok(ImportSpec {
-            name,
-            qualified,
-            rename,
-            hidden,
-            imports,
+            qualified: self.bump_on(Qualified),
+            name: self.id_chain()?,
+            rename: if self.bump_on(At) {
+                Some(self.expect_upper()?)
+            } else {
+                None
+            },
+            hidden: self.bump_on(Hiding),
+            imports: if self.peek_on(CurlyL) {
+                self.delimited([CurlyL, Comma, CurlyR], Self::import_item)?
+            } else {
+                Vec::new()
+            },
         })
     }
+
     fn import_item(&mut self) -> Parsed<Import> {
+        use Import as I;
+        use Lexeme as L;
+
         match self.peek() {
-            lexpat!(~[var]) => Ok(Import::Function(self.expect_lower()?)),
+            lexpat!(~[var]) => self.expect_lower().map(I::Function),
             lexpat!(~[parenL]) => {
-                self.eat(Lexeme::ParenL)?;
+                self.eat(L::ParenL)?;
                 let infix = self.expect_infix()?;
-                self.eat(Lexeme::ParenR)?;
-                Ok(Import::Operator(infix))
+                self.eat(L::ParenR)?;
+                Ok(I::Operator(infix))
             }
             lexpat!(~[Var]) => {
                 let first = self.expect_upper()?;
-                if self.bump_on(Lexeme::ParenL) {
-                    if self.bump_on(Lexeme::Dot2) {
-                        self.eat(Lexeme::ParenR)?;
-                        return Ok(Import::Total(first));
+                if self.bump_on(L::ParenL) {
+                    if self.bump_on(L::Dot2) {
+                        self.eat(L::ParenR)?;
+                        return Ok(I::Total(first));
                     }
 
-                    let ctors = self.many_while_on(Lexeme::is_ident, |p| {
+                    let ctors = self.many_while_on(L::is_ident, |p| {
                         let con = p.expect_ident()?;
-                        p.ignore(Lexeme::Comma);
+                        p.ignore(L::Comma);
                         Ok(con)
                     })?;
-                    self.eat(Lexeme::ParenR)?;
-                    Ok(Import::Partial(first, ctors))
+
+                    self.eat(L::ParenR)?;
+                    Ok(I::Partial(first, ctors))
                 } else {
-                    Ok(Import::Abstract(first))
+                    Ok(I::Abstract(first))
                 }
             }
-            _ => Err(ParseError::Custom(
-                self.get_srcloc(),
-                self.lookahead::<1>()[0],
-                "is not a valid import",
-                self.text(),
-            )),
+            _ => Err(self.custom_error("is not a valid import")),
         }
     }
 
     pub fn parse(mut self) -> Parsed<Program> {
-        use Keyword::Import;
+        use Keyword as K;
+        use Module as M;
         Ok(Program {
-            module: if lexpat!(self on [module]) {
+            module: if self.peek_on(K::Module) {
                 self.module()?
             } else {
-                let mut module = Module::default();
-                module.imports = self.many_while_on(Import, Self::import_spec)?;
-                self.unfold_decls(&mut module)?;
+                let mut module = M::default();
+                module.imports = self.many_while_on(K::Import, Self::import_spec)?;
+                self.populate_module(&mut module)?;
                 module
             },
             fixities: self.fixities,
@@ -546,24 +467,23 @@ impl<'t> ModuleParser<'t> {
 type FixityParser<'t> = Parser<'t>;
 impl<'t> FixityParser<'t> {
     fn fixity_assoc(&mut self) -> Parsed<Assoc> {
+        use Assoc as A;
         let assoc = match self.peek() {
-            lexpat!(~[infix]) => Ok(Assoc::None),
-            lexpat!(~[infixl]) => Ok(Assoc::Left),
-            lexpat!(~[infixr]) => Ok(Assoc::Right),
-            _ => Err(ParseError::Custom(
-                self.get_srcloc(),
-                self.bump(),
-                "expected fixity keyword `infix`, `infixl`, or `infixr`",
-                self.text(),
-            )),
+            lexpat!(~[infix]) => Ok(A::None),
+            lexpat!(~[infixl]) => Ok(A::Left),
+            lexpat!(~[infixr]) => Ok(A::Right),
+            _ => Err(self.custom_error("expected fixity keyword `infix`, `infixl`, or `infixr`")),
         }?;
         self.bump();
         Ok(assoc)
     }
+
     fn fixity_prec(&mut self) -> Parsed<Prec> {
+        use Lexeme::Lit;
+        use Literal::Int;
         match self.peek() {
             Some(Token {
-                lexeme: Lexeme::Lit(Literal::Int(p)),
+                lexeme: Lit(Int(p)),
                 ..
             }) if *p < 10 => {
                 let prec = Prec(*p as u8);
@@ -571,7 +491,7 @@ impl<'t> FixityParser<'t> {
                 Ok(prec)
             }
             _ => Err(ParseError::InvalidPrec(
-                self.get_srcloc(),
+                self.srcloc(),
                 self.bump(),
                 self.text(),
             )),
@@ -580,15 +500,17 @@ impl<'t> FixityParser<'t> {
 
     fn with_fixity(&mut self, fixity: Fixity) -> Parsed<Vec<Ident>> {
         self.many_while_on(Lexeme::is_infix, |p| {
-            let srcloc = p.get_srcloc();
-            let Spanned(infix, span) = p.spanned(Self::expect_infix);
-            let infix = infix?;
-            if p.fixities.contains_key(&infix) {
-                Err(ParseError::FixityExists(srcloc, infix, span, p.text()))
-            } else {
-                p.fixities.insert(infix, fixity);
-                Ok(infix)
-            }
+            let srcloc = p.srcloc();
+            p.spanned(Self::expect_infix)
+                .as_result()
+                .and_then(|Spanned(infix, span)| {
+                    if p.fixities.contains_key(&infix) {
+                        Err(ParseError::FixityExists(srcloc, infix, span, p.text()))
+                    } else {
+                        p.fixities.insert(infix, fixity);
+                        Ok(infix)
+                    }
+                })
         })
     }
 }
@@ -597,17 +519,60 @@ type DeclParser<'t> = Parser<'t>;
 // DECLARATIONS
 impl<'t> DeclParser<'t> {
     pub fn declaration(&mut self) -> Parsed<Declaration> {
+        use Declaration as D;
         match self.peek() {
-            lexpat!(maybe[infixl][infixr][infix]) => self.fixity_decl().map(Declaration::Fixity),
-            lexpat!(maybe[data]) => self.data_decl().map(Declaration::Data),
-            lexpat!(maybe[fn]) => self.function_decl().map(Declaration::Function),
-            lexpat!(maybe[type]) => self.alias_decl().map(Declaration::Alias),
-            lexpat!(maybe[class]) => self.class_decl().map(Declaration::Class),
-            lexpat!(maybe[impl]) => self.inst_decl().map(Declaration::Instance),
-            lexpat!(maybe[newtype]) => self.newtype_decl().map(Declaration::Newtype),
-            _ => todo!(),
+            lexpat!(maybe[infixl][infixr][infix]) => self.fixity_decl().map(D::Fixity),
+            lexpat!(~[data]) => self.data_decl().map(D::Data),
+            lexpat!(~[fn]) => self.function_decl().map(D::Function),
+            lexpat!(~[type]) => self.alias_decl().map(D::Alias),
+            lexpat!(~[class]) => self.class_decl().map(D::Class),
+            lexpat!(~[impl]) => self.inst_decl().map(D::Instance),
+            lexpat!(~[newtype]) => self.newtype_decl().map(D::Newtype),
+            lexpat!(~[#]) => self.attribute().map(D::Attribute),
+            _ => Err(self.expected(LexKind::Keyword)),
         }
     }
+
+    fn attribute(&mut self) -> Parsed<Attribute<Ident, Ident>> {
+        self.eat(Lexeme::Pound)?;
+        let _bang = self.bump_on(Lexeme::Bang);
+        let is_after = self.lexer.get_mode().is_meta_after();
+        self.eat(Lexeme::BrackL)?;
+        let _attr = match self.bump() {
+            Token {
+                lexeme: Lexeme::Meta(pragma),
+                span: _,
+            } => {
+                let pl = if is_after {
+                    Placement::After
+                } else {
+                    Placement::Before
+                };
+                self.pragmas.push((pragma, pl));
+                Ok(())
+            }
+            t @ Token {
+                lexeme: Lexeme::Unknown(_lex),
+                span: _,
+            } => Err(ParseError::InvalidLexeme(
+                self.get_srcloc(),
+                t,
+                self.get_source(),
+            )),
+            Token {
+                lexeme: Lexeme::Eof,
+                span: _,
+            } => Err(ParseError::UnexpectedEof(
+                self.get_srcloc(),
+                self.get_source(),
+            )),
+            t => Err(self.expected(LexKind::from(t.lexeme))),
+        }?;
+        self.eat(Lexeme::BrackR)?;
+        self.lexer.reset_mode();
+        todo!()
+    }
+
     fn fixity_decl(&mut self) -> Parsed<FixityDecl> {
         let assoc = self.fixity_assoc()?;
         let prec = self.fixity_prec()?;
@@ -618,7 +583,7 @@ impl<'t> DeclParser<'t> {
 
     fn data_decl(&mut self) -> Parsed<DataDecl<Ident, Ident>> {
         use Keyword::{Data, With};
-        use Lexeme::{Comma, Equal, Kw, ParenL, ParenR, Pipe};
+        use Lexeme::{Comma, Equal, Kw, ParenL, ParenR, Pipe, Semi};
 
         self.eat(Kw(Data))?;
 
@@ -628,20 +593,23 @@ impl<'t> DeclParser<'t> {
             vec![]
         };
         let name = self.expect_upper()?;
+        let poly = self.many_while(
+            |p| !lexpat!(p on [=] | [;]),
+            |p| p.expect_lower().map(|ident| Ident::Fresh(ident.symbol())),
+        )?;
         let mut decl = DataDecl {
             name,
             ctxt,
-            poly: self.many_while(
-                |p| !lexpat!(p on [=] | [;]),
-                |p| p.expect_lower().map(|ident| Ident::Fresh(ident.symbol())),
-            )?,
+            poly,
             vnts: vec![],
             with: vec![],
         };
 
-        if !self.bump_on(Equal) {
+        if self.peek_on(Semi) {
             return Ok(decl);
         }
+
+        self.eat(Equal)?;
 
         decl.vnts = self.many_while(
             |p| p.bump_on(Pipe) || p.peek_on(Lexeme::is_upper),
@@ -662,6 +630,7 @@ impl<'t> DeclParser<'t> {
     fn function_decl(&mut self) -> Parsed<FnDecl> {
         use Keyword::Fn;
         use Lexeme::{Colon2, ParenL, ParenR, Pipe};
+
         self.eat(Fn)?;
 
         let name = if self.bump_on(ParenL) {
@@ -713,29 +682,20 @@ impl<'t> DeclParser<'t> {
         self.eat(Lexeme::CurlyL)?;
         let mut defs = vec![];
         while !self.peek_on(Lexeme::CurlyR) {
-            match self.binding()? {
-                Binding {
-                    name,
-                    arms,
-                    tipo: None,
-                } => {
-                    return Err(ParseError::Custom(
-                        self.get_srcloc(),
-                        self.lookahead::<1>()[0],
-                        "class method definition without type signature",
-                        self.text(),
-                    ))
-                }
-                Binding {
-                    name,
-                    arms,
-                    tipo: Some(sign),
-                } => defs.push(MethodDef {
+            self.ignore(Keyword::Def);
+            if let Binding {
+                name,
+                arms,
+                tipo: Some(sign),
+            } = self.binding()?
+            {
+                defs.push(MethodDef {
                     name,
                     sign,
                     body: arms,
-                }),
-                // binding => defs.push(Method::Impl(binding)),
+                })
+            } else {
+                return Err(self.custom_error("class method definition without type signature"));
             };
             self.ignore(Lexeme::Semi);
         }
@@ -782,9 +742,13 @@ impl<'t> DeclParser<'t> {
         use Keyword::{Newtype, With};
         use Lexeme::{Colon2, Comma, CurlyL, CurlyR, Equal, ParenL, ParenR};
 
+        fn until_semi_kw(parser: &mut Parser) -> bool {
+            lexpat!(parser on [;] | [kw])
+        }
+
         self.eat(Newtype)?;
         let name = self.expect_upper()?;
-        let poly = self.many_while_on(Lexeme::is_lower, variable(Self::expect_lower))?;
+        let poly = self.many_while_on(Lexeme::is_lower, Self::expect_lower)?;
         self.eat(Equal)?;
         let ctor = self.expect_upper()?;
         let narg = if self.bump_on(CurlyL) {
@@ -794,7 +758,8 @@ impl<'t> DeclParser<'t> {
             self.eat(CurlyR)?;
             NewtypeArg::Record(label, tysig)
         } else {
-            NewtypeArg::Stacked(self.many_while(|p| lexpat!(p on [;] | [kw]), Self::ty_node)?)
+            self.many_while(until_semi_kw, Self::ty_node)
+                .map(NewtypeArg::Stacked)?
         };
         let with = if self.bump_on(With) {
             if self.peek_on(ParenL) {
@@ -815,10 +780,10 @@ impl<'t> DeclParser<'t> {
     }
 }
 
-/// Utility combinator for type variables, which are to initially be parsed as
-/// `Ident::Fresh` variants before being transformed to `Tv` instances later on
-/// the pipeline
-fn variable<F, P>(mut parse_ident: F) -> impl FnMut(&mut P) -> Parsed<Ident>
+/// DEPRECATED: Utility combinator for type variables, which are to initially be
+/// parsed as `Ident::Fresh` variants before being transformed to `Tv` instances
+/// later on the pipeline
+fn _variable<F, P>(mut parse_ident: F) -> impl FnMut(&mut P) -> Parsed<Ident>
 where
     F: FnMut(&mut P) -> Parsed<Ident>,
 {
@@ -828,12 +793,13 @@ where
 // DATA TYPES
 impl<'t> Parser<'t> {
     fn data_variant(&mut self) -> Parsed<Variant> {
+        // let coord = self.get_coord();
         self.ignore(Lexeme::Pipe);
         // constructor name
         let name = self.expect_upper()?;
         let mut args = vec![];
         while !(self.is_done() || lexpat!(self on [;] | [|] | [kw])) {
-            args.push(self.ty_node()?);
+            args.push(self.ty_atom()?);
         }
         let arity = Arity::new(args.len());
         Ok(Variant {
@@ -862,25 +828,29 @@ impl<'t> TypeParser<'t> {
     /// any type constraints in a cast expression or in data declaration
     /// constructor arguments.
     fn total_signature(&mut self) -> Parsed<Signature> {
-        let each = if self.bump_on(Keyword::Forall) {
-            let es = self.many_while_on(Lexeme::is_lower, variable(Self::expect_lower))?;
+        Ok(Signature {
+            each: self.maybe_quantified()?,
+            ctxt: self.ty_contexts()?,
+            tipo: self.ty_node()?,
+        })
+    }
+
+    fn maybe_quantified(&mut self) -> Parsed<Vec<Ident>> {
+        Ok(if self.bump_on(Keyword::Forall) {
+            let es = self.many_while_on(Lexeme::is_lower, Self::expect_lower)?;
             self.eat(Lexeme::Dot)?;
             es
         } else {
             vec![]
-        };
-        let ctxt = self.ty_contexts()?;
-        let tipo = self.ty_node()?;
-        Ok(Signature { each, ctxt, tipo })
+        })
     }
 
     fn ty_contexts(&mut self) -> Parsed<Vec<Context>> {
-        if lexpat!(self on [|]) {
-            let ctxt = self.delimited(
+        if self.peek_on(Lexeme::Pipe) {
+            self.delimited(
                 [Lexeme::Pipe, Lexeme::Comma, Lexeme::Pipe],
                 Self::ty_constraint,
-            )?;
-            Ok(ctxt)
+            )
         } else {
             Ok(vec![])
         }
@@ -913,16 +883,18 @@ impl<'t> TypeParser<'t> {
     /// type `(uvw, xyz)` has its type variables remaped to `(a, b)`.
     fn ty_constraint(&mut self) -> Parsed<Context> {
         let class = self.expect_upper()?;
-        let tyvar = variable(Self::expect_lower)(self)?;
+        let tyvar = self.expect_lower()?;
         Ok(Context { class, tyvar })
     }
 
     fn ty_node(&mut self) -> Parsed<Type> {
-        let col = self.get_col();
+        let coord = self.get_coord();
         let ty = self.ty_atom()?;
-        if lexpat!(self on [->]) {
+        if self.peek_on(Lexeme::ArrowR) {
             self.arrow_ty(ty)
-        } else if self.peek_on(Lexeme::begins_ty) && self.get_col() > col {
+        } else if self.peek_on(Lexeme::begins_ty)
+            && (self.get_row() == coord.row || self.get_col() > coord.col)
+        {
             let ty = self.maybe_ty_app(ty)?;
             self.arrow_ty(ty)
         } else {
@@ -931,63 +903,66 @@ impl<'t> TypeParser<'t> {
     }
 
     fn maybe_ty_app(&mut self, head: Type) -> Parsed<Type> {
+        fn var_or_con(id: Ident) -> impl FnMut(Vec<Type>) -> Type {
+            move |args| {
+                if args.is_empty() {
+                    if id.is_lower() {
+                        Type::Var(id)
+                    } else {
+                        Type::Con(Con::Data(id), vec![])
+                    }
+                } else {
+                    Type::Con(
+                        if id.is_lower() {
+                            Con::Free(id)
+                        } else {
+                            Con::Data(id)
+                        },
+                        args,
+                    )
+                }
+            }
+        }
         match head {
             Type::Var(id) => self
                 .many_while_on(Lexeme::begins_ty, Self::ty_atom)
-                .map(|args| {
-                    if args.is_empty() {
-                        Type::Var(id)
-                    } else {
-                        Type::Con(Con::Free(id), args)
-                    }
-                }),
-            Type::Con(id, mut args) => {
-                args.extend(self.many_while_on(Lexeme::begins_ty, Self::ty_atom)?);
-                Ok(Type::Con(id, args))
-            }
+                .map(var_or_con(id)),
+            Type::Con(id, mut args) => self
+                .many_while_on(Lexeme::begins_ty, Self::ty_atom)
+                .map(|mut rest| args.append(&mut rest))
+                .map(|_| Type::Con(id, args)),
             head => Ok(head),
         }
     }
 
     fn ty_atom(&mut self) -> Parsed<Type> {
         match self.peek() {
-            lexpat!(~[var]) => variable(Self::expect_lower)(self).map(Type::Var),
-            lexpat!(~[Var]) => Ok(Type::Con(Con::Data(self.expect_upper()?), vec![])),
+            lexpat!(~[var]) => self.expect_lower().map(Type::Var),
+            lexpat!(~[Var]) => self
+                .expect_upper()
+                .map(|con| Type::Con(Con::Data(con), vec![])),
             lexpat!(~[brackL]) => self.brack_ty(),
-            lexpat!(~[curlyL]) => self.curly_ty(),
+            // lexpat!(~[curlyL]) => self.curly_ty(),
             lexpat!(~[parenL]) => self.paren_ty(),
-            _ => Err(ParseError::Custom(
-                self.get_srcloc(),
-                self.bump(),
-                "does not begin a type",
-                self.text(),
-            )),
+            _ => Err(self.custom_error("does not begin a type")),
         }
     }
 
     fn arrow_ty(&mut self, head: Type) -> Parsed<Type> {
         let mut rest = vec![];
-        while lexpat!(self on [->]) {
-            self.bump();
-            let right = {
-                let right = self.ty_atom()?;
-                self.maybe_ty_app(right)?
-            };
-            rest.push(right);
+        while self.bump_on(Lexeme::ArrowR) {
+            rest.push(self.ty_atom().and_then(|right| self.maybe_ty_app(right))?);
         }
-        if rest.is_empty() {
-            Ok(head)
+
+        Ok(if rest.is_empty() {
+            head
         } else {
-            Ok(Type::Fun(
-                Box::new(head),
-                Box::new(
-                    rest.into_iter()
-                        .rev()
-                        .reduce(|a, c| Type::Fun(Box::new(c), Box::new(a)))
-                        .unwrap(),
-                ),
-            ))
-        }
+            iter::once(head)
+                .chain(rest)
+                .rev()
+                .reduce(|a, c| Type::mk_fun(c, a))
+                .unwrap()
+        })
     }
 
     fn paren_ty(&mut self) -> Parsed<Type> {
@@ -1006,26 +981,34 @@ impl<'t> TypeParser<'t> {
                 if self.peek_on(Lexeme::begins_pat) =>
             {
                 while !(self.is_done() || lexpat!(self on [parenR]|[,]|[->])) {
+                    if !self.peek_on(Lexeme::begins_ty) {
+                        return Err(ParseError::Expected(
+                            self.srcloc(),
+                            LexKind::AnyOf(&[LexKind::Upper, LexKind::Lower]),
+                            self.lookahead::<1>()[0],
+                            self.text(),
+                        ));
+                    };
                     args.push(self.ty_atom()?);
                 }
                 ty = Type::Con(Con::Data(n), args)
             }
-            _ => {}
+            _ => (),
         }
         while !(self.is_done() || self.peek_on(ParenR)) {
             match self.peek() {
-                lexpat!(~[,]) => return self.tuple_ty(ty),
+                lexpat!(~[,]) => return self.tuple_ty_tail(ty),
                 lexpat!(~[->]) => {
                     ty = self.arrow_ty(ty)?;
                     break;
                 }
                 _ => {
-                    return Err(ParseError::Custom(
-                        self.get_srcloc(),
-                        self.bump(),
-                        "unbalanced parentheses in type signature",
-                        self.text(),
-                    ));
+                    return Err(ParseError::Unbalanced {
+                        srcloc: self.srcloc(),
+                        found: self.bump(),
+                        delim: Lexeme::ParenR,
+                        source: self.text(),
+                    })
                 }
             }
         }
@@ -1034,24 +1017,25 @@ impl<'t> TypeParser<'t> {
         Ok(ty)
     }
 
-    fn tuple_ty(&mut self, head: Type) -> Parsed<Type> {
+    fn tuple_ty_tail(&mut self, head: Type) -> Parsed<Type> {
         use Lexeme::{Comma, ParenR};
         self.delimited([Comma, Comma, ParenR], Self::ty_node)
-            .map(|rest| {
-                let mut each = vec![head];
-                each.extend(rest);
-                Type::Tup(each)
-            })
+            .map(|rest| Type::Tup(std::iter::once(head).chain(rest).collect()))
     }
 
     fn brack_ty(&mut self) -> Parsed<Type> {
         self.eat(Lexeme::BrackL)?;
-        let tipo = self.ty_node()?;
-        self.eat(Lexeme::BrackR)?;
-        Ok(Type::Vec(Box::new(tipo)))
+        if self.bump_on(Lexeme::BrackR) {
+            let var = Type::Var(Ident::Lower(Symbol::from_str("a")));
+            Ok(Type::Vec(Box::new(var)))
+        } else {
+            let tipo = self.ty_node()?;
+            self.eat(Lexeme::BrackR)?;
+            Ok(Type::Vec(Box::new(tipo)))
+        }
     }
 
-    fn curly_ty(&mut self) -> Parsed<Type> {
+    pub fn curly_ty(&mut self) -> Parsed<Type> {
         use Lexeme::{Comma, CurlyL, CurlyR};
 
         Ok(Type::Rec(Record::Anon(
@@ -1076,7 +1060,7 @@ impl<'t> TypeParser<'t> {
 type PatParser<'t> = Parser<'t>;
 impl<'t> PatParser<'t> {
     pub fn pattern(&mut self) -> Parsed<Pattern> {
-        use Lexeme::{BrackL, BrackR, Comma, CurlyL, CurlyR, Underline};
+        use Lexeme::{At, BrackL, BrackR, Colon2, Comma, CurlyL, CurlyR, Underline};
 
         if self.bump_on(Underline) {
             return Ok(Pattern::Wild);
@@ -1105,19 +1089,11 @@ impl<'t> PatParser<'t> {
 
             lexpat!(~[lit]) => self.lit_pattern(),
 
-            _ => {
-                return Err(ParseError::Custom(
-                    self.get_srcloc(),
-                    self.lookahead::<1>()[0],
-                    "does not begin a valid pattern",
-                    self.text(),
-                ))
-            }
+            _ => Err(self.custom_error("does not begin a valid pattern")),
         }?;
 
         if let Pattern::Var(name) = genpat {
-            if lexpat!(self on [@]) {
-                self.bump();
+            if self.bump_on(At) {
                 return Ok(Pattern::At(name, Box::new(self.pattern()?)));
             }
         }
@@ -1139,8 +1115,7 @@ impl<'t> PatParser<'t> {
         // alternative branch. Compare this with the unambiguous form `case EXPR
         // of { (PAT :: Foo) -> x; ... }`, which is well-formed both
         // semantically and syntactically
-        if lexpat!(self on [::]) {
-            self.bump();
+        if self.bump_on(Colon2) {
             Ok(Pattern::Cast(Box::new(genpat), self.ty_node()?))
         } else {
             Ok(genpat)
@@ -1151,17 +1126,19 @@ impl<'t> PatParser<'t> {
         Ok(Pattern::Lit(self.expect_literal()?))
     }
 
+    fn tuple_pattern_tail(&mut self, first: Pattern) -> Parsed<Pattern> {
+        use Lexeme::{Comma, ParenR};
+        self.delimited([Comma, Comma, ParenR], Self::pattern)
+            .map(|rest| std::iter::once(first).chain(rest).collect())
+            .map(Pattern::Tup)
+    }
+
     fn grouped_pattern(&mut self) -> Parsed<Pattern> {
-        use Lexeme::{Comma, ParenL, ParenR};
-        fn tuple_tail(this: &mut Parser, fst: Pattern) -> Parsed<Pattern> {
-            let mut tupes = vec![fst];
-            tupes.extend(this.delimited([Comma, Comma, ParenR], Parser::pattern)?);
-            Ok(Pattern::Tup(tupes))
-        }
+        use Lexeme::{ParenL, ParenR};
 
         let pat_err = |this: &mut Self| {
             Err(ParseError::Unbalanced {
-                srcloc: this.get_srcloc(),
+                srcloc: this.srcloc(),
                 found: this.lookahead::<1>()[0],
                 delim: ParenR,
                 source: this.text(),
@@ -1184,7 +1161,7 @@ impl<'t> PatParser<'t> {
                 loop {
                     match self.peek() {
                         lexpat!(~[parenR]) => break,
-                        lexpat!(~[,]) => return tuple_tail(self, first),
+                        lexpat!(~[,]) => return self.tuple_pattern_tail(first),
                         lexpat!(~[curlyL]) if arity == 0 => {
                             first = self.con_curly_pattern(upper)?;
                         }
@@ -1213,7 +1190,7 @@ impl<'t> PatParser<'t> {
                         self.bump();
                         Ok(pat)
                     }
-                    lexpat!(~[,]) => tuple_tail(self, pat),
+                    lexpat!(~[,]) => self.tuple_pattern_tail(pat),
                     lexpat!(~[|]) => {
                         let pat = self.union_pattern(pat)?;
                         self.eat(ParenR)?;
@@ -1222,7 +1199,7 @@ impl<'t> PatParser<'t> {
                     lexpat!(~[:]) => {
                         let pat = self.cons_pattern(pat)?;
                         if lexpat!(self on [,]) {
-                            return tuple_tail(self, pat);
+                            return self.tuple_pattern_tail(pat);
                         }
                         self.eat(ParenR)?;
                         Ok(pat)
@@ -1243,7 +1220,7 @@ impl<'t> PatParser<'t> {
                 };
 
                 match self.peek() {
-                    lexpat! {~[,]} => tuple_tail(self, first),
+                    lexpat! {~[,]} => self.tuple_pattern_tail(first),
                     lexpat!(~[:]) => {
                         let pat = self.cons_pattern(first)?;
                         self.eat(ParenR)?;
@@ -1298,7 +1275,7 @@ impl<'t> PatParser<'t> {
             .reduce(|a, c| Pattern::Lnk(Box::new(c), Box::new(a)))
             .ok_or_else(|| {
                 ParseError::Custom(
-                    self.get_srcloc(),
+                    self.srcloc(),
                     self.lookahead::<1>()[0],
                     "after failure to reduce cons pattern",
                     self.text(),
@@ -1328,6 +1305,26 @@ impl<'t> PatParser<'t> {
         } else {
             Ok(Field::Key(key))
         }
+    }
+
+    fn maybe_at_pattern(&mut self) -> Parsed<Pattern> {
+        let mut pat = if self.peek_on(Lexeme::is_upper) {
+            let con = self.expect_upper()?;
+            let args = self.many_while_on(Lexeme::begins_pat, Self::pattern)?;
+            Pattern::Dat(con, args)
+        } else {
+            self.pattern()?
+        };
+
+        if self.peek_on(Lexeme::At) {
+            if let Pattern::Var(name) = pat {
+                pat = Pattern::At(name, Box::new(self.pattern()?))
+            } else {
+                return Err(self.custom_error("can only follow simple variable patterns"));
+            }
+        };
+
+        Ok(pat)
     }
 }
 
@@ -1382,54 +1379,46 @@ impl<'t> ExprParser<'t> {
         F: FnMut(&mut Self) -> Parsed<Expression>,
     {
         let mut left = f(self)?;
-        while lexpat!(self on [op]) {
+        while self.peek_on(Lexeme::is_infix) {
             let infix = self.expect_infix()?;
-            let right = self.maybe_binary(f).map(Box::new)?;
             left = Expression::Infix {
                 left: Box::new(left),
                 infix,
-                right,
+                right: self.maybe_binary(f).map(Box::new)?,
             };
         }
 
         if self.bump_on(Lexeme::Colon2) {
-            let tipo = self.ty_node()?;
-            Ok(Expression::Cast(Box::new(left), tipo))
+            self.ty_node()
+                .map(|tipo| Expression::Cast(Box::new(left), tipo))
         } else {
             Ok(left)
         }
     }
 
-    fn negation(&mut self, minus_sign: Lexeme) -> Parsed<Expression> {
-        if self.peek_on(minus_sign) {
-            self.bump();
-            self.negation(minus_sign).map(Box::new).map(Expression::Neg)
+    fn negation(&mut self) -> Parsed<Expression> {
+        if self.bump_on(Lexeme::is_minus_sign) {
+            self.negation().map(Box::new).map(Expression::Neg)
         } else {
             self.atom()
         }
     }
 
     fn atom(&mut self) -> Parsed<Expression> {
-        fn minus_sign() -> Lexeme {
-            Lexeme::Infix(Ident::minus_sign().symbol())
-        }
-
         match self.peek() {
-            Some(Token { lexeme, .. }) if lexeme == &minus_sign() => self.negation(minus_sign()),
+            Some(t) if t.lexeme.is_minus_sign() => self.negation(),
             lexpat!(~[parenL]) => self.paren_expr(),
             lexpat!(~[brackL]) => self.brack_expr(),
             lexpat!(~[let]) => self.let_expr(),
             lexpat!(~[case]) => self.case_expr(),
             lexpat!(~[if]) => self.cond_expr(),
+            lexpat!(~[do]) => self.do_expr(),
             lexpat!(~[lam]) => self.lambda(),
             lexpat!(~[lit]) => self.literal(),
             lexpat!(~[var][Var]) => self.identifier(),
-            _ => Err(ParseError::Custom(
-                self.get_srcloc(),
-                self.bump(),
-                "does not correspond to a lexeme that begins an expression",
-                self.text(),
-            )),
+            _ => {
+                Err(self.custom_error("does not correspond to a lexeme that begins an expression"))
+            }
         }
     }
 
@@ -1442,7 +1431,7 @@ impl<'t> ExprParser<'t> {
             lexpat!(~[var]) => self.expect_lower(),
             lexpat!(~[Var]) => self.expect_upper(),
             _ => Err(ParseError::Expected(
-                self.get_srcloc(),
+                self.srcloc(),
                 LexKind::Identifier,
                 self.bump(),
                 self.text(),
@@ -1466,13 +1455,53 @@ impl<'t> ExprParser<'t> {
                 Some(t) if t.is_upper() => p.expect_upper(),
                 Some(t) if t.is_infix() => p.expect_infix(),
                 _ => Err(ParseError::Expected(
-                    p.get_srcloc(),
+                    p.srcloc(),
                     LexKind::Identifier,
                     p.bump(),
                     p.text(),
                 )),
             },
         )
+    }
+
+    fn comma_section(&mut self) -> Parsed<Expression> {
+        use Lexeme::{Comma, ParenR};
+        let mut commas = 0;
+        while self.bump_on(Comma) {
+            commas += 1;
+        }
+        let prefix = Ident::mk_tuple_commas(commas);
+
+        Ok(if self.bump_on(ParenR) {
+            Expression::Ident(prefix)
+        } else {
+            let section = self
+                .expression()
+                .map(Box::new)
+                .map(|right| Section::Prefix { prefix, right })?;
+            self.eat(ParenR)?;
+            Expression::Section(section)
+        })
+    }
+
+    fn maybe_prefix_section(&mut self) -> Parsed<Expression> {
+        let prefix = self.expect_infix()?;
+        if !self.peek_on(Lexeme::ParenR) {
+            let right = self.subexpression().map(Box::new)?;
+            self.eat(Lexeme::ParenR)?;
+            return Ok(Expression::Section(Section::Prefix { prefix, right }));
+        }
+        self.eat(Lexeme::ParenR)?;
+        Ok(Expression::Group(Box::new(Expression::Ident(prefix))))
+    }
+
+    fn suffix_section(&mut self, left: Expression) -> Parsed<Expression> {
+        let suffix = self.expect_infix()?;
+        self.eat(Lexeme::ParenR)?;
+        return Ok(Expression::Section(Section::Suffix {
+            suffix,
+            left: Box::new(left),
+        }));
     }
 
     fn paren_expr(&mut self) -> Parsed<Expression> {
@@ -1483,18 +1512,26 @@ impl<'t> ExprParser<'t> {
             return Ok(Expression::UNIT);
         }
 
-        if lexpat!(self on [op]) {
-            let infix = self.expect_infix()?;
-            self.eat(ParenR)?;
-            return Ok(Expression::Group(Box::new(Expression::Ident(infix))));
+        if self.bump_on(Comma) {
+            return self.comma_section();
+        }
+
+        if self.peek_on(Lexeme::is_infix) {
+            return self.maybe_prefix_section();
         }
 
         let mut first = self.expression()?;
 
+        if self.peek_on(Lexeme::is_infix) {
+            return self.suffix_section(first);
+        }
+
         if self.peek_on(Comma) {
-            let mut tups = vec![first];
-            tups.extend(self.delimited([Comma, Comma, ParenR], &mut Self::subexpression)?);
-            return Ok(Expression::Tuple(tups));
+            use std::iter::once;
+            return self
+                .delimited([Comma, Comma, ParenR], &mut Self::subexpression)
+                .map(|rest| once(first).chain(rest).collect())
+                .map(Expression::Tuple);
         }
 
         while !self.peek_on(ParenR) {
@@ -1512,24 +1549,25 @@ impl<'t> ExprParser<'t> {
     }
 
     fn brack_expr(&mut self) -> Parsed<Expression> {
-        use Lexeme::{BrackL, BrackR, Comma};
+        use Lexeme::{BrackL, BrackR, Comma, Dot2};
         self.eat(BrackL)?;
-        if lexpat!(self on [brackR]) {
-            self.bump();
+        if self.bump_on(BrackR) {
             return Ok(Expression::NULL);
         }
 
-        let mut first = self.expression()?;
-        if lexpat!(self on [..]) {
-            self.bump();
-            first = Expression::Range(
+        let first = self.expression()?;
+
+        if self.bump_on(Dot2) {
+            return Ok(Expression::Range(
                 Box::new(first),
-                if self.peek_on(Lexeme::begins_expr) {
-                    self.subexpression().map(Box::new).map(Some)?
-                } else {
+                if self.bump_on(BrackR) {
                     None
+                } else {
+                    let end = self.subexpression()?;
+                    self.eat(BrackR)?;
+                    Some(Box::new(end))
                 },
-            );
+            ));
         };
 
         match self.peek() {
@@ -1538,15 +1576,18 @@ impl<'t> ExprParser<'t> {
                 Ok(Expression::Array(vec![first]))
             }
             lexpat!(~[|]) => self.list_comprehension(first),
+
             lexpat!(~[,]) => self
                 .delimited([Comma, Comma, BrackR], Self::expression)
-                .map(|xs| vec![first].into_iter().chain(xs).collect::<Vec<_>>())
+                .map(|xs| std::iter::once(first).chain(xs).collect::<Vec<_>>())
                 .map(Expression::Array),
-            _ => Err(ParseError::InvalidLexeme(
-                self.get_srcloc(),
-                self.bump(),
-                self.text(),
-            )),
+
+            _ => Err(ParseError::Unbalanced {
+                srcloc: self.srcloc(),
+                found: self.bump(),
+                delim: BrackR,
+                source: self.text(),
+            }),
         }
     }
 
@@ -1558,11 +1599,11 @@ impl<'t> ExprParser<'t> {
             }
 
             let label = p.expect_lower()?;
-            if p.bump_on(Equal) {
-                Ok(Field::Entry(label, p.expression()?))
+            Ok(if p.bump_on(Equal) {
+                Field::Entry(label, p.expression()?)
             } else {
-                Ok(Field::Key(label))
-            }
+                Field::Key(label)
+            })
         })
     }
 
@@ -1584,41 +1625,22 @@ impl<'t> ExprParser<'t> {
     /// * a b c == [1, 2]
     /// * (a, b) <- c
     fn list_comprehension(&mut self, head: Expression) -> Parsed<Expression> {
-        use Lexeme::{ArrowL, BrackR, Comma, Pipe};
+        use Lexeme::{BrackR, Comma, Pipe};
         self.eat(Pipe)?;
 
         let mut stmts = vec![];
         loop {
-            if self.peek_on(BrackR) {
-                break;
+            if self.bump_on(BrackR) {
+                break Ok(Expression::List(Box::new(head), stmts));
             }
-            let srcloc = self.get_srcloc();
+            let srcloc = self.srcloc();
 
-            match self.peek() {
-                lexpat!(maybe[brackL][parenL][_]) => {
-                    let pat = self.pattern()?;
-                    self.eat(ArrowL)?;
-                    let stmt = Statement::Generator(pat, self.expression()?);
-                    stmts.push(stmt);
-                }
-                lexpat!(~[var]) => {
-                    let first = self.expect_lower()?;
-                    if self.peek_on(ArrowL) {
-                        self.bump();
-                        let stmt = Statement::Generator(Pattern::Var(first), self.expression()?);
-                        stmts.push(stmt)
-                    }
-                }
-                _ => stmts.push(Statement::Predicate(self.expression()?)),
-            }
+            stmts.push(self.statement()?);
             self.ignore(Comma);
             if self.is_done() {
-                return Err(ParseError::UnexpectedEof(srcloc, self.text()));
+                break Err(ParseError::UnexpectedEof(srcloc, self.text()));
             }
         }
-        self.eat(BrackR)?;
-
-        Ok(Expression::List(Box::new(head), stmts))
     }
 
     fn lambda(&mut self) -> Parsed<Expression> {
@@ -1642,12 +1664,7 @@ impl<'t> ExprParser<'t> {
         } else if lexpat!(self on [var]) {
             self.expect_lower()
         } else {
-            Err(ParseError::Custom(
-                self.get_srcloc(),
-                self.bump(),
-                "is not a valid binding name: expected a lowercase-initial identifier or an infix wrapped in parentheses", 
-                self.text()
-            ))
+            Err(self.custom_error("is not a valid binding name: expected a lowercase-initial identifier or an infix wrapped in parentheses"))
         }
     }
 
@@ -1661,12 +1678,7 @@ impl<'t> ExprParser<'t> {
         } else if self.bump_on(If) {
             Ok((args, Some(self.expression()?)))
         } else {
-            Err(ParseError::Custom(
-                self.get_srcloc(),
-                self.bump(),
-                "is not a valid binding argument pattern",
-                self.text(),
-            ))
+            Err(self.custom_error("is not a valid binding argument pattern"))
         }
     }
 
@@ -1677,16 +1689,10 @@ impl<'t> ExprParser<'t> {
     }
 
     fn caf_binding(&mut self, name: Ident, tipo: Option<Signature>) -> Parsed<Binding> {
-        let (body, wher) = self.binding_rhs()?;
-        Ok(Binding {
+        self.binding_rhs().map(|(body, wher)| Binding {
             name,
             tipo,
-            arms: vec![Match {
-                args: vec![],
-                pred: None,
-                body,
-                wher,
-            }],
+            arms: vec![Match::caf(body, wher)],
         })
     }
 
@@ -1694,12 +1700,6 @@ impl<'t> ExprParser<'t> {
         use Lexeme::Pipe;
 
         let name = self.binder_name()?;
-
-        // let tipo = if self.bump_on(Colon2) {
-        //     Some(self.total_signature()?)
-        // } else {
-        //     None
-        // };
 
         match self.peek() {
             lexpat!(~[|]) => Ok(Binding {
@@ -1709,16 +1709,13 @@ impl<'t> ExprParser<'t> {
             }),
             lexpat!(~[::]) => {
                 self.bump();
-                let tipo = self.total_signature()?;
+                let tipo = self.total_signature().map(Some)?;
+                self.ignore(Lexeme::Comma);
                 if lexpat!(self on [=]|[=>]) {
                     self.bump();
-                    self.caf_binding(name, Some(tipo))
+                    self.caf_binding(name, tipo)
                 } else {
-                    Ok(Binding {
-                        name,
-                        arms: self.match_arms()?,
-                        tipo: Some(tipo),
-                    })
+                    self.match_arms().map(|arms| Binding { name, arms, tipo })
                 }
             }
             lexpat!(~[=>]) => {
@@ -1727,25 +1724,21 @@ impl<'t> ExprParser<'t> {
             }
             lexpat!(~[=]) => {
                 self.bump();
-                let (body, wher) = self.binding_rhs()?;
-                let mut arms = vec![Match {
-                    args: vec![],
-                    pred: None,
-                    body,
-                    wher,
-                }];
-                arms.extend(self.match_arms()?);
-                Ok(Binding {
+                self.binding_rhs().and_then(|(body, wher)| {
+                    self.match_arms().map(|arms| Binding {
+                        name,
+                        tipo: None,
+                        arms: iter::once(Match::caf(body, wher)).chain(arms).collect(),
+                    })
+                })
+            }
+            Some(t) if t.begins_pat() || t.lexeme == Pipe => {
+                self.match_arms().map(|arms| Binding {
                     name,
                     tipo: None,
                     arms,
                 })
             }
-            Some(t) if t.begins_pat() || t.lexeme == Pipe => Ok(Binding {
-                name,
-                tipo: None,
-                arms: self.match_arms()?,
-            }),
             // this shouldn't semantically be ok, BUT i need to check that this
             // method isn't iterated over (instead of match arms)
             lexpat!(~[;]) => Ok(Binding {
@@ -1753,40 +1746,35 @@ impl<'t> ExprParser<'t> {
                 arms: vec![],
                 tipo: None,
             }),
-            _ => Err(ParseError::Custom(
-                self.get_srcloc(),
-                self.lookahead::<1>()[0],
-                "unable to parse binding",
-                self.text(),
-            )),
+            _ => Err(self.custom_error("unable to parse binding")),
         }
     }
 
     fn match_arms(&mut self) -> Parsed<Vec<Match>> {
         use Lexeme::Pipe;
         self.many_while(
-            |p| {
-                p.ignore(Pipe);
-                p.peek_on(Lexeme::begins_pat)
+            |this| {
+                this.ignore(Pipe);
+                this.peek_on(Lexeme::begins_pat)
             },
             Self::match_arm,
         )
     }
 
     fn match_arm(&mut self) -> Parsed<Match> {
-        use Lexeme::Equal;
+        use Lexeme::{Equal, FatArrow};
 
         // syntactic shorthand for `| =`
-        let (args, pred) = if lexpat!(self on [=>]) {
-            self.bump();
+        let (args, pred) = if self.bump_on(FatArrow) {
             (vec![], None)
         } else {
-            let (a, b) = self.binding_lhs()?;
+            let (args, pred) = self.binding_lhs()?;
             self.eat(Equal)?;
-            (a, b)
+            (args, pred)
         };
 
         let (body, wher) = self.binding_rhs()?;
+
         Ok(Match {
             args,
             pred,
@@ -1836,40 +1824,17 @@ impl<'t> ExprParser<'t> {
     }
 
     fn case_alt(&mut self) -> Parsed<Alternative> {
-        let mut pat = if lexpat!(self on [Var]) {
-            let con = self.expect_upper()?;
-            let args = self.many_while_on(Lexeme::begins_pat, Self::pattern)?;
-            Pattern::Dat(con, args)
-        } else {
-            self.pattern()?
-        };
-
-        if lexpat!(self on [@]) {
-            if let Pattern::Var(name) = pat {
-                pat = Pattern::At(name, Box::new(self.pattern()?))
-            } else {
-                return Err(ParseError::Custom(
-                    self.get_srcloc(),
-                    self.bump(),
-                    "can only follow simple variable patterns",
-                    self.text(),
-                ));
-            }
-        };
-
-        let pred = if self.peek_on(Keyword::If) {
-            self.eat(Keyword::If)?;
-            self.subexpression().map(Some)?
-        } else {
-            None
-        };
-
-        self.eat(Lexeme::ArrowR)?;
-
         Ok(Alternative {
-            pat,
-            pred,
-            body: self.expression()?,
+            pat: self.maybe_at_pattern()?,
+            pred: if self.bump_on(Keyword::If) {
+                Some(self.subexpression()?)
+            } else {
+                None
+            },
+            body: {
+                self.eat(Lexeme::ArrowR)?;
+                self.expression()?
+            },
             wher: self.where_clause()?,
         })
     }
@@ -1883,6 +1848,93 @@ impl<'t> ExprParser<'t> {
         let fail = self.expression()?;
 
         Ok(Expression::Cond(Box::new([cond, pass, fail])))
+    }
+
+    fn do_expr(&mut self) -> Parsed<Expression> {
+        self.eat(Keyword::Do)?;
+        self.eat(Lexeme::CurlyL)?;
+
+        let mut statements = vec![];
+        while !(self.is_done() || lexpat!(self on [curlyR])) {
+            statements.push(self.statement()?);
+            self.ignore(Lexeme::Semi);
+        }
+
+        self.eat(Lexeme::CurlyR)?;
+
+        let msg = "do expression must end in an expression";
+        statements
+            .pop()
+            .ok_or_else(|| self.custom_error(msg))
+            .and_then(|s| {
+                if let Statement::Predicate(g) = s {
+                    Ok(Box::new(g))
+                } else {
+                    Err(self.custom_error(msg))
+                }
+            })
+            .map(|tail| Expression::Do(statements, tail))
+    }
+
+    fn statement(&mut self) -> Parsed<Statement> {
+        fn bump_comma(parser: &mut Parser) -> bool {
+            parser.bump_on(Lexeme::Comma)
+        }
+        match self.peek() {
+            lexpat!(~[do]) => self.do_expr().map(Statement::Predicate),
+            lexpat!(~[let]) => {
+                self.eat(Keyword::Let)?;
+                let mut bindings = vec![self.binding()?];
+                self.many_while(bump_comma, Self::binding)
+                    .map(|binds| bindings.extend(binds))?;
+                if self.bump_on(Keyword::In) {
+                    Ok(Statement::Predicate(Expression::Let(
+                        bindings,
+                        Box::new(self.expression()?),
+                    )))
+                } else {
+                    Ok(Statement::JustLet(bindings))
+                }
+            }
+            lexpat!(~[var]) => {
+                let lower = self.expect_ident()?;
+                if self.bump_on(Lexeme::ArrowL) {
+                    self.expression()
+                        .map(|ex| Statement::Generator(Pattern::Var(lower), ex))
+                } else {
+                    Ok(Statement::Predicate(
+                        self.many_while_on(Lexeme::begins_expr, Self::expression)?
+                            .into_iter()
+                            .fold(Expression::Ident(lower), Expression::mk_app),
+                    ))
+                }
+            }
+            lexpat!(~[Var]) => {
+                let pat = self.pattern()?;
+                self.eat(Lexeme::ArrowL)?;
+                Ok(Statement::Generator(pat, self.expression()?))
+            }
+            lexpat!(~[_]) => {
+                self.bump();
+                self.eat(Lexeme::ArrowL)?;
+                let expr = self.expression()?;
+                Ok(Statement::Generator(Pattern::Wild, expr))
+            }
+            Some(t) if t.begins_pat() => {
+                let lexer = self.lexer.clone();
+                let queue = self.queue.clone();
+                let pat = self.pattern()?;
+                if self.bump_on(Lexeme::ArrowL) {
+                    Ok(Statement::Generator(pat, self.expression()?))
+                } else {
+                    self.lexer = lexer;
+                    self.queue = queue;
+                    Ok(Statement::Predicate(self.expression()?))
+                }
+            }
+            Some(t) if t.begins_expr() => self.expression().map(Statement::Predicate),
+            _ => Err(self.custom_error("is not supported in `do` expressions")),
+        }
     }
 }
 
@@ -1920,8 +1972,55 @@ pub fn try_parse_file<P: AsRef<std::path::Path>>(
 }
 
 pub fn parse_prelude() -> Parsed<Program> {
+    let dirp = "../../../language";
     let src = include_str!("../../../language/prim.wy");
-    Parser::from_str(src).parse()
+    let prim = Parser::from_str(src).parse()?.map_t(&mut |t| Tv::from(t));
+    let mut ast = Ast::with_program(prim);
+    let imported_modules =
+        ast.imported_modules()
+            .into_iter()
+            .map(|(uid, chain)| {
+                let path = chain.symbols().map(|sym| sym.display()).fold(
+                    String::from(dirp),
+                    |mut a, c| {
+                        a.push('/');
+                        a.push_str(&*c);
+                        a
+                    },
+                );
+                (uid, path)
+            })
+            .collect::<Vec<_>>();
+    println!("imported modules: {:?}", &imported_modules);
+    let mut newpaths = vec![];
+    for dir in std::fs::read_dir(dirp) {
+        for item in dir {
+            match item {
+                Ok(entry) => {
+                    for (uid, pth) in &imported_modules {
+                        if entry.path().ends_with(pth) {
+                            newpaths.push(entry.path());
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("{}", e);
+                }
+            }
+        }
+    }
+    println!("newpaths: {:?}", &newpaths);
+    let ast2: Parsed<Ast<Ident>> = newpaths.into_iter().fold(Ok(ast), |a, c| {
+        let mut a = a?;
+        a.add_program(try_parse_file(c).map_err(|failure| match failure {
+            Failure::Err(p) => p,
+            Failure::Io(e) => panic!("{}", e),
+            Failure::Ok(_) => todo!(),
+        })?);
+        Ok(a)
+    });
+    println!("AST2: {:#?}", &ast2);
+    todo!()
 }
 
 #[cfg(test)]
