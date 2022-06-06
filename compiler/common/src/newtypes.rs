@@ -112,7 +112,7 @@ macro_rules! newtype {
     ($($(#[$com:meta])+)? $name:ident |$tipo:ty| New) => {
         impl $name {
             $($(#[$com])+)?
-            pub(crate) fn new(inner: $tipo) -> Self {
+            pub fn new(inner: $tipo) -> Self {
                 $name(inner)
             }
         }
