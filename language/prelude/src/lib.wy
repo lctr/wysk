@@ -1,0 +1,9 @@
+~~> The Wysk Prelude is a collection of imports from language item-specific
+~~| submodules. It is included by default in all modules *unless*
+~~| [INSERT_NO_IMPLICIT_PRELUDE_FUNCTIONALITY].
+module Prelude where
+
+import Predicate
+import Container
+import Numeric
+import List

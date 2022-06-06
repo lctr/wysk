@@ -1,0 +1,444 @@
+module Container where
+
+import Predicate
+import Numeric 
+import Function
+
+~~ same as (<$) in Haskell
+infixl 4 />
+
+~~> Functor typeclass
+~~| The class of `mappable` types. A `Functor` represents a parametrized
+~~| container type that allows for composition of actions without modifying the
+~~| external structure using the function `fmap`. In other words, a type `f` 
+~~| is a Functor if it implements a function `map` that, given a function
+~~| `a -> b`, will transform an `f a` into an `f b`. 
+~~| 
+~~| A key feature of `Functors` is *composition*. Namely, every functor is
+~~| endowed with a function `map` that upholds the following laws:
+~~| * *Identity:* `map identity = identity``
+~~| * *Composition:* `map (f \> g) = fmap f \> fmap g`
+~~| 
+~~| Functors operate on types of kind `(* -> *) -> Constraint``
+class Functor f {
+   ~~> Applies a function `g` to every `a` parametrizing a functor  f``.
+   ~~| Notice that this function is identical to the function `fmap` in Haskell.
+   ~~| 
+   ~~| # Examples
+   ~~| The type `Option a` is a member of the functor typeclass, with `fmap`
+   ~~| applying a given function to the inner value of type `a` if it exists.
+   ~~|
+   ~~| ```
+   ~~| fmap 
+   ~~| | f None = None
+   ~~| | f (Some x) = Some (f x) 
+   ~~|
+   ~~| assert <| let plus2 x = x + 2 in fmap plus2 (Some 5) == Some 7
+   ~~| ``` 
+   ~~|
+   ~~| The general collection type `[a]` is a functor, with the canonical 
+   ~~| definition of map.
+   ~~| ```
+   ~~| map
+   ~~| | f [] = []
+   ~~| | f (x:xs) = f x : f xs
+   ~~| 
+   ~~| assert <| let plus2 | x = x + 2 in fmap plus2 [1, 2, 3] == [3, 4, 5]
+   ~~| ```
+   fmap :: (a -> b) -> f a -> f b;
+   ~~> Replace all values in a functor with a given value.
+   ~~|
+   ~~| ```
+   ~~| (/>) = go u xs 
+   ~~|   where go 
+   ~~|   | u [] = [] 
+   ~~|   | u (_:xs) = u : go xs
+   ~~| 
+   ~~| assert <| 3 /> "abc" == [3, 3, 3]
+   ~~| ```
+   (/>) :: b -> f a -> f b
+      = fmap \> const
+}
+
+infixl 4 <* <*> *>
+~~> A functor for which a notion of `application` is defined. An `Applicative`
+~~| can wrap or embed expressions (hence the method `embed`), as well as
+~~| sequence computations and combine their results. 
+~~| 
+~~| Heavily inspired by the Haskell `Applicative` typeclass.
+class |Functor f| Applicative f {
+   ~~> Embed expressions; `pure` in Haskell
+   embed :: a -> f a;
+   
+   ~~> Sequential application 
+   (<*>) :: f (a -> b) -> f a -> f b;
+   
+   ~~> Sequence two actions, discarding the value of the first argument
+   (*>) :: f a -> f b -> f b
+      | a1 a2 = (identity /> a1) <*> a2;
+
+   ~~> Sequence two actions, discarding the result from the second
+   (<*) :: f a -> f b -> f a => liftA2 const;
+
+   ~~> Embed a binary function into actions
+   liftA2 :: (a -> b -> c) -> f a -> f b -> f c
+      | f x = \y -> (map f x) <*> y
+}
+
+data Option a = None | Some a
+
+fn is_some :: Option a -> Bool
+   | (Some _) = True
+   | _ = False 
+
+fn is_none :: Option -> Bool
+   = not \> is_some
+
+fn maybe :: b -> (a -> b) -> Option a -> b
+   | x f (Some y) = f y
+   | x f None = x
+
+fn nothing :: Option a -> bool
+   | None = True
+   | _ = False
+
+impl |Eq a| Eq (Option a) {
+   (==)
+      | (Some x) (Some y) = x == y
+      | None None = True
+      | _ _  = False
+}
+
+impl Functor Option {
+   fmap 
+      | f None = None 
+      | f (Some x) = Some (f x)
+}
+
+impl Applicative Option {
+   embed = Some;
+   (<*>)
+      | (Some f) None = None
+      | (Some f) (Some x) = Some (f x)
+      | None _ = None
+}
+
+impl Applicative [a] {
+   embed a = [a];
+   (<*>) fs xs = [ f x | f <- fs, x <- xs ]
+}
+
+data Result a b = Err a | Ok b
+
+fn is_ok :: Result a b -> Bool
+   | (Ok _) = True
+   | _ = False
+
+fn is_err :: Result a b -> Bool
+   | (Err _) = True 
+   | _ = False
+
+fn map_ok :: (b -> c) -> Result a b -> Result a c
+   | f (Ok x) = Ok (f x)
+   | _ (Err y) = Err y
+
+fn map_err :: (a -> c) -> Result a b -> Result c b
+   | f (Err y) = Err (f y) 
+   | _ (Ok x) = Ok x
+
+impl Functor (Result a b) {
+   fmap 
+      | f (Ok x) = Ok (f x) 
+      | _ (Err y) = Err y
+}
+
+impl Applicative (Result a b) {
+   embed = Ok;
+   (<*>)
+      | (Ok f) (Ok x) = Ok (f x)
+      | (Ok _) (Err y) = Err y
+      | (Err e) _ = Err e
+}
+
+class Bifunctor f {
+   first  :: (a -> b) -> f a c -> f b c;
+   second :: (b -> c) -> f a b -> f a c;
+   bimap  :: (a -> b) -> (c -> d) -> f a c -> f b d;
+}
+
+impl Bifunctor (a, b) {
+   first  f   (x, y) = (f x,   y);
+   second f   (x, y) = (x  , f y);
+   bimap  f g (x, y) = (f x, g y);
+}
+
+impl Bifunctor Result {
+   first       = map_err;
+   second      = map_ok;
+   bimap f g r = if is_err r 
+      then map_err f r 
+      else map_ok g r;
+}
+
+
+data NonEmpty a = NonEmpty a [a]
+
+impl |Eq a| Eq (NonEmpty a) {
+   (==)
+      | (NonEmpty _ []) (NonEmpty _ (_:_)) = False
+      | (NonEmpty x xs) (NonEmpty y ys) = x == y && xs == ys
+}
+
+infixr 6 <>
+
+~~> Semigroups are types with a defined associative binary operation. 
+~~| This means that, for the semigroup instances `a`, `b` and `c`, of the same
+~~| type, and a semigroup operation `<>`, we have the *associativity* property 
+~~| `a <> (b <> c) = (a <> b) <> c`.
+~~| 
+~~| Note that semigroups do *not* require an identity -- that would be the
+~~| `Monoid` class.
+class Semigroup a {
+   ~~> The binary associative operation
+   (<>) :: a -> a -> a;
+
+   sconcat :: NonEmpty a -> a
+      | (NonEmpty a as) = go a as 
+         where go 
+            | b [] = b 
+            | b (c:cs) = b <> go c cs;
+
+   stimes :: |Integral b| b -> a -> a 
+}
+
+class |Semigroup a| Monoid a {
+   ~~> The identity element of the associative monoidal append operation `<>`
+   ~~| inherited from the `Semigroup` superclass. 
+   ~~| 
+   ~~| The equality `x <> mempty == mempty <> x == x` should hold. 
+   mempty :: a;
+
+   ~~ inline attribute/pragma in hopes of fusing with mconcat's argument
+   ~~ #[inline] 
+   ~~> Fold a list using the monoid.
+   mconcat :: [a] -> a 
+      = foldr mappend mempty;
+}
+
+impl Semigroup [a] {
+   ~~ #[inline]
+   (<>) 
+      | x [] = x
+      | [] y = y 
+      | (x:xs) ys = x : (xs <> ys);
+
+   stimes 
+      | n x = [ x | _ <- [0..n] ]
+}
+
+impl Monoid [a] {
+   ~~ #[inline]
+   mempty = [];
+   ~~ #[inline]
+   mconcat xss = [ x | xs <- xss, x <- xs ]
+}
+
+impl Semigroup (NonEmpty a) {
+   (<>) (NonEmpty x xs) (NonEmpty y ys) 
+      = NonEmpty x (xs ++ y : ys)
+}
+
+impl |Semigroup b| Semigroup (a -> b) {
+   (<>) f g = \x -> f x <> g x
+}
+
+impl |Semigroup a| Semigroup (Option a) {
+   (<>) 
+      | None y = y 
+      | x None = x 
+      | (Some x) (Some y) = Some (x <> y)
+}
+
+impl Semigroup Ordering {
+   (<>) 
+      | x@(LT | GT) _ = x
+      | EQ y = y 
+}
+
+class Foldable t {
+   ~~> Left fold
+   ~~| Recurses on the left, but allows for a lazy combining function to
+   ~~| inspect the foldable structure's elements from the right.
+   ~~|
+   ~~| The expression `foldl (+) a [b, c, d, e]` returns the same value as 
+   ~~| `a + b + c + d + e` for `|Add a, Add b, Add c, Add d, Add e|`: 
+   ~~|```
+   ~~|      foldl (+) a [b, c, d, e] 
+   ~~|        = (+ (+ (+ (+ a b) c) d) e)
+   ~~|        = (((a + b) + c) + d) + e
+   ~~|        = a + b + c + d + e
+   ~~|```
+   ~~| 
+   ~~| Immediately calls itself with new parameters until reaching the end of
+   ~~| foldable structure. This can be efficiently compiled as a loop, BUT 
+   ~~| ONLY IN FINITE CASES! If the foldable structure is infinite, then this
+   ~~| results in an infinite loop.
+   foldl :: (b -> a -> b) -> b -> t a -> b;
+
+   ~~> Right fold
+   ~~| Recurses on the right, but allows for a lazy combining function to 
+   ~~| inspect the structure's elements frm the left.
+   ~~|
+   ~~| The expression `foldr (+) a [b, c, d, e]` returns the same value as 
+   ~~| `a + b + c + d + e` for `|Add a, Add b, Add c, Add d, Add e|`: 
+   ~~|```
+   ~~|      foldr (+) a [b, c, d, e] 
+   ~~|        = (+ a (+ b (+ c (+ d e))))
+   ~~|        = (a + (b + (c + (d + e))))
+   ~~|        = a + b + c + d + e
+   ~~|```
+   ~~| 
+   ~~| Immediately returns the application of the combining function (first
+   ~~| parameter) to the head of the foldable structure and the recursive 
+   ~~| case of folding over the rest of the structure. 
+   ~~| 
+   ~~| If the combining function can produce some part of a result without
+   ~~| reference to its *second* argument, then the recursion will stop. 
+   ~~| Thus, when folding over infinite structures, it is necessary for the 
+   ~~| combining function to be able to produce a result without *entirely* 
+   ~~| relying on its second argument.
+   foldr :: (a -> b -> b) -> b -> t a -> b;
+
+   foldMap :: |Monoid m| (a -> m) -> t a -> m;
+   
+   intoList :: t a -> [a] 
+      = foldr (:) [];
+   
+   length :: t a -> Int
+      = foldr (+) 0;
+   
+   null :: t a -> Bool 
+      = length |> (== 0);
+
+   ~~ Analogous to `flip elem` in Haskell
+   contains :: |Eq a| t a -> a -> Bool
+      | xs _ if null xs = False
+      | xs x = foldr go False xs 
+         where go True _ = True 
+               | a c = a || c == x;
+}
+
+fn any :: |Foldable t| (a -> Bool) -> t a -> Bool
+   | f xs = foldr go False xs 
+      where go 
+         | True _ = True 
+         | a c = f c;
+
+fn all :: |Foldable t| (a -> Bool) -> t a -> Bool
+   | f xs = foldr go True xs 
+      where go
+         | False _ = False
+         | True x = f x;
+
+fn sum :: |Add a, Foldable t| t a -> a
+   = foldr (+) (fromInt 0)
+
+fn product :: |Mul a, Foldable t| t a -> a
+   = foldr (*) (fromInt 1)
+
+fn minimum :: |Ord a, Foldable t| t a -> Option a
+   = foldr go None
+      where go
+         | None y = Some y
+         | (Some x) y = Some (if x < y then x else y)
+
+fn maximum :: |Ord a, Foldable t| t a -> Option a
+   = foldr go None
+      where go
+         | None y = Some y
+         | (Some x) y = Some (if x < y then y else x)
+
+infixl 1 >> >>=
+infixr 1 =<<
+
+class |Applicative m| Monad m {
+   wrap :: a -> m a;
+   (>>=) :: forall a b . m a -> (a -> m b) -> m b;
+   (>>) :: forall a b . m a -> m b -> m b
+      | x y = x >>= (\_ -> y);
+}
+
+impl Monad [] {
+   wrap = embed;
+   (>>=) xs f = [ y | x <- xs, y <- f x ];
+   (>>) = (*>);
+}
+
+~~ #[specialize | (a -> [b]) -> [a] -> [b]]
+fn (=<<) :: |Monad m| (a -> m b) -> m a -> m b
+   | f x = x >>= f
+
+~~ #[inline, specialize | Bool -> Option () -> Option ()]
+fn when :: |Applicative f| Bool -> f () -> f ()
+   | p a = if p then a else embed ()
+
+~~ #[inline]
+fn sequence :: |Monad m| [m a] -> m [a] 
+   = mapM identity
+
+fn mapM :: |Monad m| (a -> m b) -> [a] -> m [b]
+   | f as = foldr g (wrap []) as
+      where g a r = do { x <- f a; xs <- r; wrap (x:xs) }
+
+~~ #[specialize
+~~ | (a -> r) -> IO a -> IO r 
+~~ | (a -> r) -> Option a -> Option r 
+~~ ]
+fn liftM :: |Monad m| (a -> r) -> m a -> m r
+   | f m = do { x <- m; wrap (f x) }
+
+~~ #[specialize
+~~ | (a -> b -> r) -> IO a -> IO b -> IO r
+~~ | (a -> b -> r) -> Option a -> Option b -> Option r
+~~ ]
+~~> Scan monadic arguments from left to right 
+~~| liftM2 (+) [0, 1] [0, 2] = [0, 2, 1, 3] 
+fn liftM2 :: |Monad m| (a -> b -> r) -> m a -> m b -> m r
+   | f m1 m2 = do { x <- m1; y <- m2; wrap (f x y) }
+
+~~ #[specialize
+~~ | (a -> b -> c -> r) -> IO a -> IO b -> IO c -> IO r
+~~ | (a -> b -> c -> r) -> Option a -> Option b -> Option c -> Option r
+~~ ]
+fn liftM3 :: |Monad m| (a -> b -> c -> r) -> m a -> m b -> m c -> m r
+   | f m1 m2 m3 = do { x <- m1; y <- m2; z <- m3; wrap (f x y z) }
+
+~~ #[specialize
+~~ | (a -> b -> c -> d -> r) 
+~~      -> IO a -> IO b -> IO c -> IO d -> IO r
+~~ | (a -> b -> c -> d -> r) 
+~~      -> Option a -> Option b -> Option c -> Option d -> Option r
+~~ ]
+fn liftM4 :: |Monad m| (a -> b -> c -> d -> r) 
+   -> m a -> m b -> m c -> m d -> m r 
+   | f m1 m2 m3 m4 = do { 
+      x <- m1; y <- m2; 
+      z <- m3; u <- m4; 
+      wrap (f x y z u) 
+   }
+
+~~ #[specialize
+~~ | (a -> b -> c -> d -> e -> r) 
+~~      -> IO a -> IO b -> IO c -> IO d -> IO e -> IO r
+~~ | (a -> b -> c -> d -> e -> r) 
+~~      -> Option a -> Option b -> Option c
+~~      -> Option d -> Option e -> Option r
+~~ ]
+fn liftM5 :: |Monad m| (a -> b -> c -> d -> e -> r) 
+   -> m a -> m b -> m c -> m d -> m e -> m r 
+   | f m1 m2 m3 m4 m5 = do { 
+      x <- m1; y <- m2; 
+      z <- m3; u <- m4; 
+      v <- m5; 
+      wrap (f x y z u v) 
+   }

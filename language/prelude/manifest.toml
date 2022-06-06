@@ -1,0 +1,24 @@
+[package]
+name = "Prelude"
+version = "0.0.1"
+license = "MIT"
+description = "The Wysk language standard library"
+authors = ["Lictor Guzman"]
+keywords = ["wysk lang", "prelude"]
+
+[lib]
+# [HEURISTIC}: libs, modules, packages have uppercase-initial names
+name = "Prelude" 
+# [HEURISTIC]: however, file names are (generally identical) in naming but
+# contain *lowercase*-initial names. 
+submodules = [
+    "predicate", 
+    "numeric", 
+    "function", 
+    "container", 
+    "list"
+]
+
+[dependencies]
+
+[dev-dependencies]

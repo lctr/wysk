@@ -1,0 +1,110 @@
+module Predicate where
+
+data Bool = False | True 
+   with Show
+
+fn not :: Bool -> Bool
+   | True = False
+   | False = True
+
+infixl 2 ||
+
+fn (||) :: Bool -> Bool -> Bool
+   | True _ = True
+   | False y = y
+
+infixl 3 &&
+
+fn (&&) :: Bool -> Bool -> Bool
+   | True y = y
+   | False _ = False
+
+infix 4 == != < <= > >=
+
+class Eq a {
+   (==) :: a -> a -> Bool;
+}
+
+impl Eq Bool {
+   (==) 
+      | True True = True
+      | False False = True
+      | _ _ = False
+}
+
+fn (!=) :: |Eq a| a -> a -> Bool
+   | x y = not (x == y)
+
+~~ Instances automagically derived by compiler for this type
+data Ordering = LT | EQ | GT 
+
+impl Eq Ordering {
+   (==)
+      | LT LT = True
+      | EQ EQ = True
+      | GT GT = True
+      | _  _  = False
+}
+
+class |Eq a| Ord a {
+   compare :: a -> a -> Ordering;
+
+   ~~> Default implementation depends on `compare`, but may be replaced with a
+   ~~| more efficient version
+   (<) :: a -> a -> Bool 
+      | x y = compare x y == LT;
+
+   ~~> Default implementation depends on `compare`, but may be replaced with a
+   ~~| more efficient version
+   (>) :: a -> a -> Bool
+      | x y = compare x y == GT;
+}
+
+impl Ord Ordering {
+   compare 
+      | LT LT = EQ 
+      | GT GT = EQ
+      | EQ EQ = EQ 
+      | LT _  = LT
+      | EQ GT = LT
+      | EQ LT = GT
+      | GT _  = GT;
+
+   (<)
+      | LT LT = False
+      | LT _  = True
+      | EQ GT = True
+      | EQ _  = False
+      | GT _  = False;
+
+   (>)
+      | GT GT = False
+      | GT _  = True
+      | EQ LT = True
+      | LT _  = False
+      | _  _  = False;
+}
+
+fn max :: |Ord a| a -> a -> a
+   | x y = if x < y then y else x
+
+fn min :: |Ord a| a -> a -> a
+   | x y = if x < y then x else y
+
+fn (<=) :: |Ord a| a -> a -> Bool
+   | x y = x == y || x < y
+
+fn (>=) :: |Ord a| a -> a -> Bool
+   | x y = x == y || x > y
+
+fn between :: |Ord a| a -> a -> a -> Bool
+   | x y c = x < c && c < y
+
+fn within :: |Ord a| a -> a -> a -> Bool
+   | x y c = x <= c && c <= y
+
+infixl 2 `xor`
+fn xor :: Bool -> Bool -> Bool
+   | True False = True
+   | False True = True
+   | _ _ False

@@ -1,0 +1,163 @@
+module List where
+
+import Predicate 
+import Numeric
+import Function
+import Container
+
+impl Functor [a] {
+   fmap
+      | f [] = []
+      | f (x:xs) = f x : fmap f xs;
+
+   (/>)
+      | y xs = fmap (const y) xs
+}
+
+
+
+fn map :: (a -> b) -> [a] -> [b]
+   | [] = []
+   | (x:xs) = f x : map f xs
+
+fn head :: [a] -> Option a
+   | [] = None
+   | (x:_) = Some x
+
+fn tail :: [a] -> [a]
+   | [] = []
+   | [_] = []
+   | (_:xs) = xs
+
+fn inits :: [a] -> [a]
+   | [] = []
+   | [_] = []
+   | (x:xs) = x : inits xs
+
+fn last :: [a] -> Option a
+   | [] = None
+   | [x] = Some x
+   | (_:xs) = last xs
+
+fn find :: (a -> Bool) -> [a] -> Option a
+   | f [] = None
+   | f (x:xs) if f x = Some x 
+   | f (_:xs) = find f xs
+
+fn position :: (a -> Bool) -> [a] -> Option Int
+    | f = go 0
+      where go 
+        | n [] = None 
+        | n (a:as) if f a = Some n 
+        | n (_:as) = go (n + 1) as
+
+fn filter :: (a -> Bool) -> [a] -> [a]
+   | f [] = []
+   | f (x:xs) if f x = x : filter f xs 
+   | f (_:xs) = filter f xs 
+
+fn reverse :: [a] -> [a]
+   | [] = [] 
+   | (x:xs) = reverse xs ++ [x]
+
+~~ compare performance with `reverse`
+fn reverse' :: [a] -> [a]
+   = foldl (flip (:)) []
+
+fn nth :: Int -> [a] -> Option a
+   = go 
+      where go
+        | _ [] = None
+        | n xs if n > 0 = go (n - 1) xs
+        | 0 (x:_) = Some x
+
+fn zip :: [a] -> [b] -> [(a, b)]
+   | [] _ = [] 
+   | _ [] = [] 
+   | (x:xs) (y:ys) = (x, y) : zip xs ys
+
+fn zipWith :: (a -> b -> c) -> [a] -> [b] -> [c]
+   | f [] _ = []
+   | f _ [] = []
+   | f (x:xs) (y:ys) = (f x y) : zipWith f xs ys
+
+fn zip3 :: [a] -> [b] -> [c] -> [(a, b, c)]
+   | [] _ _ = []
+   | _ [] _ = []
+   | _ _ [] = []
+   | (x:xs) (y:ys) (z:zs) = (x, y, z) : zip3 xs ys zs
+
+fn zip4 :: [a] -> [b] -> [c] -> [d] -> [(a, b, c, d)]
+   | [] _ _ _ = []
+   | _ [] _ _ = []
+   | _ _ [] _ = []
+   | _ _ _ [] = []
+   | (x:xs) (y:ys) (z:zs) (u:us) = (x, y, z, u) : zip4 xs ys zs us
+
+fn zip5 :: [a] -> [b] -> [c] -> [d] -> [e] -> [(a, b, c, d, e)]
+   | [] _ _ _ _ = []
+   | _ [] _ _ _ = []
+   | _ _ [] _ _ = []
+   | _ _ _ [] _ = []
+   | _ _ _ _ [] = []
+   | (x:xs) (y:ys) (z:zs) (u:us) (v:vs) = (x, y, z, u, v) : zip5 xs ys zs us vs
+
+fn zip6 :: [a] -> [b] -> [c] -> [d] -> [e] -> [f] -> [(a, b, c, d, e, f)]
+   | [] _ _ _ _ _ = []
+   | _ [] _ _ _ _ = []
+   | _ _ [] _ _ _ = []
+   | _ _ _ [] _ _ = []
+   | _ _ _ _ [] _ = []
+   | (x:xs) (y:ys) (z:zs) 
+     (u:us) (v:vs) (w:ws) = (x, y, z, u, v, w) : zip6 xs ys zs us vs ws
+
+infixr 6 ++
+fn (++) :: [a] -> [a] -> [a]
+   | xs [] = xs 
+   | [] ys = ys 
+   | (x:xs) ys = x:(xs ++ ys) 
+
+fn push :: [a] -> a -> [a]
+   | xs x = (++) \> (:[])
+
+fn unzip :: [(a, b)] -> ([a], [b])
+   = go [] [] 
+      where go
+         | xs ys [] = (xs, ys)
+         | xs ys ((a, b):cs) = go (xs ++ [a]) (ys ++ [b]) cs
+
+fn unzip3 :: [(a, b, c)] -> ([a], [b], [c])
+   = go [] [] []
+        where go 
+            :: [a] -> [b] -> [c] -> [(a, b, c)] -> ([a], [b], [c])
+            | xs ys zs [] = (xs, ys, zs)
+            | xs ys zs ((x, y, z):vs) = 
+                go (push xs x) (push ys y) (push zs z) vs
+
+fn unzip4 :: [(a, b, c, d)] -> ([a], [b], [c], [d])
+    = go [] [] [] []
+        where go
+            | xs ys zs us [] = (xs, ys, zs, us)
+            | xs ys zs us ((x, y, z, u):vs) = 
+                go (push xs x) (push ys y) (push zs zs) (push us u) vs
+
+fn unzip5 :: [(a, b, c, d, e)] -> ([a], [b], [c], [d], [e])
+    = go [] [] [] [] []
+        where go
+            | xs ys zs us vs [] = (xs, ys, zs, us, vs)
+            | xs ys zs us vs ((x, y, z, u, v):ws) = 
+                go (push xs x) (push ys y) (push zs z) 
+                   (push us u) (push vs v) ws
+
+fn unzip6 :: [(a, b, c, d, e, f)] -> ([a], [b], [c], [d], [e], [f])
+    = go [] [] [] [] [] [] 
+        where go 
+            | x1s x2s x3s x4s x5s x6s [] 
+                = (x1s, x2s, x3s, x4s, x5s, x6s)
+            | x1s x2s x3s x4s x5s x6s ((x1, x2, x3, x4, x5, x6):xs) 
+                = go (push x1s x1) (push x2s x2) (push x3s x3) 
+                     (push x4a x4) (push x5s x5) (push x6s x6) xs
+
+fn enumerate :: [a] -> [(Int, a)]
+   = zip [0..]
+

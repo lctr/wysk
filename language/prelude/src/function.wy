@@ -1,0 +1,46 @@
+module Function where
+
+fn identity :: a -> a 
+    | x = x
+
+fn const :: a -> b -> a 
+    | x _ = x
+
+fn flip :: (a -> b -> c) -> b -> a -> c
+    | f y x = f x y
+
+fn fst :: (a, b) -> a 
+    | (x, _) = x
+
+fn snd :: (a, b) -> b 
+    | (_, y) = y
+
+fn curry :: ((a, b) -> c) -> a -> b -> c
+    | f x y = f (x, y)
+
+fn uncurry :: (a -> b -> c) -> (a, b) -> c
+    | f = \(x, y) -> f x y
+
+fn image :: (a -> b) -> a -> (a, b)
+    | f x = (x, f x)
+
+
+
+~~ same as (.) in Haskell
+infixr 9 \>
+fn (\>) :: (b -> c) -> (a -> b) -> a -> c
+    | f g = \x -> f (g x) 
+
+~~ same as ($) in Haskell
+infixr 0 <|
+fn (<|) :: (a -> b) -> a -> b
+    | f x = f x
+
+~~ same as (&) in Haskell
+infixl 1 |>
+fn (|>) :: a -> (a -> b) -> b
+    | x f = f x
+
+infixl 9 </
+fn (</) :: (a -> b) -> (b -> c) -> a -> c
+    | f g x = g (f x)

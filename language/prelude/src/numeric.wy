@@ -1,0 +1,128 @@
+module Numeric where 
+
+import Predicates
+import Function
+
+data Byte = Byte U'8 
+data Int = Int I'32 with Eq
+data Float = Float F'32 
+data Double = Double F'64
+
+data Nat = Zero | Succ Nat
+
+impl Eq Nat where {
+    (==) 
+        | Zero Zero = True 
+        | Zero _ = False 
+        | _ Zero = False 
+        | (Succ n) (Succ m) = n == m
+}
+
+type Integer = PrimBigInt
+type Rational = PrimRatio Integer
+
+~~ Note: floating point numbers do NOT implement Eq
+impl Eq Int {
+   ~~ rust function call
+   (==) = prim'IntEq
+}
+
+impl |Eq a| Eq [a] {
+   (==)
+      | [] [] = True
+      | (x:xs) (y:ys) = (x == y) && (xs == ys)
+      | _ _ = False
+}
+
+class Num a {
+   abs :: a -> a;
+   negate :: a -> a;
+   signum :: a -> a;
+   fromInt :: Int -> a;
+   intoInt :: a -> Int;
+   
+   ~~> TODO: bigints
+   fromInteger :: Integer -> a;
+   integerFrom :: a -> Integer;
+}
+
+class Enum a {
+   succ :: a -> a;
+   pred :: a -> a;
+   intoEnum :: Int -> a;
+   fromEnum :: a -> Int;
+   enumFrom :: a -> [a];
+   ~~ 
+   enumFromThen :: a -> a -> [a];
+   enumFromTo :: a -> a -> [a];
+   enumFromThenTo :: a -> a -> a -> [a];
+}
+
+impl Enum Nat {
+    succ = Succ;
+    pred
+        | Zero = Zero
+        | (Succ n) = n;
+    intoEnum 0 = Zero | n = Succ (intoEnum (abs n - 1));
+    fromEnum Zero = 0 | (Succ n) = 1 + fromEnum n;
+    enumFrom n = n : enumFrom (succ n)
+}
+
+impl Enum Int {
+   succ n = n + 1;
+   pred n = if n == 0 then 0 else n - 1;
+   intoEnum = identity;
+   fromEnum = identity;
+   enumFrom n = [n..];
+   enumFromThen a b = todo;
+   enumFromTo = todo;
+   enumFromThenTo = todo;
+}
+
+infixl 6 + -
+~~> Addition
+class |Num a| Add a { 
+   (+) :: a -> a -> a 
+}
+
+~~> Subtraction
+class |Num a| Sub a { 
+   (-) :: a -> a -> a 
+}
+
+infixl 7 * /
+~~> Multiplication
+class |Num a| Mul a { 
+   (*) :: a -> a -> a 
+}
+
+class |Num a, Ord a| Real a {
+   intoRational :: a -> Rational
+}
+
+class |Real a, Enum a| Integral a {
+   quotient :: a -> a -> a;
+   rem :: a -> a -> a;
+   div :: a -> a -> a;
+   mod :: a -> a -> a;
+   quotRem :: a -> a -> (a, a);
+   divMod :: a -> a -> (a, a);
+   intoInteger :: a -> Integer;
+}
+
+class |Num a| Fractional a { (/) :: a -> a -> a }
+
+impl Add Int { (+) = prim'AddInt }
+impl Sub Int { (-) = prim'SubInt }
+impl Mul Int { (*) = prim'MulInt }
+
+impl Num Int {
+    fromInt = identity;
+    intoInt = identity;
+    abs n = if n > 0 then n else -n;
+    signum 
+        | 0 = 0 
+        | n if n > 0 = 1 
+        | _ = 1;
+}
+
