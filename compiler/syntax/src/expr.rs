@@ -1,4 +1,4 @@
-use wy_common::{deque, Deque, Set};
+use wy_common::{deque, variant_preds, Deque, Set};
 use wy_lexer::Literal;
 
 use crate::{
@@ -6,10 +6,145 @@ use crate::{
     ident::{Ident, Identifier},
     stmt::Alternative,
     tipo::{Record, Type},
-    Binding, Tag,
+    Binding,
 };
 
 use super::{Pattern, Statement};
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Section<Id = Ident, T = Id> {
+    Prefix {
+        prefix: Id,
+        right: Box<Expression<Id, T>>,
+    },
+    Suffix {
+        left: Box<Expression<Id, T>>,
+        suffix: Id,
+    },
+}
+
+variant_preds! {
+    |Id, T| Section[Id, T]
+    | is_prefix => Prefix {..}
+    | is_suffix => Suffix {..}
+}
+
+impl<Id, T> Section<Id, T> {
+    pub fn as_lambda(self, fresh_var: Id) -> (Pattern<Id, T>, Expression<Id, T>)
+    where
+        Id: Copy,
+    {
+        let var = Pattern::Var(fresh_var);
+        let expr = match self {
+            Section::Prefix { prefix, right } => Expression::Infix {
+                infix: prefix,
+                right,
+                left: Box::new(Expression::Ident(fresh_var)),
+            },
+            Section::Suffix { left, suffix } => Expression::Infix {
+                infix: suffix,
+                left,
+                right: Box::new(Expression::Ident(fresh_var)),
+            },
+        };
+        (var, expr)
+    }
+    pub fn contains_affix(&self, affix: &Id) -> bool
+    where
+        Id: PartialEq<Id>,
+    {
+        match self {
+            Section::Prefix { prefix: id, .. } | Section::Suffix { suffix: id, .. } => affix == id,
+        }
+    }
+    pub fn as_tuple(self) -> (Id, Expression<Id, T>) {
+        match self {
+            Section::Prefix { prefix, right } => (prefix, *right),
+            Section::Suffix { left, suffix } => (suffix, *left),
+        }
+    }
+    pub fn expr(&self) -> &Expression<Id, T> {
+        match self {
+            Section::Prefix { right: expr, .. } | Section::Suffix { left: expr, .. } => {
+                expr.as_ref()
+            }
+        }
+    }
+    pub fn expr_mut(&mut self) -> &mut Expression<Id, T> {
+        match self {
+            Section::Prefix { right: expr, .. } | Section::Suffix { left: expr, .. } => {
+                expr.as_mut()
+            }
+        }
+    }
+    pub fn expression(self) -> Expression<Id, T> {
+        match self {
+            Section::Prefix { right: expr, .. } | Section::Suffix { left: expr, .. } => *expr,
+        }
+    }
+
+    pub fn affix(&self) -> &Id {
+        match self {
+            Section::Prefix { prefix: affix, .. } | Section::Suffix { suffix: affix, .. } => affix,
+        }
+    }
+    pub fn map_id<U>(self, mut f: impl FnMut(Id) -> U) -> Section<U, T> {
+        match self {
+            Section::Prefix { prefix, right } => Section::Prefix {
+                prefix: f(prefix),
+                right: Box::new(right.map_id(|id| f(id))),
+            },
+            Section::Suffix { left, suffix } => Section::Suffix {
+                suffix: f(suffix),
+                left: Box::new(left.map_id(|id| f(id))),
+            },
+        }
+    }
+
+    pub fn map_id_ref<U>(&self, f: &mut impl FnMut(&Id) -> U) -> Section<U, T>
+    where
+        T: Copy,
+    {
+        match self {
+            Section::Prefix { prefix, right } => Section::Prefix {
+                prefix: f(prefix),
+                right: Box::new(right.map_id_ref(f)),
+            },
+            Section::Suffix { left, suffix } => Section::Suffix {
+                suffix: f(suffix),
+                left: Box::new(left.map_id_ref(f)),
+            },
+        }
+    }
+
+    pub fn map_t<U>(self, f: &mut impl FnMut(T) -> U) -> Section<Id, U> {
+        match self {
+            Section::Prefix { prefix, right } => Section::Prefix {
+                prefix,
+                right: Box::new(right.map_t(f)),
+            },
+            Section::Suffix { left, suffix } => Section::Suffix {
+                suffix,
+                left: Box::new(left.map_t(f)),
+            },
+        }
+    }
+    pub fn map_t_ref<U>(&self, f: &mut impl FnMut(&T) -> U) -> Section<Id, U>
+    where
+        Id: Copy,
+    {
+        match self {
+            Section::Prefix { prefix, right } => Section::Prefix {
+                prefix: *prefix,
+                right: Box::new(right.map_t_ref(f)),
+            },
+            Section::Suffix { left, suffix } => Section::Suffix {
+                left: Box::new(left.map_t_ref(f)),
+                suffix: *suffix,
+            },
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Expression<Id = Ident, T = Ident> {
@@ -45,6 +180,7 @@ pub enum Expression<Id = Ident, T = Ident> {
         left: Box<Expression<Id, T>>,
         right: Box<Expression<Id, T>>,
     },
+    Section(Section<Id, T>),
     Tuple(Vec<Expression<Id, T>>),
     Array(Vec<Expression<Id, T>>),
     /// List comprehensions contain an expression and a list of statements
@@ -88,23 +224,49 @@ pub enum Expression<Id = Ident, T = Ident> {
     Group(Box<Expression<Id, T>>),
 }
 
+variant_preds! {
+    |Id, T| Expression[Id, T]
+    | is_unit => Tuple (vs) [if vs.is_empty()]
+    | is_nil => Array (vs) [if vs.is_empty()]
+    | is_void => Dict (Record::Anon(fls)
+                      | Record::Data(_, fls)
+                      ) [if fls.is_empty()]
+    | is_lit => Lit (_)
+    | is_ident => Ident (_)
+    | is_path => Path (..)
+    | is_neg => Neg (_)
+    | is_infix => Infix {..}
+    | is_suffix_section => Section (Section::Suffix {..})
+    | is_prefix_section => Section (Section::Prefix {..})
+    | is_tuple => Tuple (..)
+    | is_array => Array (..)
+    | is_list => List (..)
+    | is_app => App (..)
+    | is_let => Let (..)
+    | is_case => Case (..)
+    | is_cond => Cond (..)
+    | is_lambda => Lambda (..)
+    | is_lambda_wild => Lambda (Pattern::Wild, ..)
+    | is_lambda_var => Lambda (Pattern::Var(_), _)
+    | is_lambda_unit => Lambda (Pattern::Tup(ts), _) [if ts.is_empty()]
+    | is_lambda_tup => Lambda (Pattern::Tup(_), _)
+    | is_lambda_vec => Lambda (Pattern::Vec(_), _)
+    | is_lambda_lnk => Lambda (Pattern::Lnk(..), _)
+    | is_group => Group (_)
+    | is_cast => Cast (..)
+    | is_range => Range (..)
+    | is_do => Do (..)
+    | is_simple_do => Do (stmts, _) [if stmts.is_empty()]
+}
+
+variant_preds! { Expression[Ident]
+    | is_list_cons => Infix { infix, ..} [if infix.is_cons_sign()]
+
+}
+
 impl<Id, T> Expression<Id, T> {
     pub const UNIT: Self = Self::Tuple(vec![]);
     pub const NULL: Self = Self::Array(vec![]);
-    pub const VOID: Self = Self::Dict(Record::Anon(vec![]));
-
-    pub fn is_unit(&self) -> bool {
-        matches!(self, Self::Tuple(vs) if vs.is_empty())
-    }
-    pub fn is_null(&self) -> bool {
-        matches!(self, Self::Array(vs) if vs.is_empty())
-    }
-    pub fn is_void(&self) -> bool {
-        matches!(self, Self::Dict(Record::Anon(vs)) if vs.is_empty())
-    }
-    pub fn is_empty_record(&self) -> bool {
-        matches!(self, Self::Dict(Record::Anon(fs)|Record::Data(_, fs)) if fs.is_empty() )
-    }
 
     /// If an expression is a `Group` variant, return the inner node.
     /// Otherwise, returns `Self`.
@@ -124,9 +286,22 @@ impl<Id, T> Expression<Id, T> {
         }
     }
 
-    #[inline]
-    pub fn is_lambda(&self) -> bool {
-        matches!(self, Self::Lambda(..))
+    pub fn get_lambda_arg(&self) -> Option<&Pattern<Id, T>> {
+        match self {
+            Self::Lambda(pat, _) => Some(pat),
+            _ => None,
+        }
+    }
+
+    pub fn get_lambda_args(&self) -> impl Iterator<Item = &Pattern<Id, T>> + '_ {
+        let mut tmp = self;
+        std::iter::from_fn(move || match tmp {
+            Self::Lambda(pat, rhs) => {
+                tmp = rhs.as_ref();
+                Some(pat)
+            }
+            _ => None,
+        })
     }
 
     /// If the expression is a lambda expression, this method will return the
@@ -147,16 +322,6 @@ impl<Id, T> Expression<Id, T> {
     }
 
     #[inline]
-    pub fn is_let_expr(&self) -> bool {
-        matches!(self, Self::Let(..))
-    }
-
-    #[inline]
-    pub fn is_ident(&self) -> bool {
-        matches!(self, Self::Ident(_))
-    }
-
-    #[inline]
     pub fn is_upper_ident(&self) -> bool
     where
         Id: Identifier,
@@ -170,21 +335,6 @@ impl<Id, T> Expression<Id, T> {
         Id: Identifier,
     {
         matches!(self, Self::Ident(id) if id.is_infix())
-    }
-
-    #[inline]
-    pub fn is_path(&self) -> bool {
-        matches!(self, Self::Path(..))
-    }
-
-    #[inline]
-    pub fn is_literal(&self) -> bool {
-        matches!(self, Self::Lit(..))
-    }
-
-    #[inline]
-    pub fn is_app(&self) -> bool {
-        matches!(self, Self::App(..))
     }
 
     /// If the given expression is an `App` expression, then this method will
@@ -245,6 +395,7 @@ impl<Id, T> Expression<Id, T> {
                     expr = x.as_ref();
                     continue;
                 }
+                Self::Group(exp) => return exp.is_simple_ctor_app(),
                 _ => return false,
             }
         }
@@ -270,6 +421,62 @@ impl<Id, T> Expression<Id, T> {
         Self::App(Box::new(head), Box::new(tail))
     }
 
+    /// Checks whether an expression can be directly reinterpreted as a pattern
+    /// in a binding
+    pub fn valid_pat(&self) -> bool
+    where
+        Id: Identifier,
+    {
+        match self {
+            Expression::Ident(_) | Expression::Lit(_) => true,
+            Expression::Neg(x) | Expression::Group(x) => x.valid_pat(),
+            Expression::Path(_, _)
+            | Expression::Section(_)
+            | Expression::Lambda(_, _)
+            | Expression::Let(_, _)
+            | Expression::Cond(_)
+            | Expression::Do(_, _)
+            | Expression::Case(_, _)
+            | Expression::List(_, _)
+            | Expression::Infix { .. } => false,
+            Expression::Tuple(ts) | Expression::Array(ts) => ts.into_iter().all(|x| x.valid_pat()),
+            Expression::Dict(rec) => rec.fields().into_iter().all(|field| {
+                !field.is_rest()
+                    && field
+                        .get_value()
+                        .map(|ex| ex.valid_pat())
+                        .unwrap_or_else(|| false)
+            }),
+            Expression::App(left, right) => {
+                right.valid_pat() && {
+                    let mut tmp = left.as_ref();
+                    loop {
+                        match tmp {
+                            Expression::Ident(id) => {
+                                if id.is_upper() {
+                                    break true;
+                                }
+                            }
+                            Expression::App(x, y) => {
+                                if y.valid_pat() {
+                                    tmp = x.as_ref();
+                                    continue;
+                                } else {
+                                    break false;
+                                }
+                            }
+                            ex => {
+                                break ex.valid_pat();
+                            }
+                        }
+                    }
+                }
+            }
+            Expression::Cast(x, _) => x.valid_pat(),
+            Expression::Range(_, _) => todo!(),
+        }
+    }
+
     pub fn free_vars(&self) -> Set<Id>
     where
         Id: Copy + Eq + std::hash::Hash,
@@ -285,6 +492,10 @@ impl<Id, T> Expression<Id, T> {
                 vars.insert(*infix);
                 vars.extend(left.free_vars());
                 vars.extend(right.free_vars());
+            }
+            Expression::Section(sec) => {
+                vars.insert(*sec.affix());
+                vars.extend(sec.expr().free_vars());
             }
             Expression::Tuple(xs) | Expression::Array(xs) => {
                 xs.into_iter().for_each(|x| vars.extend(x.free_vars()))
@@ -335,6 +546,30 @@ impl<Id, T> Expression<Id, T> {
         vars
     }
 
+    pub fn app_iter(&self) -> impl Iterator<Item = &Expression<Id, T>> + '_ {
+        let mut tmp = self;
+        std::iter::from_fn(move || {
+            if let Self::App(x, y) = tmp {
+                tmp = x.as_ref();
+                Some(y.as_ref())
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn iter_lambda_args(&self) -> impl Iterator<Item = &Pattern<Id, T>> + '_ {
+        let mut tmp = self;
+        std::iter::from_fn(move || {
+            if let Self::Lambda(arg, body) = tmp {
+                tmp = body.as_ref();
+                Some(arg)
+            } else {
+                None
+            }
+        })
+    }
+
     pub fn map_id<X>(self, mut f: impl FnMut(Id) -> X) -> Expression<X, T> {
         match self {
             Expression::Ident(id) => Expression::Ident(f(id)),
@@ -348,6 +583,7 @@ impl<Id, T> Expression<Id, T> {
                 left: Box::new(left.map_id(|id| f(id))),
                 right: Box::new(right.map_id(|id| f(id))),
             },
+            Expression::Section(sec) => Expression::Section(sec.map_id(f)),
             Expression::Tuple(ts) => {
                 Expression::Tuple(ts.into_iter().map(|x| x.map_id(|id| f(id))).collect())
             }
@@ -415,6 +651,7 @@ impl<Id, T> Expression<Id, T> {
                 left: Box::new(left.map_id_ref(f)),
                 right: Box::new(right.map_id_ref(f)),
             },
+            Expression::Section(section) => Expression::Section(section.map_id_ref(f)),
             Expression::Tuple(ts) => {
                 Expression::Tuple(ts.into_iter().map(|ex| ex.map_id_ref(f)).collect())
             }
@@ -477,12 +714,13 @@ impl<Id, T> Expression<Id, T> {
             Expression::Ident(id) => Expression::Ident(id),
             Expression::Path(a, bs) => Expression::Path(a, bs),
             Expression::Lit(l) => Expression::Lit(l),
-            Expression::Neg(e) => todo!(),
+            Expression::Neg(e) => Expression::Neg(Box::new(e.map_t(f))),
             Expression::Infix { infix, left, right } => {
                 let left = Box::new(left.map_t(f));
                 let right = Box::new(right.map_t(f));
                 Expression::Infix { infix, left, right }
             }
+            Expression::Section(section) => Expression::Section(section.map_t(f)),
             Expression::Tuple(ts) => {
                 let mut xs = vec![];
                 for t in ts {
@@ -582,6 +820,7 @@ impl<Id, T> Expression<Id, T> {
                     right,
                 }
             }
+            Expression::Section(section) => Expression::Section(section.map_t_ref(f)),
             Expression::Tuple(ts) => {
                 let mut xs = vec![];
                 for t in ts {
@@ -646,7 +885,10 @@ impl<Id, T> Expression<Id, T> {
                     .collect(),
             ),
             Expression::Cast(x, ty) => Expression::Cast(Box::new(x.map_t_ref(f)), ty.map_t_ref(f)),
-            Expression::Do(_, _) => todo!(),
+            Expression::Do(stmts, last) => Expression::Do(
+                stmts.into_iter().map(|stmt| stmt.map_t_ref(f)).collect(),
+                Box::new(last.map_t_ref(f)),
+            ),
             Expression::Range(a, b) => Expression::Range(
                 Box::new(a.map_t_ref(f)),
                 if let Some(end) = b {
@@ -657,6 +899,73 @@ impl<Id, T> Expression<Id, T> {
             ),
             Expression::Group(x) => Expression::Group(Box::new(x.map_t_ref(f))),
         }
+    }
+}
+
+pub fn try_expr_into_pat<Id: Identifier, T>(expr: Expression<Id, T>) -> Option<Pattern<Id, T>> {
+    fn iters<A: Identifier, B>(exprs: Vec<Expression<A, B>>) -> Option<Vec<Pattern<A, B>>> {
+        exprs.into_iter().fold(Some(vec![]), |a, c| match a {
+            Some(mut acc) => try_expr_into_pat(c).map(|pat| {
+                acc.push(pat);
+                acc
+            }),
+            None => None,
+        })
+    }
+    match expr {
+        Expression::Ident(id) => Some(Pattern::Var(id)),
+        Expression::Path(_, _)
+        | Expression::Infix { .. }
+        | Expression::Lambda(_, _)
+        | Expression::Let(_, _)
+        | Expression::Section(_)
+        | Expression::List(_, _)
+        | Expression::Cond(_)
+        | Expression::Case(_, _)
+        | Expression::Do(_, _) => None,
+        Expression::Lit(lit) => Some(Pattern::Lit(lit)),
+        Expression::Neg(_) => todo!(),
+        Expression::Tuple(ts) => iters(ts).map(Pattern::Tup),
+        Expression::Array(ts) => iters(ts).map(Pattern::Vec),
+        Expression::Dict(rec) => Some(Pattern::Rec(rec.map(|(con, fields)| {
+            let mut flds = vec![];
+            for field in fields {
+                let f = field.map(|(id, expr)| (id, expr.and_then(try_expr_into_pat)));
+                flds.push(f);
+            }
+            (con, flds)
+        }))),
+        Expression::App(x, y) => {
+            let mut left = *x;
+            let mut right = *y;
+            let mut args = vec![];
+            loop {
+                if let Some(py) = try_expr_into_pat(right) {
+                    args.push(py);
+                    match left {
+                        Expression::App(x2, y2) => {
+                            left = *x2;
+                            right = *y2;
+                            continue;
+                        }
+                        Expression::Ident(id) if id.is_upper() => break Some(id),
+                        _ => break None,
+                    }
+                }
+                break None;
+            }
+            .map(|id| {
+                Pattern::Dat(id, {
+                    args.reverse();
+                    args
+                })
+            })
+        }
+        Expression::Cast(x, ty) => {
+            try_expr_into_pat(*x).map(|pat| Pattern::Cast(Box::new(pat), ty))
+        }
+        Expression::Range(_, _) => todo!(),
+        Expression::Group(x) => try_expr_into_pat(*x),
     }
 }
 
@@ -682,6 +991,12 @@ mod tests {
             ),
             four,
         );
+
+        println!(
+            "app iter collected: {:?}",
+            app.app_iter().collect::<Vec<_>>()
+        );
+
         let deque = app.flatten_app();
         assert_eq!(deque.len(), 5);
         let re_app = deque
