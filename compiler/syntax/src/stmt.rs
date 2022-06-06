@@ -1,12 +1,6 @@
 use wy_common::{Mappable, Set};
 
-use crate::{
-    decl::Arity,
-    expr::Expression,
-    ident::Ident,
-    pattern::Pattern,
-    tipo::{Context, Signature},
-};
+use crate::{decl::Arity, expr::Expression, ident::Ident, pattern::Pattern, tipo::Signature};
 
 /// ```wysk
 ///     fn foo :: Int -> Int -> Bool
@@ -38,6 +32,24 @@ wy_common::struct_field_iters! {
 }
 
 impl<Id, T> Match<Id, T> {
+    /// A trivial match consists of only an expression, with the `args` and
+    /// `where` fields empty vectors and `pred` a default `None`.
+    pub fn trivial(body: Expression<Id, T>) -> Self {
+        Self {
+            args: vec![],
+            pred: None,
+            body,
+            wher: vec![],
+        }
+    }
+    pub fn caf(body: Expression<Id, T>, wher: Vec<Binding<Id, T>>) -> Self {
+        Self {
+            args: vec![],
+            pred: None,
+            body,
+            wher,
+        }
+    }
     pub fn free_vars(&self) -> Set<Id>
     where
         Id: Copy + Eq + std::hash::Hash,
@@ -91,8 +103,19 @@ impl<Id, T> Match<Id, T> {
                 }
                 args
             },
-            pred: self.pred.map(|px| px.map_t(&mut |t| f(t))),
-            body: self.body.map_t(&mut |t| f(t)),
+            pred: match self.pred {
+                None => None,
+                Some(x) => {
+                    let mut it = vec![];
+                    iters(&mut it, || x.map_t(f));
+                    it.pop()
+                }
+            },
+            body: {
+                let mut it = vec![];
+                iters(&mut it, || self.body.map_t(f));
+                it.pop().unwrap()
+            },
             wher: {
                 let mut args = vec![];
                 for Binding {
