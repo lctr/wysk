@@ -1,10 +1,20 @@
-use wy_common::{functor::Bifunctor, Mappable, Set};
-use wy_lexer::Literal;
+use wy_common::{variant_preds, Mappable, Set};
+use wy_lexer::literal::Literal;
 
 use crate::{
     ident::Ident,
     tipo::{Con, Field, Record, Type},
 };
+
+variant_preds! { Pattern
+    | is_wild => Wild
+    | is_var => Var (_)
+    | is_unit => Tup (vs) [if vs.is_empty()]
+    | is_nil => Vec (vs) [if vs.is_empty()]
+    | is_void => Rec (Record::Anon(entries)) [if entries.is_empty()]
+    | is_lit => Lit (_)
+
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Pattern<Id = Ident, T = Ident> {
@@ -36,24 +46,45 @@ pub enum Pattern<Id = Ident, T = Ident> {
     Or(Vec<Pattern<Id, T>>),
     Rec(Record<Pattern<Id, T>, Id>),
     Cast(Box<Pattern<Id, T>>, Type<Id, T>),
+    Rng(Box<Pattern<Id, T>>, Option<Box<Pattern<Id, T>>>),
 }
 
 impl<Id, T> Pattern<Id, T> {
     pub const UNIT: Self = Self::Tup(vec![]);
-    pub const NIL: Self = Self::Vec(vec![]);
-    pub const VOID: Self = Self::Rec(Record::VOID);
-    pub fn is_unit(&self) -> bool {
-        matches!(self, Self::Tup(vs) if vs.is_empty())
+    pub const NULL: Self = Self::Vec(vec![]);
+
+    pub fn uniformly_bound_ors(&self) -> bool
+    where
+        Id: Eq + Copy + std::hash::Hash,
+    {
+        match self {
+            Self::Or(alts) => match &alts[..] {
+                [] => true,
+                [first, rest @ ..] => {
+                    let vars = first.vars();
+                    for pat in rest {
+                        if vars != pat.vars() {
+                            return false;
+                        }
+                    }
+                    true
+                }
+            },
+            Self::At(id, pat) => pat.uniformly_bound_ors() && !pat.vars().contains(id),
+            Self::Tup(pats) | Self::Vec(pats) | Self::Dat(_, pats) => {
+                pats.into_iter().all(|pat| pat.uniformly_bound_ors())
+            }
+            Self::Cast(pat, _) => pat.uniformly_bound_ors(),
+            _ => {
+                todo!()
+            }
+        }
     }
-    pub fn is_null(&self) -> bool {
-        matches!(self, Self::Vec(vs) if vs.is_empty())
-    }
-    pub fn is_void(&self) -> bool {
-        matches!(self, Self::Rec(Record::Anon(vs)) if vs.is_empty())
-    }
+
     pub fn is_empty_record(&self) -> bool {
         matches!(self, Self::Rec(Record::Anon(fs)|Record::Data(_, fs)) if fs.is_empty() )
     }
+
     pub fn vars(&self) -> Set<Id>
     where
         Id: Copy + Eq + std::hash::Hash,
@@ -89,8 +120,37 @@ impl<Id, T> Pattern<Id, T> {
             Pattern::Cast(p, _) => {
                 vars.extend(p.vars());
             }
+            Pattern::Rng(a, b) => {
+                vars.extend(a.vars());
+                if let Some(c) = b {
+                    vars.extend(c.vars())
+                }
+            }
         };
         vars
+    }
+
+    /// Checks whether a given pattern is able to be directly re-interpreted as
+    /// an expression
+    pub fn valid_expr(&self) -> bool {
+        match self {
+            Pattern::Wild | Pattern::At(_, _) | Pattern::Or(_) => false,
+            Pattern::Var(_) | Pattern::Lit(_) => true,
+            Pattern::Dat(_, xs) | Pattern::Tup(xs) | Pattern::Vec(xs) => {
+                xs.into_iter().all(|pat| pat.valid_expr())
+            }
+            Pattern::Lnk(x, y) => x.valid_expr() && y.valid_expr(),
+            Pattern::Rec(rec) => rec.fields().into_iter().all(|field| {
+                field
+                    .get_value()
+                    .map(|pat| pat.valid_expr())
+                    .unwrap_or_else(|| false)
+            }),
+            Pattern::Cast(pat, _) => pat.valid_expr(),
+            Pattern::Rng(a, b) => {
+                a.valid_expr() && b.as_ref().map(|p| p.valid_expr()).unwrap_or_else(|| true)
+            }
+        }
     }
 
     pub fn map_id<F, X>(self, mut f: F) -> Pattern<X, T>
@@ -123,6 +183,10 @@ impl<Id, T> Pattern<Id, T> {
             Pattern::Cast(pat, ty) => {
                 Pattern::Cast(Box::new(pat.map_id(|id| f(id))), ty.map_id(&mut f))
             }
+            Pattern::Rng(a, b) => Pattern::Rng(
+                a.fmap(|pat| pat.map_id(|id| f(id))),
+                b.fmap(|p| p.fmap(|p| p.map_id(|id| f(id)))),
+            ),
         }
     }
     pub fn map_id_ref<U>(&self, f: &mut impl FnMut(&Id) -> U) -> Pattern<U, T>
@@ -157,6 +221,10 @@ impl<Id, T> Pattern<Id, T> {
                 )
             })),
             Pattern::Cast(pat, ty) => Pattern::Cast(Box::new(pat.map_id_ref(f)), ty.map_id_ref(f)),
+            Pattern::Rng(a, b) => Pattern::Rng(
+                Box::new(a.as_ref().map_id_ref(f)),
+                b.as_ref().map(|c| Box::new(c.map_id_ref(f))),
+            ),
         }
     }
     pub fn map_t<F, U>(self, f: &mut F) -> Pattern<Id, U>
@@ -177,7 +245,7 @@ impl<Id, T> Pattern<Id, T> {
             }
             Pattern::Vec(ts) => {
                 if ts.is_empty() {
-                    Pattern::NIL
+                    Pattern::NULL
                 } else {
                     Pattern::Vec(ts.fmap(|p| p.map_t(f)))
                 }
@@ -240,6 +308,9 @@ impl<Id, T> Pattern<Id, T> {
                 let tipo = map_ty(ty, f);
                 Pattern::Cast(pat, tipo)
             }
+            Pattern::Rng(a, b) => {
+                Pattern::Rng(a.fmap(|p| p.map_t(f)), b.fmap(|bp| bp.fmap(|p| p.map_t(f))))
+            }
         }
     }
 
@@ -263,7 +334,7 @@ impl<Id, T> Pattern<Id, T> {
             }
             Pattern::Vec(ts) => {
                 if ts.is_empty() {
-                    Pattern::NIL
+                    Pattern::NULL
                 } else {
                     Pattern::Vec(ts.into_iter().map(|p| p.map_t_ref(f)).collect())
                 }
@@ -345,6 +416,7 @@ impl<Id, T> Pattern<Id, T> {
                 let tipo = map_ty(ty, f);
                 Pattern::Cast(pat, tipo)
             }
+            Pattern::Rng(_, _) => todo!(),
         }
     }
 }
