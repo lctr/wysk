@@ -10,6 +10,7 @@ wy_common = { path = "../common" }
 wy_syntax = { path = "../syntax" }
 wy_graph = { path = "../graph" }
 wy_intern = { path = "../intern" }
+wy_pretty = { path = "../pretty" }
 serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
