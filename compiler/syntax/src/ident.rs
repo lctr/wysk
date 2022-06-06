@@ -1,5 +1,5 @@
 use wy_common::{deque, Deque};
-use wy_intern::symbol::{self, Symbol, Symbolic};
+use wy_intern::symbol::{self, reserved, Symbol, Symbolic};
 
 pub trait Identifier: Eq {
     fn is_upper(&self) -> bool;
@@ -103,6 +103,15 @@ impl Symbolic for Ident {
 wy_common::variants!(#((Symbol) Ident :Upper :Lower :Infix :Fresh));
 
 impl Ident {
+    pub const MAIN_MOD: Self = Ident::Upper(reserved::MAIN_MOD.symbol);
+    pub const MAIN_FUN: Self = Ident::Lower(reserved::MAIN_FUN.symbol);
+    pub const COLON: Self = Ident::Infix(reserved::COLON.symbol);
+    pub const ARROW: Self = Ident::Infix(reserved::ARROW.symbol);
+    pub const MINUS: Self = Ident::Infix(reserved::MINUS.symbol);
+    pub const TRUE: Self = Ident::Upper(reserved::TRUE.symbol);
+    pub const FALSE: Self = Ident::Lower(reserved::FALSE.symbol);
+    pub const WILD: Self = Ident::Fresh(reserved::WILD.symbol);
+
     pub fn symbol(&self) -> Symbol {
         *self.get_inner()
     }
@@ -135,15 +144,20 @@ impl Ident {
 
     #[inline]
     pub fn minus_sign() -> Self {
-        symbol::MINUS.pure(Self::Infix)
+        Self::MINUS
     }
 
     #[inline]
     pub fn cons_sign() -> Self {
-        Self::Infix(*symbol::CONS)
+        Self::COLON
     }
 
-    pub fn tuple_commas(extras: usize) -> Self {
+    #[inline]
+    pub fn is_cons_sign(&self) -> bool {
+        self == &Self::COLON
+    }
+
+    pub fn mk_tuple_commas(extras: usize) -> Self {
         Self::Infix(symbol::intern_once(
             &*(0..(extras + 1)).map(|_| ',').collect::<String>(),
         ))
@@ -152,13 +166,25 @@ impl Ident {
     pub fn with_suffix(self, suffix: Self) -> Chain<Self> {
         Chain(self, wy_common::deque!(suffix))
     }
+
+    /// If an identifier's string form consists entirely of commas, then this
+    /// returns the number of commas. Otherwise, it returns `None`.
+    pub fn comma_count(&self) -> Option<usize> {
+        if let Self::Infix(s) = self {
+            symbol::lookup(*s).chars().fold(Some(0), |a, c| {
+                a.and_then(|n| if c == ',' { Some(n + 1) } else { None })
+            })
+        } else {
+            None
+        }
+    }
 }
 
 #[test]
 fn test_idents() {
     let cons = Ident::cons_sign();
     let minus = Ident::minus_sign();
-    let tuples = (0..5).map(Ident::tuple_commas).collect::<Vec<_>>();
+    let tuples = (0..5).map(Ident::mk_tuple_commas).collect::<Vec<_>>();
     assert_eq!(cons, Ident::Infix(symbol::intern_once(":")));
     assert_eq!(minus, Ident::Infix(symbol::intern_once("-")));
     assert_eq!(tuples[0], Ident::Infix(symbol::intern_once(",")));
@@ -344,6 +370,10 @@ impl<Id> Chain<Id> {
         Id: std::fmt::Display,
     {
         format!("{}", self)
+    }
+
+    pub fn to_vec(self) -> Vec<Id> {
+        std::iter::once(self.0).chain(self.1).collect()
     }
 
     pub fn write_to_string(&self, buf: &mut String)
