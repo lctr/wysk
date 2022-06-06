@@ -1,21 +1,31 @@
 pub mod symbol;
 
+pub use symbol::reserved::*;
 pub use symbol::*;
 
-pub mod sym {
-    use super::{intern_many, Symbol};
+use wy_span::{Located, Positioned, Spanned};
 
-    lazy_static::lazy_static! {
-        pub static ref PRIM_TY_NAMES: [Symbol; 9] = intern_many([
-            "Bool",
-            "Byte",
-            "Int",
-            "Nat",
-            "Float",
-            "Double",
-            "Char",
-            "Str",
-            "IO"
-        ]);
+impl<S> Symbolic for Spanned<S>
+where
+    S: Symbolic,
+{
+    fn get_symbol(&self) -> Symbol {
+        self.item().get_symbol()
+    }
+}
+impl<S> Symbolic for Positioned<S>
+where
+    S: Symbolic,
+{
+    fn get_symbol(&self) -> Symbol {
+        self.item().get_symbol()
+    }
+}
+impl<S> Symbolic for Located<S>
+where
+    S: Symbolic,
+{
+    fn get_symbol(&self) -> Symbol {
+        self.item().get_symbol()
     }
 }
