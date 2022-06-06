@@ -45,7 +45,7 @@ The following may not necessarily be directly involved within the development of
 * [[1992] Simon Peyton Jones. *Implementing lazy functional languages on stock
   hardware: the Spineless Tagless
   G-machine*](https://www.microsoft.com/en-us/research/wp-content/uploads/1992/04/spineless-tagless-gmachine.pdf)
-* [[1997] Simon Peyton Jones, Mark Hones. *Type classes: an exploration of the design space*](https://www.microsoft.com/en-us/research/wp-content/uploads/1997/01/multi.pdf)
+* [[1997] Simon Peyton Jones, Mark Hones, Erik Meijer. *Type classes: an exploration of the design space*](https://www.microsoft.com/en-us/research/wp-content/uploads/1997/01/multi.pdf)
 * [[1999] Simon Peyton Jones, Simon Marlow. *Secrets of the Glasgow Haskell
   Compiler inliner*](https://www.microsoft.com/en-us/research/wp-content/uploads/2002/07/inline.pdf)
 * [[2005] Daan Leijen. *Extensible records with scoped labels*](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/scopedlabels.pdf)
