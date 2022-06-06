@@ -1,19 +1,76 @@
-use std::{
-    collections::{hash_map, HashMap as Map, HashSet as Set},
-    hash::Hash,
-};
+use std::{collections::HashSet as Set, hash::Hash};
 
 use wy_syntax::{
+    decl::{Arity, DataDecl, Tag, Variant},
     ident::Ident,
-    tipo::{Tv, Type},
-    Arity, DataDecl, Program, Tag,
+    tipo::{Con, Context, Tv, Type},
 };
 
 use super::{
-    constraint::{Constraint, Scheme},
-    error::Error,
+    envr::{ClassId, TyId},
     subst::{Subst, Substitutable},
 };
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub enum Kind {
+    Star,
+    Arrow(Box<Kind>, Box<Kind>),
+}
+
+impl std::fmt::Debug for Kind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Star => write!(f, "*"),
+            Self::Arrow(arg0, arg1) => {
+                write!(f, "{:?} -> {:?}", arg0, arg1)
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for Kind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Kind::Star => write!(f, "*"),
+            Kind::Arrow(a, b) => write!(f, "{} -> {}", a, b),
+        }
+    }
+}
+
+impl Kind {
+    pub fn from_poly(tvs: &[Tv]) -> Self {
+        let mut kind = Self::Star;
+        for _ in tvs {
+            kind = Self::Arrow(Box::new(Self::Star), Box::new(kind));
+        }
+        kind
+    }
+    pub fn from_type(ty: &Type) -> Self {
+        match ty {
+            Type::Var(_) => Self::Star,
+            Type::Con(Con::Tuple(0), _) => Self::Star,
+            Type::Con(Con::List, t) if t.len() == 1 => {
+                Self::Arrow(Box::new(Self::Star), Box::new(Self::from_type(&t[0])))
+            }
+            Type::Con(_, xs) if xs.is_empty() => Self::Star,
+            Type::Con(_, xs) => xs.into_iter().fold(Self::Star, |a, c| {
+                Self::Arrow(Box::new(Self::from_type(c)), Box::new(a))
+            }),
+            Type::Fun(..) => Self::Star,
+            Type::Tup(xs) if xs.is_empty() => Self::Star,
+            Type::Tup(xs) => Self::Arrow(
+                xs.into_iter().fold(Box::new(Self::Star), |a, c| {
+                    Box::new(Self::Arrow(a, Box::new(Self::from_type(c))))
+                }),
+                Box::new(Self::Star),
+            ),
+            Type::Vec(t) => {
+                Self::Arrow(Box::new(Self::Star), Box::new(Self::from_type(t.as_ref())))
+            }
+            Type::Rec(_) => Self::Star,
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// TODO: should this be polymorphic with respect to the type representation?
@@ -66,9 +123,9 @@ impl Substitutable for DataCon {
 /// holding their types as functions. Note that this returns types with type
 /// variables parametrized over the type `Tv`, unlike the (more general)
 /// `Variant` method.
-pub fn data_decl_ty(data_decl: &DataDecl) -> (Type<Ident, Tv>, Vec<DataCon>) {
+pub fn dataty_ctors(data_decl: &DataDecl) -> (Type<Ident, Tv>, Vec<DataCon>) {
     let data_ty = Type::Con(
-        data_decl.name,
+        Con::Data(data_decl.name),
         data_decl
             .poly
             .iter()
@@ -82,139 +139,155 @@ pub fn data_decl_ty(data_decl: &DataDecl) -> (Type<Ident, Tv>, Vec<DataCon>) {
         .clone()
         .into_iter()
         .map(|v| v.map_t(&mut Tv::from_ident))
-        .map(|variant| DataCon {
-            name: variant.name,
-            tag: variant.tag,
-            arity: variant.arity,
-            tipo: variant.fun_ty(data_ty.clone()),
-        })
+        .map(
+            |variant @ Variant {
+                 name, tag, arity, ..
+             }| DataCon {
+                name,
+                tag,
+                arity,
+                tipo: variant.fun_ty(data_ty.clone()),
+            },
+        )
         .collect::<Vec<_>>();
     (data_ty, ctors)
 }
 
-#[derive(Clone, Debug)]
-pub struct Envr<K, V> {
-    pub store: Map<K, V>,
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Class {
+    pub(crate) name: Ident,
+    pub(crate) methods: Vec<(Ident, TyId)>,
+    pub(crate) vars: Vec<Tv>,
+    pub(crate) ctxt: Vec<Context<ClassId, Tv>>,
 }
 
-impl<K, V> Envr<K, V>
-where
-    K: Eq + Hash,
-{
-    pub fn new() -> Self {
-        Self { store: Map::new() }
-    }
-
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self {
-            store: Map::with_capacity(capacity),
-        }
-    }
-
-    pub fn contains_key(&self, name: &K) -> bool {
-        self.store.contains_key(name)
-    }
-
-    pub fn keys(&self) -> hash_map::Keys<'_, K, V> {
-        self.store.keys()
-    }
-
-    pub fn get(&self, k: &K) -> Option<&V> {
-        self.store.get(k)
-    }
-
-    pub fn get_mut(&mut self, k: &K) -> Option<&mut V> {
-        self.store.get_mut(k)
-    }
-
-    pub fn insert(&mut self, k: K, v: V) -> Option<V> {
-        self.store.insert(k, v)
-    }
-
-    pub fn remove(&mut self, k: &K) -> Option<V> {
-        self.store.remove(k)
-    }
-
-    pub fn find<F>(&self, predicate: F) -> Option<(&K, &V)>
-    where
-        F: FnMut(&(&K, &V)) -> bool,
-    {
-        self.store.iter().find(predicate)
-    }
-
-    pub fn find_mut<F>(&mut self, predicate: F) -> Option<(&K, &mut V)>
-    where
-        F: FnMut(&(&K, &mut V)) -> bool,
-    {
-        self.store.iter_mut().find(predicate)
-    }
-
-    pub fn without(&self, k: &K) -> Self
-    where
-        K: Copy,
-        V: Clone,
-    {
-        self.store
-            .iter()
-            .filter_map(|(id, v)| {
-                if id == k {
-                    Some((*id, v.clone()))
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-
-    pub fn without_many(&self, ks: &[K]) -> Self
-    where
-        K: Copy,
-        V: Clone,
-    {
-        self.store
-            .iter()
-            .filter_map(|(id, v)| {
-                if ks.contains(id) {
-                    None
-                } else {
-                    Some((*id, v.clone()))
-                }
-            })
-            .collect()
-    }
-
-    pub fn iter(&self) -> hash_map::Iter<K, V> {
-        self.store.iter()
-    }
-
-    pub fn iter_mut(&mut self) -> hash_map::IterMut<K, V> {
-        self.store.iter_mut()
-    }
-
-    pub fn entry(&mut self, k: K) -> hash_map::Entry<K, V> {
-        self.store.entry(k)
-    }
+wy_common::struct_field_iters! {
+    Class
+    | methods => methods_iter :: (Ident, TyId)
+    | vars => vars_iter :: Tv
+    | ctxt => ctxt_iter :: Context<ClassId, Tv>
 }
 
-impl<K: Eq + Hash, V> FromIterator<(K, V)> for Envr<K, V> {
-    fn from_iter<T: IntoIterator<Item = (K, V)>>(iter: T) -> Self {
-        Envr {
-            store: iter.into_iter().collect::<Map<_, _>>(),
-        }
-    }
+wy_common::newtype! { usize in InstId | Show AsUsize (+) [Instance] }
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Instance {
+    pub(crate) class: ClassId,
+    pub(crate) tyid: TyId,
+}
+
+wy_common::newtype! { usize in ConId | Show AsUsize (+) [Constructor] }
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Datum {
+    pub(crate) name: Ident,
+    pub(crate) tyid: TyId,
+    pub(crate) tag: Tag,
+    pub(crate) arity: Arity,
 }
 
 #[cfg(test)]
 mod tests {
-    use wy_graph::{EdgeVisitor, Graph};
-    use wy_syntax::visit::Visit;
+    use wy_common::pretty::Dictionary;
+    use wy_graph::{EdgeVisitor, Graph, NodeId};
+    use wy_syntax::{
+        stmt::{Binding, Match},
+        visit::Visit,
+    };
 
     use super::*;
     use std::collections::HashMap;
 
     #[test]
-    fn test_thing() {
+    fn inspect_prelude_constructors() {
         let mut map = HashMap::new();
+        match wy_parser::parse_prelude() {
+            Ok(program) => {
+                program
+                    .module
+                    .map_t_ref(&mut |id| Tv::from(id))
+                    .datatys_iter()
+                    .for_each(|decl| {
+                        let mut tyn = true;
+                        decl.constructor_types().into_iter().for_each(|cons| {
+                            let name = cons.name;
+                            let vars = cons.var_map();
+                            let tipo = cons.tipo.map_t_ref(&mut |tv| vars[tv]);
+                            let mut vars = vars.into_iter().map(|(_k, v)| v).collect::<Vec<_>>();
+                            vars.sort();
+                            println!(
+                                "{id} | {con} :: {var}{ty}",
+                                id = if tyn {
+                                    tyn = false;
+                                    decl.name.to_string()
+                                } else {
+                                    std::iter::repeat(' ')
+                                        .take(decl.name.to_string().len())
+                                        .collect::<String>()
+                                },
+                                con = name,
+                                var = if vars.is_empty() {
+                                    String::new()
+                                } else {
+                                    {
+                                        let mut s = String::new();
+                                        s.push_str("forall");
+                                        for v in &vars {
+                                            s.push_str(&*format!(" {}", v));
+                                        }
+                                        s.push_str(" . ");
+                                        s
+                                    }
+                                },
+                                ty = &tipo
+                            );
+                            map.insert(name, tipo);
+                        })
+                    });
+                println!("Constructors {}", Dictionary(&map))
+            }
+            Err(e) => {
+                println!("{}", e)
+            }
+        }
+    }
+
+    fn visit_match(
+        graph: &mut Graph<Ident>,
+        bindings: &HashMap<Ident, NodeId>,
+        Match {
+            args: _,
+            pred,
+            body,
+            wher,
+        }: &Match,
+        decl_name: &Ident,
+    ) {
+        if let Some(pred) = pred {
+            EdgeVisitor {
+                graph,
+                map: bindings,
+                node_id: bindings[decl_name],
+            }
+            .visit_expr(pred)
+            .unwrap();
+        }
+        for Binding { name, arms, .. } in wher {
+            for arm in arms {
+                visit_match(graph, bindings, arm, name)
+            }
+        }
+        EdgeVisitor {
+            graph,
+            map: bindings,
+            node_id: bindings[decl_name],
+        }
+        .visit_expr(body)
+        .unwrap();
+    }
+
+    #[test]
+    fn test_bindings_graph() {
         let mut bindings = HashMap::new();
         let mut graph = Graph::new();
         match wy_parser::parse_prelude() {
@@ -224,49 +297,26 @@ mod tests {
                     .fundefs
                     .clone()
                     .into_iter()
-                    .enumerate()
-                    .for_each(|(idx, fundecl)| {
-                        let idx = graph.add_node(idx);
+                    .for_each(|fundecl| {
+                        let idx = graph.add_node(fundecl.name);
                         bindings.insert(fundecl.name, idx);
                     });
                 program.module.fundefs.clone().into_iter().for_each(|decl| {
-                    decl.defs.into_iter().for_each(|m| {
-                        if let Some(pred) = &m.pred {
-                            EdgeVisitor {
-                                graph: &mut graph,
-                                map: &bindings,
-                                node_id: bindings[&decl.name],
-                            }
-                            .visit_expr(pred)
-                            .unwrap();
-                        }
-                        EdgeVisitor {
-                            graph: &mut graph,
-                            map: &bindings,
-                            node_id: bindings[&decl.name],
-                        }
-                        .visit_expr(&m.body)
-                        .unwrap();
-                    })
+                    decl.defs
+                        .into_iter()
+                        .for_each(|m| visit_match(&mut graph, &bindings, &m, &decl.name))
                 });
-                program
-                    .module
-                    .datatys
-                    .iter()
-                    .map(|decl| data_decl_ty(&decl))
-                    .for_each(|(_f, g)| {
-                        g.into_iter().for_each(|datacon| {
-                            let vars = datacon.tipo.enumerate().collect::<HashMap<Tv, Tv>>();
-                            println!("{}", datacon.tipo.clone().map_t(&mut |tv| vars[&tv]));
-                            map.insert(datacon.name, datacon.tipo);
-                        })
-                    });
-
-                println!("{:#?}", &map)
+                let sccs = graph.strongly_connected_components();
+                println!("sccs: {:?}", &sccs);
+                println!("graph: {:?}", &graph);
+                println!("bindings: {:?}", &bindings);
+                let sccs = sccs
+                    .into_iter()
+                    .map(|scc| scc.map(|node_id| &graph[node_id]).collect::<Vec<_>>())
+                    .collect::<Vec<_>>();
+                println!("sccs(2): {:#?}", &sccs)
             }
-            Err(e) => {
-                println!("{}", e)
-            }
+            Err(e) => println!("{}", e),
         }
     }
 }
