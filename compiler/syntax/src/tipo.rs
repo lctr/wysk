@@ -1,9 +1,9 @@
 use std::{fmt::Write, hash::Hash};
 
-use wy_common::{Map, Mappable};
+use wy_common::{either::Either, Map, Mappable};
 use wy_intern::{Symbol, Symbolic};
 
-use crate::ident::Ident;
+use crate::{decl::Arity, ident::Ident};
 
 /// Represents a type variable.
 ///
@@ -29,6 +29,18 @@ impl Tv {
     /// Lossfully coerces an identifier into a type variable.
     pub fn from_ident(ident: Ident) -> Self {
         Tv(ident.as_u32())
+    }
+
+    pub fn write_str(&self, buf: &mut String) {
+        wy_common::text::write_display_var(self.0, buf)
+    }
+
+    pub fn as_type<X>(self) -> Type<X, Self> {
+        Type::Var(self)
+    }
+
+    pub fn as_con<X>(self) -> Con<X, Self> {
+        Con::Free(self)
     }
 }
 
@@ -84,7 +96,7 @@ impl From<Tv> for Ident {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Var<Id>(Id, Tv);
+pub struct Var<Id>(pub Id, pub Tv);
 impl<Id> Var<Id> {
     pub fn new(id: Id) -> Var<Id> {
         Var(id, Tv(0))
@@ -177,6 +189,21 @@ pub enum Con<Id = Ident, T = Id> {
     Free(T),
 }
 
+impl<Id: Symbolic> Symbolic for Con<Id, Tv> {
+    fn get_symbol(&self) -> Symbol {
+        match self {
+            Con::List => *wy_intern::COLON,
+            Con::Tuple(ts) => {
+                let s = std::iter::repeat(',').take(*ts).collect::<String>();
+                wy_intern::intern_once(&*s)
+            }
+            Con::Arrow => *wy_intern::ARROW,
+            Con::Data(s) => s.get_symbol(),
+            Con::Free(t) => wy_intern::intern_once(&*t.display()),
+        }
+    }
+}
+
 impl<Id, T> Con<Id, T> {
     pub fn is_list(&self) -> bool {
         matches!(self, Con::List)
@@ -193,6 +220,18 @@ impl<Id, T> Con<Id, T> {
     pub fn is_variable(&self) -> bool {
         matches!(self, Con::Free(..))
     }
+
+    /// If this constructor is not concrete (i.e., is a `Con::Free` variant),
+    /// then it returns an option, wrapped with `Some`, containing a reference
+    /// to the type variable standing in place of the type constructor.
+    /// Otherwise returns `None`.
+    pub fn get_var(&self) -> Option<&T> {
+        match self {
+            Self::Free(t) => Some(t),
+            _ => None,
+        }
+    }
+
     /// Since `Type` is generic over identifiers, in order to extract the
     /// identifier used for the (polymorphic) list constructor `:` -- which, as
     /// a result of string interning, is represented by a `Symbol` -- a closure
@@ -203,7 +242,7 @@ impl<Id, T> Con<Id, T> {
     /// *not* include the parentheses! Hence this function is essentially a
     /// shortcut to interning `:` and mapping it to represent an identifier.
     pub fn list_cons_id(mut f: impl FnMut(Symbol) -> Id) -> Id {
-        f(*wy_intern::CONS)
+        f(*wy_intern::COLON)
     }
 
     /// Like with the list constructor `:`, the tuple constructor must also be
@@ -264,6 +303,24 @@ impl<Id, T> Con<Id, T> {
     }
 }
 
+impl Con<Ident, Tv> {
+    const fn reserved(wy_intern::Reserved { symbol, .. }: wy_intern::Reserved) -> Con<Ident, Tv> {
+        Con::Data(Ident::Upper(symbol))
+    }
+
+    pub const ARROW: Self = Self::reserved(wy_intern::ARROW);
+    pub const BOOL: Self = Self::reserved(wy_intern::BOOL);
+    pub const INT: Self = Self::reserved(wy_intern::INT);
+    pub const NAT: Self = Self::reserved(wy_intern::NAT);
+    pub const FLOAT: Self = Self::reserved(wy_intern::FLOAT);
+    pub const DOUBLE: Self = Self::reserved(wy_intern::DOUBLE);
+    pub const BYTE: Self = Self::reserved(wy_intern::BYTE);
+    pub const CHAR: Self = Self::reserved(wy_intern::CHAR);
+    pub const STR: Self = Self::reserved(wy_intern::STR);
+    pub const IO: Self = Self::reserved(wy_intern::IO);
+    pub const HOLE: Self = Self::reserved(wy_intern::WILD);
+}
+
 impl<Id: std::fmt::Display, T: std::fmt::Display> std::fmt::Display for Con<Id, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -293,14 +350,12 @@ impl<Id: std::fmt::Display, T: std::fmt::Display> std::fmt::Display for Con<Id, 
 /// * `[a]` desugars into `(:) a` The above desugared forms correspond to the
 /// `Con` variant. Note: this does not hold for record types!
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Type<Id = Ident, Ty = Id> {
+pub enum Type<Id = Ident, T = Id> {
     /// Type variables. These use their own special inner type `Tv`, which is a
     /// newtype wrapper around a `u32`.
-    Var(Ty),
-    /// Type constructors. Note that a `Con` variant may NOT have a type
-    /// variable as the cosnstructor. For polymorphism over a constructor, use
-    /// the `App` variant.
-    Con(Con<Id, Ty>, Vec<Type<Id, Ty>>),
+    Var(T),
+    /// Type constructor applications.
+    Con(Con<Id, T>, Vec<Type<Id, T>>),
     /// Function type. The type `a -> b` describes a function whose argument is
     /// of type `a` and whose return value is of type `b`. Functions are *all*
     /// curried, hence a multi-argument function type is a function type whose
@@ -310,103 +365,328 @@ pub enum Type<Id = Ident, Ty = Id> {
     ///
     /// Function types are sugar for type application of the type constructor
     /// `(->)`, which as an infix is *right* associative. Hence, the type
-    /// signature `a -> b -> c` can be syntactically read as `(a -> b) -> c`.
+    /// signature `a -> b -> c -> d` can be syntactically grouped and re-written
+    /// as `a -> (b -> (c -> d))`.
     ///
     /// When an intermediary type in the function chain is itself another
     /// function type, then parentheses are added to prevent ambiguity, as in
-    /// the type `a -> (b -> c) -> d`, where the first argument is of type `a`
-    /// and the second is of type `b -> c`.
-    Fun(Box<Type<Id, Ty>>, Box<Type<Id, Ty>>),
-    Tup(Vec<Type<Id, Ty>>),
-    Vec(Box<Type<Id, Ty>>),
-    Rec(Record<Type<Id, Ty>, Id>),
+    /// the type `a -> (b -> c) -> d`, which is read as `a -> ((b -> c) -> d)`,
+    /// where the first argument is of type `a` and the second is of type `b ->
+    /// c`.
+    Fun(Box<Type<Id, T>>, Box<Type<Id, T>>),
+    Tup(Vec<Type<Id, T>>),
+    Vec(Box<Type<Id, T>>),
+    Rec(Record<Type<Id, T>, Id>),
 }
 
-impl<Id: std::fmt::Display, Ty: std::fmt::Display> std::fmt::Display for Type<Id, Ty> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Type::Var(tv) => write!(f, "{}", tv),
-            Type::Con(con, args) => {
-                if args.is_empty() {
-                    write!(f, "{}", con)
-                } else {
-                    write!(f, "{}", con)?;
-                    for arg in args {
-                        if arg.is_func() || (arg.is_app() && !arg.is_nullary()) {
-                            write!(f, " ({})", arg)?;
-                            continue;
-                        }
-                        write!(f, " {}", arg)?;
-                    }
-                    Ok(())
-                }
-            }
-            Type::Fun(x, y) => {
-                if x.is_func() {
-                    write!(f, "({})", x)?;
-                } else {
-                    write!(f, "{}", x)?;
-                }
-                write!(f, " -> ")?;
-                if y.is_func() {
-                    write!(f, "({})", y)
-                } else {
-                    write!(f, "{}", y)
-                }
-            }
-            Type::Tup(tys) => {
-                write!(f, "(")?;
-                match tys.as_slice() {
-                    [] => {}
-                    [a, rest @ ..] => {
-                        write!(f, "{}", a)?;
-                        for r in rest {
-                            write!(f, ", {}", r)?;
-                        }
-                    }
-                };
-                write!(f, ")")
-            }
-            Type::Vec(t) => write!(f, "[{}]", t.as_ref()),
-            Type::Rec(rec) => {
-                char::fmt(&'{', f)?;
-                let filtered = rec
-                    .fields()
-                    .iter()
-                    .filter_map(|field| match field {
-                        // for typed records, we should expect both lhs (keys)
-                        // and rhs (types)
-                        Field::Rest | Field::Key(_) => None,
-                        Field::Entry(k, v) => Some((k, v)),
-                    })
-                    .collect::<Vec<_>>();
-                match &filtered[..] {
-                    [] => {}
-                    [(k, v), rest @ ..] => {
-                        write!(f, " {} :: {}", k, v)?;
-                        for (k, v) in rest {
-                            write!(f, ", {} :: {}", k, v)?;
-                        }
-                        write!(f, " ")?;
-                    }
-                };
-                char::fmt(&'}', f)
-            }
-        }
-    }
+wy_common::variant_preds! {
+    |Id, T| Type[Id, T]
+    | is_var => Var(_)
+    | is_fun => Fun(..)
+    | is_con => Con(..)
+    | is_vec => Vec(..)
+    | is_nullary => Con(_, ts) [if ts.is_empty()]
+    | is_fun_of_fun => Fun(x, _) [if x.is_fun()]
+    | is_1arg_fun => Fun(x, y) [if !x.is_fun() && !y.is_fun()]
+    | is_2arg_fun => Fun(x, y) [if !x.is_fun() && y.is_1arg_fun()]
+    | is_fun_arg2_is_fun => Fun(_, y) [if y.is_fun_of_fun()]
+    | is_list_con_form => Con(Con::List, _)
+    | is_arrow_con_form => Con(Con::Arrow, _)
+    | is_con_var => Con(Con::Free(_), _)
+    | is_concrete_con => Con(Con::Data(_), _)
 }
 
-impl<Id, Ty> Type<Id, Ty> {
+impl<Id, T> Type<Id, T> {
     pub const UNIT: Self = Self::Tup(vec![]);
 
+    #[inline]
     pub fn mk_fun(x: Self, y: Self) -> Self {
         Self::Fun(Box::new(x), Box::new(y))
     }
 
-    pub fn contains_constructor(&self, con: &Con<Id, Ty>) -> bool
+    /// Given a type `t0` and a (reversible) collection of types `t1`, `t2`,
+    /// ..., `tn`, returns the function type `t0 -> (t1 -> (t2 -> ... -> tn))`.
+    /// If the collection of types provided is empty, then the initial type `t0`
+    /// is returned.
+    #[inline]
+    pub fn try_mk_fun(head: Self, rest: impl DoubleEndedIterator + Iterator<Item = Self>) -> Self {
+        if let Some(tail) = rest.rev().reduce(|a, c| Self::mk_fun(a, c)) {
+            Self::mk_fun(head, tail)
+        } else {
+            head
+        }
+    }
+
+    #[inline]
+    pub fn mk_var_tyapp(con_var: T, args: impl IntoIterator<Item = Self>) -> Self {
+        Self::Con(Con::Free(con_var), args.into_iter().collect())
+    }
+
+    #[inline]
+    pub fn mk_app(ty_con: Con<Id, T>, ty_args: impl IntoIterator<Item = Self>) -> Self {
+        Self::Con(ty_con, ty_args.into_iter().collect())
+    }
+
+    #[inline]
+    pub fn mk_list(list_of: Self) -> Self {
+        Self::Vec(Box::new(list_of))
+    }
+
+    #[inline]
+    pub fn mk_tuple(tuple_of: impl IntoIterator<Item = Self>) -> Self {
+        Self::Tup(tuple_of.into_iter().collect())
+    }
+
+    #[inline]
+    pub fn mk_var(tyvar: T) -> Self {
+        Self::Var(tyvar)
+    }
+
+    #[inline]
+    pub fn to_list(self) -> Self {
+        Self::mk_list(self)
+    }
+
+    #[inline]
+    pub fn clone_to_list(&self) -> Self
+    where
+        Id: Copy,
+        T: Copy,
+    {
+        Self::mk_list(self.clone())
+    }
+
+    #[inline]
+    pub fn get_con(&self) -> Option<Con<Id, T>>
+    where
+        Id: Copy,
+        T: Copy,
+    {
+        match self {
+            Type::Var(_) => None,
+            Type::Con(c, _) => Some(*c),
+            Type::Fun(_, _) => Some(Con::Arrow),
+            Type::Tup(ts) => {
+                if ts.is_empty() {
+                    None
+                } else {
+                    Some(Con::Tuple(ts.len()))
+                }
+            }
+            Type::Vec(_) => Some(Con::List),
+            Type::Rec(r) => r.ctor().map(|id| Con::Data(*id)),
+        }
+    }
+
+    /// Returns the number of arguments in a function. If the arity is `zero`,
+    /// then this method returns `None`.
+    pub fn fun_arity(&self) -> Option<Arity> {
+        let mut arity = Arity::ZERO;
+        let mut tmp = self;
+        while let Self::Fun(_x, y) = tmp {
+            arity += 1;
+            tmp = y.as_ref();
+        }
+        if arity.is_zero() {
+            None
+        } else {
+            Some(arity)
+        }
+    }
+
+    /// Returns a vector of all the argument types of a function type in order
+    /// from left to right; e.g., for the type
+    ///
+    ///     a -> b -> c -> d
+    ///
+    /// which is parsed as
+    ///
+    ///     a -> (b -> (c -> d))
+    ///
+    /// this method returns the list
+    ///
+    ///     [a, b, c, d]
+    ///
+    /// If the type corresponding to `Self` is not a function type, then a
+    /// single-element vector containing the `Self` type instance is returned.
+    /// Thus, this method returns vectors of length > 1 for function types. The
+    /// method `maybe_fun_vec` returns instead an `Either<Type, Vec<Type>>`
+    /// instance as an alternative to this functionality.
+    ///
+    /// Note however that this does not have a "flattening" effect: the type
+    ///
+    ///     (a -> b) -> (c -> (d -> e)) -> f
+    ///
+    /// with this method applied, would return
+    ///
+    ///     [(a -> b), (c -> (d -> e)), f]
+    ///
+    /// while the function type
+    ///
+    ///     (a -> b) -> c -> d -> (e -> f)
+    ///
+    /// would return
+    ///
+    ///     [(a -> b), c, d, e, f]
+    ///
+    /// since function arrows are *right* associative.
+    ///
+    pub fn fun_vec(self) -> Vec<Self> {
+        let mut args = vec![];
+        let mut tmp = self;
+        while let Self::Fun(x, y) = tmp {
+            args.push(*x);
+            tmp = *y;
+        }
+        args.push(tmp);
+        args
+    }
+
+    /// If `Self` is a function type, then it returns a list of each of its
+    /// arguments wrapped in an `Either::Left` variant. Otherwise, it returns
+    /// `Self` wrapped in an `Either::Right` variant.
+    ///
+    /// See notes for [`Type::fun_vec`] for more details.
+    pub fn maybe_fun_vec(self) -> Either<Vec<Self>, Self> {
+        match self {
+            Self::Fun(x, y) => {
+                let mut args = vec![];
+                args.push(*x);
+                let mut tmp = *y;
+                while let Self::Fun(u, v) = tmp {
+                    args.push(*u);
+                    tmp = *v;
+                }
+                args.push(tmp);
+                Either::Left(args)
+            }
+            ty => Either::Right(ty),
+        }
+    }
+
+    /// TODO!
+    ///
+    /// Compares the current type to the one provided and compares their general
+    /// structures without comparing type variables, etc.
+    ///
+    /// This method does NOT unify types, nor does it check whether two types
+    /// are strictly unifiable; rather, this method provides a quick (and dirty)
+    /// way to inspect two types to determine whether they are *strictly
+    /// non-unifiable*.
+    ///
+    /// An example of this is between differently sized tuples, tuples and
+    /// lists, and type constructors with differing arities, as well as
+    /// performing a (preliminary) occurs check consisting of a type variable on
+    /// one side and a (non-type variable) type containing that type variable on
+    /// the right-hand side, e.g., `a` vs `[a]`, `b` vs `(a, b)`, `a` vs `a ->
+    /// a`, etc.
+    ///
+    /// **Note** that in the table below, the `Pass?` column specifically refers
+    /// to whether the two types are able to be unified. A `false` indicates
+    /// that two types are KNOWN to not be unifiable, and corresponds to the
+    /// same boolean value returned by this method, while `maybe` is used in
+    /// place of `true` to emphasize the asymmetric determinism of this method,
+    /// e.g., `maybe` corresponds to a `true` return value.
+    ///
+    /// | LHS       | RHS        | Pass? | Why?
+    /// |:----------|:-----------|:------|:-----------------------------------
+    /// |`a`        | `[a]`      | false | `a` would be infinite
+    /// |`(a, b, c)`| `(a, b)`   | false | unequal constructors `(,,)` != `(,)`
+    /// |`a -> b`   | `c -> d`   | maybe | variables may resolve on both sides
+    /// |`m a b`    | `m a a`    | maybe | variable `b` may resolve
+    /// |`[(a, b)]` | `m a b`    | ???   | mismatched kind for `[] ((,) a b)`
+    pub fn compatible(&self, other: &Self) -> bool
+    where
+        T: Copy + PartialEq,
+        Id: Copy + PartialEq,
+    {
+        use Con as C;
+        use Type as T;
+        fn zips<A: Copy + PartialEq, B: Copy + PartialEq>(
+            xs: &Vec<Type<A, B>>,
+            ys: &Vec<Type<A, B>>,
+        ) -> bool {
+            // confirm commutativity!!!
+            xs.len() == ys.len()
+                && xs
+                    .into_iter()
+                    .zip(ys)
+                    .all(|(x, y)| x.compatible(y) && y.compatible(y))
+        }
+
+        match (self, other) {
+            // both being variables means we know nothing about the types'
+            // structures
+            (T::Var(_), T::Var(_)) => true,
+
+            (T::Var(a), t) | (t, T::Var(a)) => !t.depends_on(a),
+
+            // built-in differences in kind
+            (T::Vec(_), T::Tup(_)) | (T::Tup(_), T::Vec(_)) => false,
+
+            // unit is a special case when it comes to being represented by a
+            // tuple constructor
+            (T::Tup(xs) | T::Con(C::Tuple(0), xs), T::Tup(ys) | T::Con(C::Tuple(0), ys))
+                if xs.is_empty() && ys.is_empty() =>
+            {
+                true
+            }
+
+            (T::Tup(xs), T::Tup(ys)) if xs.len() == ys.len() => zips(xs, ys),
+
+            // (1, 2) ~ (,) 1 2
+            (T::Tup(xs), T::Con(C::Tuple(n), ys)) | (T::Con(C::Tuple(n), xs), T::Tup(ys))
+                if *n > 1 && {
+                    let m = *n - 1;
+                    xs.len() == m && ys.len() == m
+                } =>
+            {
+                zips(xs, ys)
+            }
+            (T::Vec(x), T::Con(C::List, ys)) | (T::Con(C::List, ys), T::Vec(x))
+                if ys.len() == 1 =>
+            {
+                let y = &ys[0];
+                // confirm commutativity
+                x.compatible(y) && y.compatible(x)
+            }
+
+            (x, y) => {
+                x.vars().into_iter().all(|ref t| !y.depends_on(t))
+                    && y.vars().into_iter().all(|ref t| !x.depends_on(t))
+            }
+        }
+    }
+
+    /// Returns the current type rewritten to in terms of only `Type::Var` and
+    /// `Type::Con`. Note: while the tuple constructors for values are identical
+    /// to that of the tuple type constructors, the same does *not* hold for
+    /// lists: the list *data* constructor `(:)` is distinct from the list
+    /// *type* constructor `[]`, which is otherwise identical to the empty list
+    /// expression.
+    ///
+    /// * `[a]` => `[] a`  
+    /// * `(a, b)` => `(,) a b`
+    /// * `a -> b` => `(->) a b`
+    /// * `[Char]` => `[] Char`
+    /// * `(Char, Int, [a])` => `(,,) Char Int ([] a)`
+    /// * `(a -> b) -> m a -> m b` => `(->) ((->) a b) ((->) (m a) (m b)) `
+    ///
+    pub fn simplify(self) -> Self {
+        match self {
+            a @ Type::Var(_) => a,
+            Type::Con(con, args) => Type::Con(con, args.fmap(|ty| ty.simplify())),
+            Type::Fun(t1, t2) => Type::Con(Con::Arrow, vec![t1.simplify(), t2.simplify()]),
+            Type::Tup(ts) => Type::Con(Con::Tuple(ts.len()), ts.fmap(|t| t.simplify())),
+            Type::Vec(t) => Type::Con(Con::List, vec![t.simplify()]),
+            Type::Rec(_) => todo!(),
+        }
+    }
+
+    pub fn contains_constructor(&self, con: &Con<Id, T>) -> bool
     where
         Id: PartialEq,
-        Ty: PartialEq,
+        T: PartialEq,
     {
         match self {
             Type::Var(_) => false,
@@ -435,9 +715,9 @@ impl<Id, Ty> Type<Id, Ty> {
     /// Identifies whether this `Type` is polymorphic over the given type
     /// variable. Equivalently, this method tests for containment of the given
     /// variable of type `T`.
-    pub fn depends_on(&self, var: &Ty) -> bool
+    pub fn depends_on(&self, var: &T) -> bool
     where
-        Ty: PartialEq,
+        T: PartialEq,
     {
         match self {
             Type::Var(t) => var == t,
@@ -452,10 +732,10 @@ impl<Id, Ty> Type<Id, Ty> {
     }
 
     /// Tests whether a given type contains another type.
-    pub fn contains(&self, subty: &Type<Id, Ty>) -> bool
+    pub fn contains(&self, subty: &Type<Id, T>) -> bool
     where
         Id: PartialEq,
-        Ty: PartialEq,
+        T: PartialEq,
     {
         match self {
             ty @ Type::Var(_) => ty == subty,
@@ -469,7 +749,7 @@ impl<Id, Ty> Type<Id, Ty> {
         }
     }
 
-    pub fn map_id<F, X>(self, f: &mut F) -> Type<X, Ty>
+    pub fn map_id<F, X>(self, f: &mut F) -> Type<X, T>
     where
         F: FnMut(Id) -> X,
     {
@@ -487,10 +767,10 @@ impl<Id, Ty> Type<Id, Ty> {
         }
     }
 
-    pub fn map_id_ref<F, X>(&self, f: &mut F) -> Type<X, Ty>
+    pub fn map_id_ref<F, X>(&self, f: &mut F) -> Type<X, T>
     where
         F: FnMut(&Id) -> X,
-        Ty: Copy,
+        T: Copy,
     {
         match self {
             Type::Var(t) => Type::Var(*t),
@@ -507,7 +787,7 @@ impl<Id, Ty> Type<Id, Ty> {
 
     pub fn map_t_ref<F, U>(&self, f: &mut F) -> Type<Id, U>
     where
-        F: FnMut(&Ty) -> U,
+        F: FnMut(&T) -> U,
         Id: Copy,
     {
         match self {
@@ -520,22 +800,6 @@ impl<Id, Ty> Type<Id, Ty> {
         }
     }
 
-    pub fn is_func(&self) -> bool {
-        matches!(self, Self::Fun(..))
-    }
-
-    pub fn is_app(&self) -> bool {
-        matches!(self, Self::Con(..))
-    }
-
-    /// Returns `true` if the type is a single type constructor with arity 0.
-    pub fn is_nullary(&self) -> bool {
-        match self {
-            Type::Con(_, ts) => ts.is_empty(),
-            _ => false,
-        }
-    }
-
     /// If a given type is a nullary type, then this will return a reference to
     /// the identifier represemting the nullary type constructor.
     pub fn id_if_nullary(&self) -> Option<&Id> {
@@ -545,12 +809,37 @@ impl<Id, Ty> Type<Id, Ty> {
         }
     }
 
+    /// Returns a list of all the free variables in the order in which they
+    /// appear
+    pub fn vars(&self) -> Vec<T>
+    where
+        T: Copy,
+    {
+        let mut vars = vec![];
+        match self {
+            Type::Var(v) => vars.push(*v),
+            Type::Con(Con::Free(v), args) => {
+                vars.push(*v);
+                args.into_iter().for_each(|ty| vars.extend(ty.vars()));
+            }
+            Type::Con(_, args) => args.into_iter().for_each(|ty| vars.extend(ty.vars())),
+            Type::Fun(x, y) => {
+                vars.extend(x.vars());
+                vars.extend(y.vars());
+            }
+            Type::Tup(args) => args.into_iter().for_each(|ty| vars.extend(ty.vars())),
+            Type::Vec(t) => vars.extend(t.vars()),
+            Type::Rec(_) => todo!(),
+        };
+        vars
+    }
+
     /// Returns a vector containing all type variables in a given type in order.
     /// For example, this method applied to the type `(a, Int, a -> b -> c)`
     /// returns the vector `[a, b, c]`. Note that duplicates are *not* included!
-    pub fn fv(&self) -> Vec<Ty>
+    pub fn fv(&self) -> Vec<T>
     where
-        Ty: Copy + PartialEq,
+        T: Copy + PartialEq,
     {
         let mut fvs = vec![];
         match self {
@@ -620,20 +909,20 @@ impl<Id, Ty> Type<Id, Ty> {
     /// possible to derive a mapping from one set of type variables to a new
     /// one, facilitating the process of *normalizing* the type variables within
     /// a given type.
-    pub fn enumerate(&self) -> impl Iterator<Item = Var<Ty>>
+    pub fn enumerate(&self) -> impl Iterator<Item = Var<T>>
     where
-        Ty: Copy + Eq,
+        T: Copy + Eq,
     {
         let mut vars = self.fv();
         vars.dedup();
         vars.into_iter().zip(0..).map(|(t, var)| Var(t, Tv(var)))
     }
 
-    pub fn ty_str(&self) -> TypeStr<'_, Id, Ty> {
+    pub fn ty_str(&self) -> TypeStr<'_, Id, T> {
         TypeStr(self)
     }
 
-    pub fn map_t<U>(self, f: &mut impl FnMut(Ty) -> U) -> Type<Id, U> {
+    pub fn map_t<U>(self, f: &mut impl FnMut(T) -> U) -> Type<Id, U> {
         match self {
             Type::Var(t) => Type::Var(f(t)),
             Type::Con(c, ts) => {
@@ -675,7 +964,45 @@ fn iter_map_t_ref<X: Copy, Y, Z>(
     tys
 }
 
+/// Takes a type constructor and its type arguments, of the form `C t1 t2 ...
+/// tn` and returns the function type `t1 -> t2 -> ... -> tn -> C t1 t2 ... tn`.
+///
+/// Note that this is NOT necessarily the function type used by every
+/// construction: consider the following snippet of code:
+/// ```wysk
+/// data Foo a = Foo' a a a
+/// ~~ Foo' :: a -> a -> a -> Foo a
+/// foo :: [a] -> Int -> Foo Int
+///     | xs y = let m = length xs in Foo' (m - y) (m + y) (m * y)
+/// ```
+/// We see that the type constructor `Foo` is parametrized over one single type,
+/// yet the *data constructor* `Foo'`, as well as the function `foo` -- both of
+/// which return a `Foo` type -- has more than 1 argument.
+pub fn guess_tycon_fun_ty<Id, T>(con: Con<Id, T>, args: Vec<Type<Id, T>>) -> Type<Id, T>
+where
+    Id: Copy,
+    T: Copy,
+{
+    args.clone()
+        .into_iter()
+        .rev()
+        .fold(Type::Con(con, args), |a, c| Type::mk_fun(a, c))
+}
+
 impl Type<Ident, Tv> {
+    pub const BOOL: Self = Self::mk_nullary(Con::BOOL);
+    pub const INT: Self = Self::mk_nullary(Con::INT);
+    pub const NAT: Self = Self::mk_nullary(Con::NAT);
+    pub const FLOAT: Self = Self::mk_nullary(Con::FLOAT);
+    pub const DOUBLE: Self = Self::mk_nullary(Con::DOUBLE);
+    pub const CHAR: Self = Self::mk_nullary(Con::CHAR);
+    pub const STR: Self = Self::mk_nullary(Con::STR);
+    pub const BYTE: Self = Self::mk_nullary(Con::BYTE);
+
+    pub const fn mk_nullary(con: Con<Ident, Tv>) -> Self {
+        Self::Con(con, vec![])
+    }
+
     pub fn replace(self, map: &Map<Type<Ident, Tv>, Type<Ident, Tv>>) -> Type<Ident, Tv> {
         if let Some(ty) = map.get(&self) {
             return ty.clone();
@@ -698,6 +1025,95 @@ impl Type<Ident, Tv> {
                 )
             })),
         }
+    }
+}
+
+impl<Id> Type<Id, Tv> {
+    /// Like the method `simplify`, this reduces a type in terms of type
+    /// variables and type application, but represented with a `Ty` instance
+    /// instead of as a `Self` type.
+    pub fn simplify_ty(&self) -> Ty<Id>
+    where
+        Id: Copy,
+    {
+        match self {
+            Type::Var(v) => Ty::Var(*v),
+            Type::Con(c, args) => Ty::Con(*c, args.into_iter().map(|t| t.simplify_ty()).collect()),
+            Type::Fun(_, _) => todo!(),
+            Type::Tup(_) => todo!(),
+            Type::Vec(_) => todo!(),
+            Type::Rec(_) => todo!(),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub enum Ty<Id = Ident> {
+    Var(Tv),
+    Con(Con<Id, Tv>, Vec<Ty<Id>>),
+    App(Box<[Self; 2]>),
+}
+
+impl<Id> Default for Ty<Id> {
+    fn default() -> Self {
+        Ty::Var(Tv(0))
+    }
+}
+
+impl<Id> Ty<Id> {
+    /// Returns a list containing all type variables in a given type in order
+    /// **without** duplicates. Use the `vars` method to get a list containing
+    /// all type variables with duplicates.
+    ///
+    /// For example, this method applied to the type `(a, Int, a -> b -> c)`,
+    /// which simplifies to `(,,) a Int ((->) a ((->) b c))`, returns the list
+    /// `[a, b, c]`.
+    pub fn fv(&self) -> Vec<Tv> {
+        match self {
+            Ty::Var(tv) => vec![*tv],
+            Ty::Con(con, args) => {
+                // let mut tvs = con.get_var().copied().into_iter().collect::<Vec<_>>();
+                args.into_iter().fold(
+                    con.get_var().copied().into_iter().collect::<Vec<_>>(),
+                    |mut a, c| {
+                        for var in c.fv() {
+                            if !a.contains(&var) {
+                                a.push(var);
+                            }
+                        }
+                        a
+                    },
+                )
+            }
+            Ty::App(xy) => {
+                todo!()
+            }
+        }
+    }
+
+    #[inline]
+    pub fn mk_fun_ty(from_ty: Self, to_ty: Self) -> Self {
+        Self::Con(Con::Arrow, vec![from_ty, to_ty])
+    }
+
+    /// Given a type `t0` and a (reversible) collection of types `t1`, `t2`,
+    /// ..., `tn`, returns the function type `t0 -> (t1 -> (t2 -> ... -> tn))`.
+    /// If the collection of types provided is empty, then the initial type `t0`
+    /// is returned.
+    pub fn try_mk_fun(head: Self, rest: impl DoubleEndedIterator + Iterator<Item = Self>) -> Self {
+        if let Some(tail) = rest.rev().reduce(|a, c| Self::mk_fun_ty(a, c)) {
+            Self::Con(Con::Arrow, vec![head, tail])
+        } else {
+            head
+        }
+    }
+
+    pub fn mk_list(list_of: Self) -> Self {
+        Self::Con(Con::List, vec![list_of])
+    }
+
+    pub fn mk_tuple(tuple_of: Vec<Self>) -> Self {
+        Self::Con(Con::Tuple(tuple_of.len()), tuple_of)
     }
 }
 
@@ -947,6 +1363,15 @@ impl<T, Id> Field<T, Id> {
         }
     }
 
+    /// Returns `None` unless both lhs and rhs are present.
+    pub fn as_pair(&self) -> Option<(&Id, &T)> {
+        match self {
+            Field::Rest => None,
+            Field::Key(_) => None,
+            Field::Entry(k, v) => Some((k, v)),
+        }
+    }
+
     pub fn map<F, U, X>(self, mut f: F) -> Field<X, U>
     where
         F: FnMut((Id, Option<T>)) -> (U, Option<X>),
@@ -1169,6 +1594,185 @@ impl<Id, T> Signature<Id, T> {
             each: self.quant_iter().map(|t| f(t)).collect(),
             ctxt: self.ctxt_iter().map(|c| c.map_t_ref(f)).collect(),
             tipo: self.tipo.map_t_ref(f),
+        }
+    }
+}
+
+impl<Id: std::fmt::Display, Ty: std::fmt::Display> std::fmt::Display for Type<Id, Ty> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Type::Var(tv) => write!(f, "{}", tv),
+            Type::Con(con, args) => {
+                if args.is_empty() {
+                    write!(f, "{}", con)
+                } else {
+                    write!(f, "{}", con)?;
+                    for arg in args {
+                        if arg.is_fun() || (arg.is_con() && !arg.is_nullary()) {
+                            write!(f, " ({})", arg)?;
+                            continue;
+                        }
+                        write!(f, " {}", arg)?;
+                    }
+                    Ok(())
+                }
+            }
+            Type::Fun(x, y) => {
+                if x.is_fun() {
+                    write!(f, "({})", x)?;
+                } else {
+                    write!(f, "{}", x)?;
+                }
+                write!(f, " -> ")?;
+                if y.is_fun() {
+                    write!(f, "({})", y)
+                } else {
+                    write!(f, "{}", y)
+                }
+            }
+            Type::Tup(tys) => {
+                write!(f, "(")?;
+                match tys.as_slice() {
+                    [] => {}
+                    [a, rest @ ..] => {
+                        write!(f, "{}", a)?;
+                        for r in rest {
+                            write!(f, ", {}", r)?;
+                        }
+                    }
+                };
+                write!(f, ")")
+            }
+            Type::Vec(t) => write!(f, "[{}]", t.as_ref()),
+            Type::Rec(rec) => {
+                char::fmt(&'{', f)?;
+                match &rec
+                    .fields()
+                    .iter()
+                    .filter_map(|field| match field {
+                        // for typed records, we should expect both lhs (keys)
+                        // and rhs (types)
+                        Field::Rest | Field::Key(_) => None,
+                        Field::Entry(k, v) => Some((k, v)),
+                    })
+                    .collect::<Vec<_>>()[..]
+                {
+                    [] => {}
+                    [(k, v), rest @ ..] => {
+                        write!(f, " {} :: {}", k, v)?;
+                        for (k, v) in rest {
+                            write!(f, ", {} :: {}", k, v)?;
+                        }
+                        write!(f, " ")?;
+                    }
+                };
+                char::fmt(&'}', f)
+            }
+        }
+    }
+}
+
+#[macro_export]
+macro_rules! Ty {
+    (Int) => {{ Type::INT }};
+    (Nat) => {{ Type::NAT }};
+    (Byte) => {{ Type::BYTE }};
+    (Bool) => {{ Type::BOOL }};
+    (IO $x:expr) => {{ Type::mk_app(Con::IO, $x) }};
+    (Str) => {{ Type::STR }};
+    (Char) => {{ Type::Char }};
+    (Float) => {{ Type::FLOAT }};
+    (Double) => {{ Type::DOUBLE }};
+    (()) => {{ $crate::tipo::Type::UNIT }};
+    (
+        ($($ts:tt)+)
+    ) => {{
+        $crate::Ty! { $($ts)+ }
+    }};
+    (@$id:ident) => {{ $id.clone() }};
+    (@$id:ident -> $($rest:tt)+) => {{
+        Type::mk_fun(
+            $id.clone(), $crate::Ty! { $($rest)+ }
+        )
+    }};
+    ($num:literal) => {{ Type::Var(Tv($num)) }};
+    ($num:literal -> $($rest:tt)+) => {{
+        Type::mk_fun(Type::Var(Tv($num)), $crate::Ty! { $($rest)+ })
+    }};
+    (#($t0:ident $($ts:tt)*)) => {{
+        $crate::tipo::Type::mk_app(
+            $crate::tipo::Con::Data(
+                Ident::Upper(wy_intern::intern_once(stringify!($t0)))
+            ),
+            [$($crate::Ty! { $ts },)*]
+        )
+    }};
+    (#($t0:ident $($($ts:tt)+)?) -> $($tail:tt)+) => {{
+        $crate::tipo::Type::mk_fun(
+            $crate::tipo::Type::mk_app(
+                $crate::tipo::Con::Data(
+                    $crate::ident::Ident::Upper(wy_intern::intern_once(stringify!($t0)))
+                ),
+                [$($($crate::Ty! { $ts },)+)?]
+            ),
+            $crate::Ty! { $($tail)+ }
+        )
+    }};
+    (
+        $con:ident $(. $($ts:tt)+)?
+    ) => {{
+        $crate::Ty! { #( $con $($($ts)+)? )}
+    }};
+    (
+        $con:ident $(. $($ts:tt)+)? -> $(rest:tt)+
+    ) => {{
+        $crate::tipo::Type::mk_fun(
+            $crate::Ty! { #( $con $($($ts)+)? )},
+            $crate::Ty! { $($rest)+ }
+        )
+    }};
+    (
+        [$($ts:tt)+]
+    ) => {{ $crate::tipo::Type::mk_list($($ts)+) }};
+    (
+        ($a0:tt $(, $an:tt)*)
+    ) => {{ $crate::tipo::Type::mk_tuple([$a0 $(, $an)*]) }};
+    (
+        $left:tt -> $($right:tt)+
+    ) => {{
+        $crate::tipo::Type::mk_fun(
+            $crate::Ty! { $left }, $crate::Ty! { $($right)+ }
+        )
+    }};
+
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_ty_macro() {
+        let vars = (0..10).map(Tv).collect::<Vec<_>>();
+        if let [a, b, c, d, e, f, g, h] = vars[..] {
+            assert_eq!(
+                Ty! { 0 -> 1 -> (2 -> 3) -> #(Foo 4 5 6)},
+                Type::mk_fun(
+                    Type::Var(a),
+                    Type::mk_fun(
+                        Type::Var(b),
+                        Type::mk_fun(
+                            Type::mk_fun(Type::Var(c), Type::Var(d)),
+                            Type::Con(
+                                Con::Data(Ident::Upper(Symbol::from("Foo"))),
+                                vec![Type::Var(e), Type::Var(f), Type::Var(g)]
+                            )
+                        )
+                    )
+                )
+            );
+        } else {
+            unreachable!()
         }
     }
 }
