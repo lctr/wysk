@@ -1,9 +1,7 @@
-use std::{hash::Hash, ops::Deref};
-
-use wy_common::{Map, Set};
+use wy_common::{Deque, Map, Set};
 use wy_syntax::{
     ident::Ident,
-    tipo::{Tv, Type},
+    tipo::{Con, Tv, Ty, Type},
 };
 
 pub trait Substitutable {
@@ -50,11 +48,46 @@ pub trait Substitutable {
     }
 }
 
+impl Substitutable for Con<Ident, Tv> {
+    fn ftv(&self) -> Set<Tv> {
+        if let Con::Free(t) = self {
+            Set::from([*t])
+        } else {
+            Set::new()
+        }
+    }
+
+    fn apply_once(&self, subst: &Subst) -> Self
+    where
+        Self: Sized,
+    {
+        match self {
+            Con::Free(t) => match subst.get(t) {
+                Some(ty) => match ty {
+                    Type::Con(Con::Data(d), _) => Con::Data(*d),
+                    Type::Con(c, _) => *c,
+                    Type::Vec(_) => Con::List,
+                    Type::Fun(..) => Con::Arrow,
+                    Type::Tup(ts) => Con::Tuple(ts.len()),
+                    Type::Rec(rec) => rec.ctor().map(|id| Con::Data(*id)).unwrap_or_else(|| *self),
+                    _ => Con::Free(*t),
+                },
+                None => *self,
+            },
+            con => *con,
+        }
+    }
+}
+
 impl Substitutable for Type<Ident, Tv> {
     fn ftv(&self) -> Set<Tv> {
         match self {
             Type::Var(v) => Set::from([*v]),
-            Type::Con(_, ts) => ts.ftv(),
+            Type::Con(c, ts) => {
+                let mut set = c.ftv();
+                set.extend(ts.ftv());
+                set
+            }
             Type::Fun(x, y) => x.ftv().union(&y.ftv()).copied().collect(),
             Type::Tup(ts) => ts.ftv(),
             Type::Vec(t) => t.ftv(),
@@ -76,13 +109,57 @@ impl Substitutable for Type<Ident, Tv> {
                 Some(t) => t.clone(),
                 None => Type::Var(*n),
             },
-            Type::Con(x, ts) => Type::Con(*x, ts.apply_once(subst)),
-            Type::Fun(x, y) => {
-                Type::Fun(Box::new(x.apply_once(subst)), Box::new(y.apply_once(subst)))
-            }
+
+            Type::Con(con, ts) => match con {
+                Con::List if ts.len() == 1 => Type::Vec(Box::new(ts[0].apply_once(subst))),
+                Con::Tuple(n) if ts.len() == *n + 1 => Type::Tup(ts.apply_once(subst)),
+                Con::Arrow if ts.len() > 1 => ts
+                    .apply_once(subst)
+                    .into_iter()
+                    .reduce(|a, c| Type::Fun(Box::new(a), Box::new(c)))
+                    .unwrap(),
+                _ => Type::Con(con.apply_once(subst), ts.apply_once(subst)),
+            },
+
+            Type::Fun(x, y) => Type::Fun(x.apply_once(subst), y.apply_once(subst)),
             Type::Tup(ts) => Type::Tup(ts.apply_once(subst)),
-            Type::Vec(t) => Type::Vec(Box::new(t.apply_once(subst))),
-            Type::Rec(rec) => Type::Rec(rec.clone().map_t(|t| t.apply_once(subst))),
+            Type::Vec(t) => Type::Vec(t.apply_once(subst)),
+            Type::Rec(rec) => Type::Rec(rec.map_t_ref(|t| t.apply_once(subst))),
+        }
+    }
+}
+
+impl Substitutable for Ty<Ident> {
+    fn ftv(&self) -> Set<Tv> {
+        match self {
+            Ty::Var(tv) => Set::from([*tv]),
+            Ty::Con(con, args) => con
+                .get_var()
+                .copied()
+                .into_iter()
+                .chain(args.ftv())
+                .collect(),
+            Ty::App(xy) => {
+                let [x, y] = xy.as_ref();
+                x.ftv().into_iter().chain(y.ftv()).collect()
+            }
+        }
+    }
+
+    fn apply_once(&self, subst: &Subst) -> Self
+    where
+        Self: Sized,
+    {
+        match self {
+            Ty::Var(v) => match subst.get(v) {
+                Some(ty) => ty.simplify_ty(),
+                None => Ty::Var(*v),
+            },
+            Ty::Con(con, args) => Ty::Con(con.apply_once(subst), args.apply_once(subst)),
+            Ty::App(xy) => {
+                let [x, y] = xy.as_ref();
+                Ty::App(Box::new([x.apply_once(subst), y.apply_once(subst)]))
+            }
         }
     }
 }
@@ -93,6 +170,10 @@ pub struct Subst(Map<Tv, Type<Ident, Tv>>);
 impl Subst {
     pub fn new() -> Self {
         Self(Map::new())
+    }
+
+    pub fn clear(&mut self) {
+        self.0.clear()
     }
 
     pub fn singleton(var: Tv, typ: Type<Ident, Tv>) -> Self {
@@ -147,6 +228,43 @@ impl FromIterator<(Tv, Type<Ident, Tv>)> for Subst {
     }
 }
 
+impl From<()> for Subst {
+    fn from(_: ()) -> Self {
+        Subst::new()
+    }
+}
+
+impl<I> From<Option<I>> for Subst
+where
+    Subst: From<I>,
+{
+    fn from(it: Option<I>) -> Self {
+        if let Some(it) = it {
+            it.into()
+        } else {
+            Self::new()
+        }
+    }
+}
+
+impl<const N: usize> From<[(Tv, Type<Ident, Tv>); N]> for Subst {
+    fn from(kvs: [(Tv, Type<Ident, Tv>); N]) -> Self {
+        Subst(Map::from(kvs))
+    }
+}
+
+impl From<(Tv, Vec<Type<Ident, Tv>>)> for Subst {
+    fn from((tv, tys): (Tv, Vec<Type<Ident, Tv>>)) -> Self {
+        tys.into_iter().map(|t| (tv, t)).collect()
+    }
+}
+
+impl From<(Tv, Deque<Type<Ident, Tv>>)> for Subst {
+    fn from((tv, tys): (Tv, Deque<Type<Ident, Tv>>)) -> Self {
+        tys.into_iter().map(|t| (tv, t)).collect()
+    }
+}
+
 impl std::fmt::Display for Subst {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Subst {{")?;
@@ -158,7 +276,7 @@ impl std::fmt::Display for Subst {
                 w.sort_by_key(|(v, _)| *v);
                 let i = if n == 1 {
                     let (v, t) = w[0];
-                    write!(f, " [ :{} = {} ] ", v, t)?;
+                    write!(f, " [ {} := {} ] ", v, t)?;
                     1
                 } else {
                     br = "\n";
@@ -189,43 +307,109 @@ where
     }
 }
 
+impl<T> Substitutable for Deque<T>
+where
+    T: Substitutable,
+{
+    fn ftv(&self) -> Set<Tv> {
+        self.into_iter().flat_map(Substitutable::ftv).collect()
+    }
+
+    fn apply_once(&self, subst: &Subst) -> Self
+    where
+        Self: Sized,
+    {
+        self.into_iter().map(|t| t.apply_once(subst)).collect()
+    }
+}
+
+impl<T> Substitutable for Box<T>
+where
+    T: Substitutable,
+{
+    fn ftv(&self) -> Set<Tv> {
+        self.as_ref().ftv()
+    }
+
+    fn apply_once(&self, subst: &Subst) -> Self
+    where
+        Self: Sized,
+    {
+        Box::new(self.as_ref().apply_once(subst))
+    }
+}
+
+// impl<T, const N: usize> Substitutable for [T; N]
+// where
+//     T: Substitutable,
+// {
+//     fn ftv(&self) -> Set<Tv> {
+//         let mut fvs = Set::new();
+//         for t in self {
+//             fvs.extend(t.ftv());
+//         }
+//         fvs
+//     }
+
+//     fn apply_once(&self, subst: &Subst) -> Self
+//     where
+//         Self: Sized,
+//     {
+//         // TODO: confirm safety? but this should be fine since it's not &T
+//         // or &mut T.
+//         let mut arr: [T; N] = unsafe { std::mem::zeroed() };
+//         let mut i = 0;
+//         for t in self {
+//             arr[i] = t.apply_once(subst);
+//             i += 1;
+//         }
+//         arr
+//     }
+// }
+
 #[cfg(test)]
 mod tests {
-    use wy_syntax::ident::Ident;
+    use wy_intern::symbol;
+    use wy_syntax::{ident::Ident, tipo::Con};
 
     use super::*;
 
     #[test]
     fn test_subst() {
-        let prims = &wy_intern::sym::PRIM_TY_NAMES[..];
-        let bool_con = Ident::Upper(prims[0]);
+        let [_bool, _byte, _char, _double, _float, _int, _io, _nat, _str] = [
+            *symbol::reserved::BOOL,
+            *symbol::reserved::BYTE,
+            *symbol::reserved::CHAR,
+            *symbol::reserved::DOUBLE,
+            *symbol::reserved::FLOAT,
+            *symbol::reserved::INT,
+            *symbol::reserved::IO,
+            *symbol::reserved::NAT,
+            *symbol::reserved::STR,
+        ];
+        let bool_con = Con::Data(Ident::Upper(_bool));
+        let conup = |sym| Con::Data(Ident::Upper(sym));
         let [foo_con, bar_con, baz] = wy_intern::intern_many(["Foo", "Bar", "Baz"]);
         let subst = Subst::from_iter([
             (
                 Tv(0),
                 Type::Con(
-                    Ident::Upper(foo_con),
+                    conup(foo_con),
                     vec![
-                        Type::Vec(Box::new(Type::Con(
-                            Ident::Upper(baz),
-                            vec![Type::Var(Tv(1))],
-                        ))),
+                        Type::Vec(Box::new(Type::Con(conup(baz), vec![Type::Var(Tv(1))]))),
                         Type::Var(Tv(2)),
                     ],
                 ),
             ),
-            (Tv(1), Type::Con(Ident::Upper(prims[1]), vec![])),
+            (Tv(1), Type::Con(conup(_int), vec![])),
             (
                 Tv(2),
                 Type::Con(
-                    Ident::Upper(bar_con),
-                    vec![Type::Con(Ident::Upper(prims[8]), vec![Type::Var(Tv(4))])],
+                    conup(bar_con),
+                    vec![Type::Con(conup(_io), vec![Type::Var(Tv(4))])],
                 ),
             ),
-            (
-                Tv(3),
-                Type::Con(Ident::Upper(prims[8]), vec![Type::Var(Tv(4))]),
-            ),
+            (Tv(3), Type::Con(conup(_io), vec![Type::Var(Tv(4))])),
             (Tv(4), Type::Con(bool_con, vec![])),
         ]);
         println!("{}", &subst);
@@ -234,7 +418,7 @@ mod tests {
             Box::new(Type::Tup(vec![
                 Type::Var(Tv(1)),
                 Type::Var(Tv(2)),
-                Type::Con(Ident::Upper(baz), vec![]),
+                Type::Con(conup(baz), vec![]),
             ])),
         );
         println!("{}", &tyy);
@@ -247,15 +431,12 @@ mod tests {
         let expected = Type::Fun(
             Box::new(Type::Con(bool_con, vec![])),
             Box::new(Type::Tup(vec![
-                Type::Con(Ident::Upper(prims[1]), vec![]),
+                Type::Con(conup(_int), vec![]),
                 Type::Con(
-                    Ident::Upper(bar_con),
-                    vec![Type::Con(
-                        Ident::Upper(prims[8]),
-                        vec![Type::Con(bool_con, vec![])],
-                    )],
+                    conup(bar_con),
+                    vec![Type::Con(conup(_io), vec![Type::Con(bool_con, vec![])])],
                 ),
-                Type::Con(Ident::Upper(baz), vec![]),
+                Type::Con(conup(baz), vec![]),
             ])),
         );
         assert_eq!(tyy.apply(&subst), expected)
