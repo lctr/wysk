@@ -20,14 +20,14 @@ impl std::error::Error for VisitError {}
 /// Applying the visitor pattern to relevant AST Nodes. The methods involved
 /// have all been predefined, but any overwritten definitions *must* ensure
 /// that they still recurse throughout the tree.
-pub trait Visit<Id, Err = VisitError>: Sized
+pub trait Visit<Id, T, Err = VisitError>: Sized
 where
     Err: std::error::Error + From<VisitError>,
 {
     fn visit_ident(&mut self, _id: &Id) -> Result<(), Err> {
         Ok(())
     }
-    fn visit_expr(&mut self, expr: &Expression<Id>) -> Result<(), Err> {
+    fn visit_expr(&mut self, expr: &Expression<Id, T>) -> Result<(), Err> {
         match expr {
             Expression::Ident(id) => {
                 self.visit_ident(id)?;
@@ -41,6 +41,9 @@ where
             } => {
                 self.visit_expr(left.as_ref())?;
                 self.visit_expr(right.as_ref())?;
+            }
+            Expression::Section(sec) => {
+                self.visit_expr(sec.expr())?;
             }
             Expression::Tuple(xs) | Expression::Array(xs) => {
                 for x in xs {
@@ -104,7 +107,7 @@ where
         };
         Ok(())
     }
-    fn visit_alt(&mut self, alt: &Alternative<Id>) -> Result<(), Err> {
+    fn visit_alt(&mut self, alt: &Alternative<Id, T>) -> Result<(), Err> {
         let Alternative {
             pat,
             pred,
@@ -121,17 +124,15 @@ where
         }
         Ok(())
     }
-    fn visit_pat(&mut self, pat: &Pattern<Id>) -> Result<(), Err> {
-        if let Pattern::<Id>::Dat(_, pats) | Pattern::<Id>::Vec(pats) | Pattern::<Id>::Tup(pats) =
-            pat
-        {
+    fn visit_pat(&mut self, pat: &Pattern<Id, T>) -> Result<(), Err> {
+        if let Pattern::Dat(_, pats) | Pattern::Vec(pats) | Pattern::Tup(pats) = pat {
             for pat in pats {
                 self.visit_pat(pat)?;
             }
         }
         Ok(())
     }
-    fn visit_binding(&mut self, binding: &Binding<Id>) -> Result<(), Err> {
+    fn visit_binding(&mut self, binding: &Binding<Id, T>) -> Result<(), Err> {
         let Binding { arms, .. } = binding;
         if arms.len() == 1 {
             self.visit_expr(&arms[0].body)?;
@@ -140,7 +141,7 @@ where
             Err(VisitError::Binding.into())
         }
     }
-    fn visit_stmt(&mut self, stmt: &Statement<Id>) -> Result<(), Err> {
+    fn visit_stmt(&mut self, stmt: &Statement<Id, T>) -> Result<(), Err> {
         match stmt {
             Statement::Generator(pat, ex) => {
                 self.visit_pat(pat)?;
@@ -155,7 +156,7 @@ where
         };
         Ok(())
     }
-    fn visit_module(&mut self, module: &Module<Id>) -> Result<(), Err> {
+    fn visit_module<U>(&mut self, module: &Module<Id, U, T>) -> Result<(), Err> {
         for inst in &module.implems {
             for binding in &inst.defs {
                 self.visit_binding(binding)?;
@@ -173,11 +174,11 @@ where
     }
 }
 
-pub trait VisitMut<Id, Err>: Sized
+pub trait VisitMut<Id, T, Err>: Sized
 where
     Err: std::error::Error + From<VisitError>,
 {
-    fn visit_expr_mut(&mut self, expr: &mut Expression<Id>) -> Result<(), Err> {
+    fn visit_expr_mut(&mut self, expr: &mut Expression<Id, T>) -> Result<(), Err> {
         match expr {
             Expression::Ident(_) | Expression::Lit(_) | Expression::Path(..) => {}
             Expression::Neg(ex) => {
@@ -190,6 +191,9 @@ where
             } => {
                 self.visit_expr_mut(left.as_mut())?;
                 self.visit_expr_mut(right.as_mut())?;
+            }
+            Expression::Section(sec) => {
+                self.visit_expr_mut(sec.expr_mut())?;
             }
             Expression::Tuple(exp) | Expression::Array(exp) => {
                 for x in exp {
@@ -250,7 +254,7 @@ where
         }
         Ok(())
     }
-    fn visit_alt_mut(&mut self, alt: &mut Alternative<Id>) -> Result<(), Err> {
+    fn visit_alt_mut(&mut self, alt: &mut Alternative<Id, T>) -> Result<(), Err> {
         let Alternative {
             pat, pred, body, ..
         } = alt;
@@ -261,17 +265,15 @@ where
         self.visit_expr_mut(body)?;
         Ok(())
     }
-    fn visit_pat_mut(&mut self, pat: &mut Pattern<Id>) -> Result<(), Err> {
-        if let Pattern::<Id>::Dat(_, pats) | Pattern::<Id>::Vec(pats) | Pattern::<Id>::Tup(pats) =
-            pat
-        {
+    fn visit_pat_mut(&mut self, pat: &mut Pattern<Id, T>) -> Result<(), Err> {
+        if let Pattern::Dat(_, pats) | Pattern::Vec(pats) | Pattern::Tup(pats) = pat {
             for pat in pats {
                 self.visit_pat_mut(pat)?;
             }
         }
         Ok(())
     }
-    fn visit_binding_mut(&mut self, binding: &mut Binding<Id>) -> Result<(), Err> {
+    fn visit_binding_mut(&mut self, binding: &mut Binding<Id, T>) -> Result<(), Err> {
         let Binding { arms, .. } = binding;
         for arm in arms {
             if let Some(pred) = &mut arm.pred {
@@ -281,7 +283,7 @@ where
         }
         Ok(())
     }
-    fn visit_stmt_mut(&mut self, stmt: &mut Statement<Id>) -> Result<(), Err> {
+    fn visit_stmt_mut(&mut self, stmt: &mut Statement<Id, T>) -> Result<(), Err> {
         match stmt {
             Statement::Generator(pat, expr) => {
                 self.visit_pat_mut(pat)?;
@@ -298,7 +300,7 @@ where
         };
         Ok(())
     }
-    fn visit_module_mut(&mut self, module: &mut Module<Id>) -> Result<(), Err> {
+    fn visit_module_mut<U>(&mut self, module: &mut Module<Id, U, T>) -> Result<(), Err> {
         for binding in module
             .implems
             .iter_mut()
@@ -321,7 +323,7 @@ where
     }
 }
 
-pub fn var_pat_vars<Id, F>(pat: &Pattern<Id>, mut f: F)
+pub fn var_pat_vars<Id, T, F>(pat: &Pattern<Id, T>, mut f: F)
 where
     F: FnMut(&Id),
 {
@@ -332,7 +334,7 @@ where
     }
 }
 
-impl<'a, T> Visit<Ident> for EdgeVisitor<'a, Ident, T> {
+impl<'a, T> Visit<Ident, T> for EdgeVisitor<'a, Ident, T> {
     fn visit_ident(&mut self, id: &Ident) -> Result<(), VisitError> {
         if let Some(idx) = self.map.get(id) {
             self.graph.connect(self.node_id, *idx);
@@ -340,7 +342,7 @@ impl<'a, T> Visit<Ident> for EdgeVisitor<'a, Ident, T> {
         Ok(())
     }
 
-    fn visit_expr(&mut self, expr: &Expression<Ident>) -> Result<(), VisitError> {
+    fn visit_expr(&mut self, expr: &Expression<Ident, T>) -> Result<(), VisitError> {
         match expr {
             Expression::Ident(id) => {
                 self.visit_ident(id)?;
@@ -354,6 +356,9 @@ impl<'a, T> Visit<Ident> for EdgeVisitor<'a, Ident, T> {
             } => {
                 self.visit_expr(left.as_ref())?;
                 self.visit_expr(right.as_ref())?;
+            }
+            Expression::Section(sec) => {
+                self.visit_expr(sec.expr())?;
             }
             Expression::Tuple(xs) | Expression::Array(xs) => {
                 for x in xs {
@@ -418,7 +423,7 @@ impl<'a, T> Visit<Ident> for EdgeVisitor<'a, Ident, T> {
         Ok(())
     }
 
-    fn visit_alt(&mut self, alt: &Alternative<Ident>) -> Result<(), VisitError> {
+    fn visit_alt(&mut self, alt: &Alternative<Ident, T>) -> Result<(), VisitError> {
         let Alternative {
             pat,
             pred,
@@ -436,10 +441,10 @@ impl<'a, T> Visit<Ident> for EdgeVisitor<'a, Ident, T> {
         Ok(())
     }
 
-    fn visit_pat(&mut self, pat: &Pattern<Ident>) -> Result<(), VisitError> {
-        if let Pattern::<Ident>::Dat(_, pats)
-        | Pattern::<Ident>::Vec(pats)
-        | Pattern::<Ident>::Tup(pats) = pat
+    fn visit_pat(&mut self, pat: &Pattern<Ident, T>) -> Result<(), VisitError> {
+        if let Pattern::<Ident, T>::Dat(_, pats)
+        | Pattern::<Ident, T>::Vec(pats)
+        | Pattern::<Ident, T>::Tup(pats) = pat
         {
             for pat in pats {
                 self.visit_pat(pat)?;
@@ -448,7 +453,7 @@ impl<'a, T> Visit<Ident> for EdgeVisitor<'a, Ident, T> {
         Ok(())
     }
 
-    fn visit_binding(&mut self, binding: &Binding<Ident>) -> Result<(), VisitError> {
+    fn visit_binding(&mut self, binding: &Binding<Ident, T>) -> Result<(), VisitError> {
         let Binding { arms, .. } = binding;
         if arms.len() == 1 {
             self.visit_expr(&arms[0].body)?;
@@ -458,7 +463,7 @@ impl<'a, T> Visit<Ident> for EdgeVisitor<'a, Ident, T> {
         }
     }
 
-    fn visit_stmt(&mut self, stmt: &Statement<Ident>) -> Result<(), VisitError> {
+    fn visit_stmt(&mut self, stmt: &Statement<Ident, T>) -> Result<(), VisitError> {
         match stmt {
             Statement::Generator(pat, ex) => {
                 self.visit_pat(pat)?;
@@ -474,7 +479,7 @@ impl<'a, T> Visit<Ident> for EdgeVisitor<'a, Ident, T> {
         Ok(())
     }
 
-    fn visit_module(&mut self, module: &Module<Ident>) -> Result<(), VisitError> {
+    fn visit_module<U>(&mut self, module: &Module<Ident, U, T>) -> Result<(), VisitError> {
         for inst in &module.implems {
             for binding in &inst.defs {
                 self.visit_binding(binding)?;
