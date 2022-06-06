@@ -6,8 +6,10 @@ pub use std::collections::{HashMap as Map, HashSet as Set, VecDeque as Deque};
 
 pub use serde;
 
+pub mod either;
 pub mod functor;
-pub mod index;
+pub mod integral;
+pub mod iter;
 pub mod mapstack;
 pub mod newtypes;
 pub mod pretty;
@@ -55,6 +57,45 @@ pub trait Foldable: Iterator {
     }
 }
 
+/// Given some initial value `a` an iterator and a binary function `f`, this
+/// returns the folding
+/// `f(...(f(f(f(a, c_0), c_1), c_2), c_3), ..., c_n)`
+///
+/// # Example
+/// ```
+/// use wy_common::fold_left;
+/// let things = "abcde".chars();
+/// let plus = |x, y| format!("({} + {})", x, y);
+/// let folded = fold_left(things, String::from("1"), plus);
+/// let expected = "(((((1 + a) + b) + c) + d) + e)";
+/// assert_eq!(folded.as_str(), expected)
+/// ```
+#[inline]
+pub fn fold_left<I: Iterator, A>(iter: I, init: A, f: impl FnMut(A, I::Item) -> A) -> A {
+    iter.fold(init, f)
+}
+
+/// Given some initial value `a` an iterator and a binary function `f`, this
+/// returns the folding `f(c_0, f(c_1, f(c_2, f(..., f(c_n, a))...)))`
+///
+/// # Example
+/// ```
+/// use wy_common::fold_right;
+/// let things = "abcde".chars();
+/// let plus = |x, y| format!("({} + {})", x, y);
+/// let folded = fold_right(things, String::from("1"), plus);
+/// let expected = "(a + (b + (c + (d + (e + 1)))))";
+/// assert_eq!(folded.as_str(), expected)
+/// ```
+#[inline]
+pub fn fold_right<I: DoubleEndedIterator, A>(
+    iter: I,
+    init: A,
+    mut f: impl FnMut(I::Item, A) -> A,
+) -> A {
+    iter.rev().fold(init, |a, c| f(c, a))
+}
+
 #[macro_export]
 macro_rules! deque {
     () => { $crate::Deque::new() };
@@ -90,6 +131,23 @@ macro_rules! struct_field_iters {
     };
 }
 
+/// Generates an implementation of getters for the fields provided.
+///
+/// For example, a generic struct `Foo<X, Y>` with fields `bar` of type `Bar<X>`
+/// and `baz` of type `Baz<Y>` would be implemented as following:
+///
+/// ```
+/// struct Foo<X, Y> {
+///     bar: Bar<X>,
+///     baz: Baz<Y>,
+/// }
+///
+/// struct_getters! {
+///     |X, Y| Foo<X, Y>
+///     | bar => get_bar :: Bar<X>
+///     | baz => get_baz :: Baz<Y>
+/// }
+/// ```
 #[macro_export]
 macro_rules! struct_getters {
     (
@@ -108,6 +166,45 @@ macro_rules! struct_getters {
             )+
         }
     };
+}
+
+/// Generating predicates for a given enum to test for variants.
+#[macro_export]
+macro_rules! variant_preds {
+    (
+        $(|$g0:ident $(, $gs:ident)*|)?
+        $name:ident $([$($gss:tt)+])?
+        $(
+            $($(#[$com:meta])+)?
+            | $method:ident => $variant:ident
+                // really bad hack to get all shapes of enum variants
+                $(($($args:tt)*))?
+                $({ $($fields:tt)+ })?
+                $([$($ts:tt)+])?
+        )+
+    ) => {
+        impl $(<$g0 $(, $gs)*>)? $name $(<$($gss)+>)? {
+            $(
+                $($(#[$com])+)?
+                #[inline]
+                pub fn $method(&self) -> bool {
+                    matches!(
+                        self,
+                        Self::$variant $(($($args)*))? $({ $($fields)+ })? $($($ts)+)?)
+                }
+            )+
+        }
+    };
+}
+
+pub fn unzip<X, Y>(mut zipped: impl Iterator<Item = (X, Y)>) -> (Vec<X>, Vec<Y>) {
+    let mut xs = vec![];
+    let mut ys = vec![];
+    while let Some((x, y)) = zipped.next() {
+        xs.push(x);
+        ys.push(y)
+    }
+    (xs, ys)
 }
 
 pub fn distribute<X: Copy, Y: Copy>(
@@ -133,6 +230,6 @@ mod tests {
     fn it_works() {
         let result = 2 + 2;
         let deq = deque![1, 22, 3, 3, 4];
-        assert_eq!(result, 4);
+        assert_eq!(result, deq[4]);
     }
 }
