@@ -1,16 +1,22 @@
-use wy_common::{deque, Map, Mappable};
-use wy_intern::symbol::{self, Symbol};
+use attr::Attribute;
+use wy_common::{deque, struct_field_iters, Map, Mappable};
+use wy_intern::{
+    symbol::{self, Symbol},
+    Symbolic,
+};
 
 pub use wy_lexer::{
     comment::{self, Comment},
-    Literal,
+    literal::Literal,
 };
 
+pub mod attr;
 pub mod decl;
 pub mod expr;
 pub mod fixity;
 pub mod ident;
 pub mod pattern;
+pub mod pretty;
 pub mod stmt;
 pub mod tipo;
 pub mod visit;
@@ -28,8 +34,85 @@ use tipo::*;
 wy_common::newtype!({ u64 in Uid | Show (+= usize |rhs| rhs as u64) });
 
 #[derive(Clone, Debug)]
-pub struct Ast {
-    pub programs: Vec<Program>,
+pub struct Ast<I> {
+    programs: Vec<Program<I, Uid, Tv>>,
+    packages: Map<Uid, Chain<I>>,
+}
+
+wy_common::struct_field_iters!(
+    |I| Ast<I>
+    | programs => programs_iter :: Program<I, Uid, Tv>
+);
+
+impl<I> Ast<I> {
+    pub fn new() -> Self {
+        Self {
+            programs: Vec::new(),
+            packages: Map::new(),
+        }
+    }
+    pub fn program_count(&self) -> usize {
+        self.programs.len()
+    }
+
+    pub fn get_uid_chain(&self, uid: &Uid) -> Option<&Chain<I>> {
+        self.packages.get(uid)
+    }
+
+    pub fn with_program<U, T>(program: Program<I, U, T>) -> Self
+    where
+        I: Copy,
+        U: Copy,
+        Tv: From<T>,
+    {
+        let program = program.map_t(|t| Tv::from(t)).map_u(|_| Uid(0));
+        let packages = Map::from([(Uid(0), program.module.modname.clone())]);
+        Self {
+            programs: vec![program],
+            packages,
+        }
+    }
+    pub fn add_program<U, T>(&mut self, program: Program<I, U, T>) -> Uid
+    where
+        I: Copy,
+        U: Copy,
+        Tv: From<T>,
+    {
+        let uid = Uid(self.programs.len() as u64);
+        let chain = program.module.modname.clone();
+        let program = program.map_t(|t| Tv::from(t)).map_u(|_| uid);
+        self.programs.push(program);
+        self.packages.insert(uid, chain);
+        uid
+    }
+
+    pub fn add_programs<U, T>(
+        &mut self,
+        programs: impl IntoIterator<Item = Program<I, U, T>>,
+    ) -> Vec<Uid>
+    where
+        I: Copy,
+        U: Copy,
+        Tv: From<T>,
+    {
+        programs
+            .into_iter()
+            .map(|program| self.add_program(program))
+            .collect()
+    }
+
+    pub fn imported_modules(&self) -> Vec<(Uid, Chain<I>)>
+    where
+        I: Copy,
+    {
+        self.programs_iter()
+            .enumerate()
+            .flat_map(|(u, prog)| {
+                prog.get_imports_iter()
+                    .map(move |imp| (Uid(u as u64), imp.name.clone()))
+            })
+            .collect()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -86,6 +169,22 @@ impl_program! {
 }
 
 impl<Id, U, T> Program<Id, U, T> {
+    pub fn map_u<V>(self, mut f: impl FnMut(U) -> V) -> Program<Id, V, T>
+    where
+        U: Copy,
+    {
+        let Program {
+            module,
+            fixities,
+            comments,
+        } = self;
+        let mid = module.uid;
+        Program {
+            module: module.with_uid(f(mid)),
+            fixities,
+            comments,
+        }
+    }
     pub fn map_id<X>(self, mut f: impl FnMut(Id) -> X) -> Program<X, U, T>
     where
         X: Copy + Eq + std::hash::Hash,
@@ -147,9 +246,10 @@ pub struct Module<Id = Ident, Uid = (), T = Ident> {
     pub fundefs: Vec<FnDecl<Id, T>>,
     pub aliases: Vec<AliasDecl<Id, T>>,
     pub newtyps: Vec<NewtypeDecl<Id, T>>,
+    pub pragmas: Vec<Attribute<Id, T>>,
 }
 
-wy_common::struct_field_iters! {
+struct_field_iters! {
     |Id, U, T| Module<Id, U, T>
     | imports => imports_iter :: ImportSpec<Id>
     | infixes => infixes_iter :: FixityDecl<Id>
@@ -159,13 +259,14 @@ wy_common::struct_field_iters! {
     | fundefs => fundefs_iter :: FnDecl<Id, T>
     | aliases => aliases_iter :: AliasDecl<Id, T>
     | newtyps => newtyps_iter :: NewtypeDecl<Id, T>
+    | pragmas => pragmas_iter :: Attribute<Id, T>
 }
 
 impl Default for Module {
     fn default() -> Self {
         Self {
             uid: (),
-            modname: Chain::new(Ident::Upper(symbol::intern_once("Main")), deque![]),
+            modname: Chain::new(Ident::Upper(*symbol::reserved::MAIN_MOD), deque![]),
             imports: vec![],
             infixes: vec![],
             datatys: vec![],
@@ -174,6 +275,7 @@ impl Default for Module {
             fundefs: vec![],
             aliases: vec![],
             newtyps: vec![],
+            pragmas: vec![],
         }
     }
 }
@@ -191,6 +293,7 @@ impl<Id, U, T> Module<Id, U, T> {
             fundefs: self.fundefs,
             aliases: self.aliases,
             newtyps: self.newtyps,
+            pragmas: self.pragmas,
         }
     }
 
@@ -206,6 +309,7 @@ impl<Id, U, T> Module<Id, U, T> {
             fundefs: self.fundefs.fmap(|decl| decl.map_id(|id| f(id))),
             aliases: self.aliases.fmap(|decl| decl.map_id(|id| f(id))),
             newtyps: self.newtyps.fmap(|decl| decl.map_id(|id| f(id))),
+            pragmas: self.pragmas.fmap(|decl| decl.map_id(|id| f(id))),
         }
     }
 
@@ -225,12 +329,34 @@ impl<Id, U, T> Module<Id, U, T> {
                 .infixes_iter()
                 .map(|fixities| fixities.map_ref(f))
                 .collect(),
-            datatys: self.datatys_iter().map(|decl| decl.map_id_ref(f)).collect(),
-            classes: self.classes_iter().map(|decl| decl.map_id_ref(f)).collect(),
-            implems: self.implems_iter().map(|decl| decl.map_id_ref(f)).collect(),
-            fundefs: self.fundefs_iter().map(|decl| decl.map_id_ref(f)).collect(),
-            aliases: self.aliases_iter().map(|decl| decl.map_id_ref(f)).collect(),
-            newtyps: self.newtyps_iter().map(|decl| decl.map_id_ref(f)).collect(),
+            datatys: self
+                .datatys_iter()
+                .map(|datatys| datatys.map_id_ref(f))
+                .collect(),
+            classes: self
+                .classes_iter()
+                .map(|classes| classes.map_id_ref(f))
+                .collect(),
+            implems: self
+                .implems_iter()
+                .map(|implems| implems.map_id_ref(f))
+                .collect(),
+            fundefs: self
+                .fundefs_iter()
+                .map(|fundefs| fundefs.map_id_ref(f))
+                .collect(),
+            aliases: self
+                .aliases_iter()
+                .map(|aliases| aliases.map_id_ref(f))
+                .collect(),
+            newtyps: self
+                .newtyps_iter()
+                .map(|newtyps| newtyps.map_id_ref(f))
+                .collect(),
+            pragmas: self
+                .pragmas_iter()
+                .map(|pragmas| pragmas.map_id_ref(f))
+                .collect(),
         }
     }
 
@@ -246,6 +372,7 @@ impl<Id, U, T> Module<Id, U, T> {
             fundefs: self.fundefs.fmap(|decl| decl.map_t(|t| f(t))),
             aliases: self.aliases.fmap(|decl| decl.map_t(|t| f(t))),
             newtyps: self.newtyps.fmap(|decl| decl.map_t(|t| f(t))),
+            pragmas: self.pragmas.fmap(|decl| decl.map_t(|t| f(t))),
         }
     }
 
@@ -259,12 +386,34 @@ impl<Id, U, T> Module<Id, U, T> {
             modname: self.modname.clone(),
             imports: self.imports.clone(),
             infixes: self.infixes.clone(),
-            datatys: self.datatys_iter().map(|decl| decl.map_t_ref(f)).collect(),
-            classes: self.classes_iter().map(|decl| decl.map_t_ref(f)).collect(),
-            implems: self.implems_iter().map(|decl| decl.map_t_ref(f)).collect(),
-            fundefs: self.fundefs_iter().map(|decl| decl.map_t_ref(f)).collect(),
-            aliases: self.aliases_iter().map(|decl| decl.map_t_ref(f)).collect(),
-            newtyps: self.newtyps_iter().map(|decl| decl.map_t_ref(f)).collect(),
+            datatys: self
+                .datatys_iter()
+                .map(|datatys| datatys.map_t_ref(f))
+                .collect(),
+            classes: self
+                .classes_iter()
+                .map(|classes| classes.map_t_ref(f))
+                .collect(),
+            implems: self
+                .implems_iter()
+                .map(|implems| implems.map_t_ref(f))
+                .collect(),
+            fundefs: self
+                .fundefs_iter()
+                .map(|fundefs| fundefs.map_t_ref(f))
+                .collect(),
+            aliases: self
+                .aliases_iter()
+                .map(|aliases| aliases.map_t_ref(f))
+                .collect(),
+            newtyps: self
+                .newtyps_iter()
+                .map(|newtyps| newtyps.map_t_ref(f))
+                .collect(),
+            pragmas: self
+                .pragmas_iter()
+                .map(|pragma| pragma.map_t_ref(f))
+                .collect(),
         }
     }
 }
@@ -292,7 +441,7 @@ pub struct ImportSpec<Id = Ident> {
     pub imports: Vec<Import<Id>>,
 }
 
-wy_common::struct_field_iters! {
+struct_field_iters! {
     |Id| ImportSpec<Id>
     | imports => imports :: Import<Id>
 }
@@ -368,6 +517,15 @@ pub enum Import<Id = Ident> {
     Total(Id),
     /// Data type imports that include only the specified constructors, OR
     Partial(Id, Vec<Id>),
+}
+
+wy_common::variant_preds! {
+    Import
+    | is_operator => Operator (_)
+    | is_function => Function (_)
+    | is_abstract => Abstract (_)
+    | is_total => Total (_)
+    | is_partial => Partial (..)
 }
 
 impl<Id> Import<Id> {
