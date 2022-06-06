@@ -110,6 +110,30 @@ impl<X> FileSrc<X> {
         }
     }
 
+    pub fn path(&self) -> &Path {
+        self.path.as_path()
+    }
+
+    pub fn pathbuf(&self) -> &PathBuf {
+        &self.path
+    }
+
+    pub fn parent(&self) -> Option<&Path> {
+        self.path.parent()
+    }
+
+    pub fn stem(&self) -> Option<&std::ffi::OsStr> {
+        self.path.file_stem()
+    }
+
+    pub fn components(&self) -> std::path::Components {
+        self.path.components()
+    }
+
+    pub fn canonicalized(&self) -> std::io::Result<PathBuf> {
+        self.path.canonicalize()
+    }
+
     pub fn map<F, Y>(self, mut f: F) -> FileSrc<Y>
     where
         F: FnMut(X) -> Y,
@@ -130,6 +154,10 @@ impl<X> FileSrc<X> {
             path,
             data: (),
         })
+    }
+
+    pub fn read_dir(&self) -> std::io::Result<std::fs::ReadDir> {
+        self.path.read_dir()
     }
 
     pub fn string_contents(&self) -> Result<String, std::io::Error> {
@@ -258,9 +286,9 @@ mod test {
 
     #[test]
     fn test_file() {
-        let filesrc = FileSrc::<()>::from_paths([PathBuf::from("../../language/prim.ws")])
+        let filesrc = FileSrc::<()>::from_paths([PathBuf::from("../../language/prim.wy")])
             .next()
-            .map(|filesrc| filesrc.load_string().unwrap().0);
+            .map(|filesrc| filesrc.load_string().map(|(src, _)| src));
         println!("{:?}", filesrc)
     }
 }
