@@ -1,11 +1,12 @@
-use std::num::ParseFloatError;
-use std::num::ParseIntError;
-
 use wy_common::pretty::Many;
 // use serde::{Deserialize, Serialize};
 use wy_common::strenum;
 use wy_intern::symbol::{self, Symbol};
+use wy_span::Dummy;
 pub use wy_span::{BytePos, Col, Coord, Located, Location, Row, Span, Spanned, WithLoc, WithSpan};
+
+use crate::literal::*;
+use crate::meta::*;
 
 strenum! { Keyword is_keyword ::
     Let "let"
@@ -52,126 +53,27 @@ impl PartialEq<Token> for Keyword {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Base {
-    /// Base 2 (binary) integers. By default parsed as `u32`.
-    Bin,
-    /// Base 8 (octal) integers. By default parsed as `u32`.
-    Oct,
-    /// Base 16 (hexadecimal) integers. By default parsed as `u32`.
-    Hex,
-    /// Default base (10) for floats and integers.
-    Dec,
-}
-
-impl Base {
-    pub fn radix(&self) -> u32 {
-        match self {
-            Base::Bin => 2,
-            Base::Oct => 8,
-            Base::Hex => 16,
-            Base::Dec => 10,
-        }
+impl PartialEq<Lexeme> for Lint {
+    fn eq(&self, other: &Lexeme) -> bool {
+        matches!(other.symbol(), Some(s) if s == Symbol::from_str(self.as_str()))
     }
 }
 
-/// Literals directly parsed during the lexing process. Note that we don't
-/// represent negative integers with `Literal`s, as all integers are initially
-/// parsed as nonnegatives -- a negative number is represented by the AST as a
-/// "negation" node containing a numeric literal.
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum Literal {
-    Byte(u8),
-    Int(u32),
-    Nat(u64),
-    // maybe replace with an interned string symbol and parse later?
-    Float(f32),
-    Double(f64),
-    Char(char),
-    Str(Symbol),
-}
-
-impl Eq for Literal {}
-
-impl std::hash::Hash for Literal {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        core::mem::discriminant(self).hash(state);
+impl PartialEq<Lint> for Lexeme {
+    fn eq(&self, other: &Lint) -> bool {
+        matches!(self.symbol(), Some(s) if s == Symbol::from_str(other.as_str()))
     }
 }
 
-impl Literal {
-    #[inline]
-    pub fn parse_byte(src: &str, base: Base) -> Result<u8, ParseIntError> {
-        u8::from_str_radix(src, base.radix())
-    }
-
-    #[inline]
-    pub fn parse_int(src: &str, base: Base) -> Result<u32, ParseIntError> {
-        u32::from_str_radix(src, base.radix())
-    }
-
-    #[inline]
-    pub fn parse_nat(src: &str, base: Base) -> Result<u64, ParseIntError> {
-        u64::from_str_radix(src, base.radix())
-    }
-
-    #[inline]
-    pub fn parse_float(src: &str) -> Result<f32, ParseFloatError> {
-        src.parse::<f32>()
-    }
-
-    #[inline]
-    pub fn parse_double(src: &str) -> Result<f64, ParseFloatError> {
-        src.parse::<f64>()
-    }
-
-    #[inline]
-    pub fn from_u8(b: u8) -> Self {
-        Self::Byte(b)
-    }
-
-    #[inline]
-    pub fn from_u32(n: u32) -> Self {
-        Self::Int(n)
-    }
-
-    #[inline]
-    pub fn from_u64(n: u64) -> Self {
-        Self::Nat(n)
-    }
-
-    #[inline]
-    pub fn from_f32(q: f32) -> Self {
-        Self::Float(q)
-    }
-
-    #[inline]
-    pub fn from_f64(d: f64) -> Self {
-        Self::Double(d)
-    }
-
-    #[inline]
-    pub fn from_char(c: char) -> Self {
-        Self::Char(c)
-    }
-
-    #[inline]
-    pub fn from_str(s: impl AsRef<str>) -> Self {
-        Self::Str(symbol::intern_once(s.as_ref()))
+impl PartialEq<Lexeme> for Attr {
+    fn eq(&self, other: &Lexeme) -> bool {
+        matches!(other.symbol(), Some(s) if s == Symbol::from_str(self.as_str()))
     }
 }
 
-impl std::fmt::Display for Literal {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Literal::Byte(n) => write!(f, "{}", n),
-            Literal::Int(n) => write!(f, "{}", n),
-            Literal::Nat(n) => write!(f, "{}", n),
-            Literal::Float(n) => write!(f, "{}", n),
-            Literal::Double(n) => write!(f, "{}", n),
-            Literal::Char(c) => write!(f, "'{}'", c),
-            Literal::Str(s) => write!(f, "\"{}\"", s),
-        }
+impl PartialEq<Attr> for Lexeme {
+    fn eq(&self, other: &Attr) -> bool {
+        matches!(self.symbol(), Some(s) if s == Symbol::from_str(other.as_str()))
     }
 }
 
@@ -194,6 +96,7 @@ pub enum Lexeme {
     Lambda,    // `\`
     At,        // `@`
     Pound,     // `#`
+    Bang,      // `!`
     Equal,     // `=`
     Comma,     // `,`
     Semi,      // `;`
@@ -216,42 +119,52 @@ pub enum Lexeme {
     Lower(Symbol),
     Infix(Symbol),
     Lit(Literal),
+    Meta(Pragma),
     Unknown(LexError),
     Eof,
 }
 
-impl Lexeme {
-    /// Tests whether a lexeme is an identifier beginning with an
-    /// uppercase character.
-    #[inline]
-    pub fn is_upper(&self) -> bool {
-        matches!(self, Lexeme::Upper(_))
-    }
-
+wy_common::variant_preds! {
+    Lexeme
+    | is_kw => Kw (_)
+    | is_lit => Lit (_)
     /// Tests whether a lexeme is an identifier beginning with a lowercase
     /// character OR an underscore. Note that a single underscore is NOT lexed
     /// as a `Lower` lexeme variant.
-    #[inline]
-    pub fn is_lower(&self) -> bool {
-        matches!(self, Lexeme::Lower(_))
-    }
-
+    | is_lower => Lower (_)
+    /// Tests whether a lexeme is an identifier beginning with an
+    /// uppercase character.
+    | is_upper => Upper (_)
+    /// NOTE: This includes `:`, even though it is lexed as a `Lexeme::Colon`
+    | is_infix => Infix (_) [ | Self::Colon]
+    | is_eof => Eof
     /// Tests whether a lexeme is an identifier; this includes names beginning
     /// with an uppercase letter, names beginning with either a lowercase
     /// letter (or an underscore along with alphanumeric characters), OR an
     /// infix (corresponding to a sequence of characters entirely made up of
     /// ASCII symbols).
-    #[inline]
-    pub fn is_ident(&self) -> bool {
-        matches!(self, Lexeme::Upper(_) | Lexeme::Lower(_) | Lexeme::Infix(_))
-    }
+    | is_ident => Upper (_) [ | Self::Lower(_) | Self::Infix(_)]
+    | is_meta => Meta (_)
+    | is_pipe => Pipe
+    | is_semi => Semi
+    | is_comma => Comma
+    | is_pound => Pound
+    | is_arrow_r => ArrowR
+    | is_arrow_l => ArrowL
+    | is_paren_l => ParenL
+    | is_paren_r => ParenR
+    | is_brack_l => BrackL
+    | is_brack_r => BrackR
+    | is_unknown => Unknown (..)
+    | is_left_delim => ParenL [ | Self::BrackL | Self::CurlyL ]
+    | is_right_delim => ParenR [ | Self::BrackR | Self::CurlyR ]
+    | is_inline_attr => Meta (Pragma::Attr(Attr::Inline))
+    | is_no_inline_attr => Meta (Pragma::Attr(Attr::NoInline))
+    | is_test_attr => Meta (Pragma::Attr(Attr::Test))
 
-    /// NOTE: This includes `:`, even though it is lexed as a `Lexeme::Colon`
-    #[inline]
-    pub fn is_infix(&self) -> bool {
-        matches!(self, Lexeme::Infix(_) | Lexeme::Colon)
-    }
+}
 
+impl Lexeme {
     /// Extracting the `Symbol` stored by a given `Lexeme`, if it contains one.
     /// This is to avoid having to pattern match over a lexeme for its `Symbol`
     /// when it is already known that a `Lexeme` contains a `Symbol`.
@@ -266,27 +179,38 @@ impl Lexeme {
     }
 
     #[inline]
-    pub fn is_kw(&self) -> bool {
-        matches!(self, Lexeme::Kw(_))
+    pub fn ident(&self) -> Option<Symbol> {
+        if let Self::Lower(s) | Self::Upper(s) | Self::Infix(s) = self {
+            Some(*s)
+        } else {
+            None
+        }
+    }
+
+    /// Unlike `ident`, this method returns the symbol corresponding to a lexeme
+    /// that doesn't *naturally* hold a symbol, such as `:` and `<-` which are
+    /// hardcoded, fieldless `Lexeme` variants.
+    #[inline]
+    pub fn special_ident(&self) -> Option<Symbol> {
+        match self {
+            Self::Colon => Some(*wy_intern::COLON),
+            Self::ArrowL => Some(*wy_intern::ARROW),
+            // should underscore/wildcard be included?
+            _ => None,
+        }
     }
 
     #[inline]
-    pub fn is_lit(&self) -> bool {
-        matches!(self, Lexeme::Lit(..))
+    pub fn literal(&self) -> Option<Literal> {
+        if let Self::Lit(lit) = self {
+            Some(*lit)
+        } else {
+            None
+        }
     }
 
     #[inline]
-    pub fn is_eof(&self) -> bool {
-        matches!(self, Lexeme::Eof)
-    }
-
-    #[inline]
-    pub fn is_unknown(&self) -> bool {
-        matches!(self, Lexeme::Unknown(..))
-    }
-
-    #[inline]
-    pub fn meta_kw(&self) -> bool {
+    pub fn info_kw(&self) -> bool {
         matches!(self, Lexeme::Kw(Keyword::Module | Keyword::Import))
     }
 
@@ -303,13 +227,16 @@ impl Lexeme {
         matches!(
             self,
             Lexeme::Kw(
-                Keyword::InfixL
+                Keyword::Infix
+                    | Keyword::InfixL
                     | Keyword::InfixR
                     | Keyword::Type
                     | Keyword::Class
                     | Keyword::Data
                     | Keyword::Fn
                     | Keyword::Impl
+                    | Keyword::Newtype
+                    | Keyword::Def
             )
         )
     }
@@ -347,6 +274,11 @@ impl Lexeme {
             self,
             Lexeme::Upper(_) | Lexeme::Lower(_) | Lexeme::ParenL | Lexeme::BrackL // | Lexeme::CurlyL
         )
+    }
+
+    #[inline]
+    pub fn is_minus_sign(&self) -> bool {
+        matches!(self, Lexeme::Infix(s) if *s == *wy_intern::MINUS)
     }
 }
 
@@ -388,6 +320,7 @@ impl std::fmt::Display for Lexeme {
             Lexeme::Lambda => write!(f, "\\"),
             Lexeme::At => write!(f, "@"),
             Lexeme::Pound => write!(f, "#"),
+            Lexeme::Bang => write!(f, "!"),
             Lexeme::Equal => write!(f, "="),
             Lexeme::Comma => write!(f, ","),
             Lexeme::Semi => write!(f, ";"),
@@ -410,6 +343,7 @@ impl std::fmt::Display for Lexeme {
             Lexeme::Lower(s) => write!(f, "{}", s),
             Lexeme::Infix(s) => write!(f, "{}", s),
             Lexeme::Lit(lit) => write!(f, "{}", lit),
+            Lexeme::Meta(pr) => write!(f, "<PRAGMA: {:?}>", pr),
             Lexeme::Unknown(err) => write!(f, "<[INVALID]: {}>", err),
             Lexeme::Eof => write!(f, "<[EOF]>"),
         }
@@ -463,7 +397,8 @@ pub enum LexKind {
     /// A specific lexeme (as opposed to a general class of lexemes)
     Specified(Lexeme),
     /// Any of the listed specific lexemes
-    AnyOf(&'static [Lexeme]),
+    AnyOf(&'static [LexKind]),
+    Attribute,
 }
 
 impl From<Keyword> for LexKind {
@@ -481,7 +416,7 @@ impl From<Literal> for LexKind {
             | Literal::Float(_)
             | Literal::Double(_) => Self::Number,
             Literal::Char(_) => Self::Character,
-            Literal::Str(_) => Self::Literal,
+            Literal::Str(_) | Literal::EmptyStr => Self::Literal,
         }
     }
 }
@@ -494,6 +429,7 @@ impl From<Lexeme> for LexKind {
             | Lexeme::Lambda
             | Lexeme::At
             | Lexeme::Pound
+            | Lexeme::Bang
             | Lexeme::Equal
             | Lexeme::Comma
             | Lexeme::Semi
@@ -512,6 +448,7 @@ impl From<Lexeme> for LexKind {
             Lexeme::Infix(_) | Lexeme::Colon => Self::Infix,
             Lexeme::Lit(_) => Self::Literal,
             Lexeme::Unknown(..) | Lexeme::Eof => Self::Specified(lexeme),
+            Lexeme::Meta(..) => Self::Attribute,
         }
     }
 }
@@ -545,14 +482,30 @@ impl std::fmt::Display for LexKind {
             LexKind::AnyOf(lexemes) => {
                 write!(f, "any of [{}]", Many(lexemes, ", "))
             }
+            LexKind::Attribute => write!(f, "attribute"),
         }
     }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct Token {
-    pub lexeme: Lexeme,
+pub struct Token<L = Lexeme> {
+    pub lexeme: L,
     pub span: Span,
+}
+
+impl<L> Token<L> {
+    pub fn map<M>(self, mut f: impl FnMut(L) -> M) -> Token<M> {
+        Token {
+            lexeme: f(self.lexeme),
+            span: self.span,
+        }
+    }
+    pub fn map_ref<R>(&self, mut f: impl FnMut(&L) -> R) -> Token<R> {
+        Token {
+            lexeme: f(&self.lexeme),
+            span: self.span,
+        }
+    }
 }
 
 impl std::fmt::Display for Token {
@@ -577,7 +530,7 @@ impl PartialEq<Lexeme> for Token {
     fn eq(&self, other: &Lexeme) -> bool {
         match (&self.lexeme, other) {
             (Lexeme::Colon, Lexeme::Infix(s)) | (Lexeme::Infix(s), Lexeme::Colon) => {
-                *s == *symbol::CONS
+                *s == *wy_intern::COLON
             }
             (me, other) => me == other,
         }
@@ -647,6 +600,56 @@ pub trait Lexlike<Tok = Token, Lex = Lexeme> {
     }
 }
 
+impl Lexlike for fn(Lexeme) -> bool {
+    fn cmp_lex(&self, lex: &Lexeme) -> bool {
+        self(*lex)
+    }
+
+    fn cmp_tok(&self, tok: &Token) -> bool {
+        self(tok.lexeme)
+    }
+}
+
+impl Lexlike for fn(Token) -> bool {
+    /// Note that a `Token` is constructed to feed into the function pointer for
+    /// which this trait is implemented. In the constructed `Token`, a dummy
+    /// span `Span::DUMMY` is used for the `span` field, but as this method
+    /// compares *lexemes*, the given function may return a false positive!
+    fn cmp_lex(&self, lex: &Lexeme) -> bool {
+        self(Token {
+            lexeme: *lex,
+            span: Span::DUMMY,
+        })
+    }
+
+    fn cmp_tok(&self, tok: &Token) -> bool {
+        self(*tok)
+    }
+}
+
+impl Lexlike for fn(Option<&Token>) -> bool {
+    fn cmp_lex(&self, lex: &Lexeme) -> bool {
+        self(Some(&Token {
+            lexeme: *lex,
+            span: Span::DUMMY,
+        }))
+    }
+
+    fn cmp_tok(&self, tok: &Token) -> bool {
+        self(Some(tok))
+    }
+}
+
+impl Lexlike for fn(Option<&Lexeme>) -> bool {
+    fn cmp_lex(&self, lex: &Lexeme) -> bool {
+        self(Some(lex))
+    }
+
+    fn cmp_tok(&self, tok: &Token) -> bool {
+        self(Some(&tok.lexeme))
+    }
+}
+
 impl<F> Lexlike for F
 where
     F: Fn(&Lexeme) -> bool,
@@ -677,6 +680,16 @@ impl Lexlike for Literal {
 
     fn cmp_tok(&self, tok: &Token) -> bool {
         self == &tok.lexeme
+    }
+}
+
+impl Lexlike for Pragma {
+    fn cmp_lex(&self, lex: &Lexeme) -> bool {
+        matches!(lex, Lexeme::Meta(p) if p == self)
+    }
+
+    fn cmp_tok(&self, tok: &Token) -> bool {
+        matches!(&tok.lexeme, Lexeme::Meta(p) if p == self)
     }
 }
 
@@ -723,7 +736,7 @@ where
     }
 }
 
-impl<T> Lexlike for [T]
+impl<T, const N: usize> Lexlike for [T; N]
 where
     T: Lexlike,
 {
@@ -746,6 +759,63 @@ where
 
     fn cmp_tok(&self, tok: &Token) -> bool {
         self.iter().any(|t| t.cmp_tok(tok))
+    }
+}
+
+impl Lexlike for Symbol {
+    fn cmp_lex(&self, lex: &Lexeme) -> bool {
+        matches!(lex, Lexeme::Upper(s) | Lexeme::Lower(s) | Lexeme::Infix(s) if *self == *s)
+            || (lex.is_kw()
+                && matches!(Keyword::from_str(symbol::lookup(*self).as_str()), Some(kw) if kw.cmp_lex(lex)))
+    }
+
+    fn cmp_tok(&self, tok: &Token) -> bool {
+        self.cmp_lex(&tok.lexeme)
+    }
+}
+
+impl<A, B> Lexlike for (A, B)
+where
+    A: Lexlike,
+    B: Lexlike,
+{
+    fn cmp_lex(&self, lex: &Lexeme) -> bool {
+        self.0.cmp_lex(lex) || self.1.cmp_lex(lex)
+    }
+
+    fn cmp_tok(&self, tok: &Token) -> bool {
+        self.0.cmp_tok(tok) || self.1.cmp_tok(tok)
+    }
+}
+
+impl<A, B, C> Lexlike for (A, B, C)
+where
+    A: Lexlike,
+    B: Lexlike,
+    C: Lexlike,
+{
+    fn cmp_lex(&self, lex: &Lexeme) -> bool {
+        self.0.cmp_lex(lex) || self.1.cmp_lex(lex) || self.2.cmp_lex(lex)
+    }
+
+    fn cmp_tok(&self, tok: &Token) -> bool {
+        self.0.cmp_tok(tok) || self.1.cmp_tok(tok) || self.2.cmp_tok(tok)
+    }
+}
+
+impl<A, B, C, D> Lexlike for (A, B, C, D)
+where
+    A: Lexlike,
+    B: Lexlike,
+    C: Lexlike,
+    D: Lexlike,
+{
+    fn cmp_lex(&self, lex: &Lexeme) -> bool {
+        self.0.cmp_lex(lex) || self.1.cmp_lex(lex) || self.2.cmp_lex(lex) || self.3.cmp_lex(lex)
+    }
+
+    fn cmp_tok(&self, tok: &Token) -> bool {
+        self.0.cmp_tok(tok) || self.1.cmp_tok(tok) || self.2.cmp_tok(tok) || self.3.cmp_tok(tok)
     }
 }
 
@@ -803,6 +873,7 @@ pub enum LexError {
     /// `o`, `O`, `x`, or `X`) after (the initial) `0` in a number beginning
     /// with `0`.
     InvalidIntPrefix,
+    InvalidIntSuffix,
     /// Emitted when encountering empty backticks, i.e., "``".
     EmptyInfix,
     /// Emitted when a non-lowercase initial identifier character is found
@@ -823,6 +894,9 @@ pub enum LexError {
     /// Emitted when encountering a dot and then a number. Note that the string
     /// `3.4.5` is lexed as `3.4` -> `.5`, where this error corresponds to `.5`
     MissingIntegral,
+    /// Emitted when encountering a `0` followed by another (decimal) integer
+    /// between `1` and `9`.
+    NoLeadingZeroInt,
     /// Emitted when parsing a numeric literal to a Rust number fails
     MalformedNumber,
     /// Emitted when encountering the EOF after `~{` without a closing `}~`.
@@ -839,6 +913,7 @@ impl std::fmt::Display for LexError {
             LexError::UnterminatedString => write!(f, "unterminated string literal"),
             LexError::UnterminatedInfix => write!(f, "unterminated backticks"),
             LexError::InvalidIntPrefix => write!(f, "invalid integer prefix"),
+            LexError::InvalidIntSuffix => write!(f, "invalid integer suffix"),
             LexError::EmptyInfix => write!(f, "no content between backticks"),
             LexError::InvalidInfix => write!(
                 f,
@@ -852,6 +927,7 @@ impl std::fmt::Display for LexError {
                 "digits not found after decimal point in floating point number"
             ),
             LexError::MissingIntegral => write!(f, "decimal point found beginning numeric literal"),
+            LexError::NoLeadingZeroInt => write!(f, "invalid leading 0 found in number"),
             LexError::MalformedNumber => write!(f, "malformed integer"),
             LexError::UnterminatedComment => write!(f, "block comment not terminated"),
         }
