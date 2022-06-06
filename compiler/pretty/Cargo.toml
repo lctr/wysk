@@ -1,0 +1,15 @@
+[package]
+name = "wy_pretty"
+version = "0.0.1"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+# wy_common = { path = "../common" }
+# wy_failure = { path = "../failure" }
+wy_intern = { path = "../intern" }
+wy_span = { path = "../span" }
+stringy = "0.2.2"
+
+serde = { version = "1.0", features = ["derive"] }

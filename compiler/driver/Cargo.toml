@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 wy_common = { path = "../common" }
+wy_pretty = { path = "../pretty" }
 wy_failure = { path = "../failure" }
 wy_intern = { path = "../intern" }
 wy_span = { path = "../span" }
@@ -17,3 +18,4 @@ wy_parser = { path = "../parser" }
 wy_session = { path = "../session" }
 wy_check = { path = "../check" }
 wy_graph = { path = "../graph" }
+wy_simple = { path = "../simple" }
