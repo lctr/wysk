@@ -235,7 +235,13 @@ impl<Id, T> Pattern<Id, T> {
             Pattern::Wild => Pattern::Wild,
             Pattern::Var(t) => Pattern::Var(t),
             Pattern::Lit(lit) => Pattern::Lit(lit),
-            Pattern::Dat(_, _) => todo!(),
+            Pattern::Dat(con, args) => {
+                let mut pargs = vec![];
+                for arg in args {
+                    pargs.push(arg.map_t(f));
+                }
+                Pattern::Dat(con, pargs)
+            }
             Pattern::Tup(ts) => {
                 if ts.is_empty() {
                     Pattern::UNIT

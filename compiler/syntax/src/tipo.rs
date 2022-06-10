@@ -1,6 +1,6 @@
 use std::{fmt::Write, hash::Hash};
 
-use wy_common::{either::Either, Map, Mappable};
+use wy_common::{either::Either, push_if_absent, Map, Mappable};
 use wy_intern::{Symbol, Symbolic};
 
 use crate::{decl::Arity, ident::Ident};
@@ -192,12 +192,12 @@ pub enum Con<Id = Ident, T = Id> {
 impl<Id: Symbolic> Symbolic for Con<Id, Tv> {
     fn get_symbol(&self) -> Symbol {
         match self {
-            Con::List => *wy_intern::COLON,
+            Con::List => wy_intern::COLON,
             Con::Tuple(ts) => {
                 let s = std::iter::repeat(',').take(*ts).collect::<String>();
                 wy_intern::intern_once(&*s)
             }
-            Con::Arrow => *wy_intern::ARROW,
+            Con::Arrow => wy_intern::ARROW,
             Con::Data(s) => s.get_symbol(),
             Con::Free(t) => wy_intern::intern_once(&*t.display()),
         }
@@ -242,7 +242,7 @@ impl<Id, T> Con<Id, T> {
     /// *not* include the parentheses! Hence this function is essentially a
     /// shortcut to interning `:` and mapping it to represent an identifier.
     pub fn list_cons_id(mut f: impl FnMut(Symbol) -> Id) -> Id {
-        f(*wy_intern::COLON)
+        f(wy_intern::COLON)
     }
 
     /// Like with the list constructor `:`, the tuple constructor must also be
@@ -304,21 +304,21 @@ impl<Id, T> Con<Id, T> {
 }
 
 impl Con<Ident, Tv> {
-    const fn reserved(wy_intern::Reserved { symbol, .. }: wy_intern::Reserved) -> Con<Ident, Tv> {
+    const fn mk_data(symbol: Symbol) -> Con<Ident, Tv> {
         Con::Data(Ident::Upper(symbol))
     }
 
-    pub const ARROW: Self = Self::reserved(wy_intern::ARROW);
-    pub const BOOL: Self = Self::reserved(wy_intern::BOOL);
-    pub const INT: Self = Self::reserved(wy_intern::INT);
-    pub const NAT: Self = Self::reserved(wy_intern::NAT);
-    pub const FLOAT: Self = Self::reserved(wy_intern::FLOAT);
-    pub const DOUBLE: Self = Self::reserved(wy_intern::DOUBLE);
-    pub const BYTE: Self = Self::reserved(wy_intern::BYTE);
-    pub const CHAR: Self = Self::reserved(wy_intern::CHAR);
-    pub const STR: Self = Self::reserved(wy_intern::STR);
-    pub const IO: Self = Self::reserved(wy_intern::IO);
-    pub const HOLE: Self = Self::reserved(wy_intern::WILD);
+    pub const ARROW: Self = Self::mk_data(wy_intern::ARROW);
+    pub const BOOL: Self = Self::mk_data(wy_intern::BOOL);
+    pub const INT: Self = Self::mk_data(wy_intern::INT);
+    pub const NAT: Self = Self::mk_data(wy_intern::NAT);
+    pub const FLOAT: Self = Self::mk_data(wy_intern::FLOAT);
+    pub const DOUBLE: Self = Self::mk_data(wy_intern::DOUBLE);
+    pub const BYTE: Self = Self::mk_data(wy_intern::BYTE);
+    pub const CHAR: Self = Self::mk_data(wy_intern::CHAR);
+    pub const STR: Self = Self::mk_data(wy_intern::STR);
+    pub const IO: Self = Self::mk_data(wy_intern::IO);
+    pub const HOLE: Self = Self::mk_data(wy_intern::WILD);
 }
 
 impl<Id: std::fmt::Display, T: std::fmt::Display> std::fmt::Display for Con<Id, T> {
@@ -918,8 +918,8 @@ impl<Id, T> Type<Id, T> {
         vars.into_iter().zip(0..).map(|(t, var)| Var(t, Tv(var)))
     }
 
-    pub fn ty_str(&self) -> TypeStr<'_, Id, T> {
-        TypeStr(self)
+    pub fn ty_str(&self, prec: usize) -> TypeStr<'_, Id, T> {
+        TypeStr(self, prec)
     }
 
     pub fn map_t<U>(self, f: &mut impl FnMut(T) -> U) -> Type<Id, U> {
@@ -950,6 +950,17 @@ impl<Id, T> Type<Id, T> {
             Type::Vec(ty) => Type::Vec(Box::new(ty.map_t(f))),
             Type::Rec(rs) => Type::Rec(rs.map_t(|ty| ty.map_t(f))),
         }
+    }
+}
+
+pub struct TypeStr<'t, Id, T>(&'t Type<Id, T>, usize);
+impl<'t, Id, T> std::fmt::Debug for TypeStr<'t, Id, T>
+where
+    Id: 't + std::fmt::Display,
+    T: 't + std::fmt::Display,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 
@@ -1086,7 +1097,8 @@ impl<Id> Ty<Id> {
                 )
             }
             Ty::App(xy) => {
-                todo!()
+                let [x, y] = xy.as_ref();
+                y.fv().into_iter().fold(x.fv(), push_if_absent)
             }
         }
     }
@@ -1100,7 +1112,7 @@ impl<Id> Ty<Id> {
     /// ..., `tn`, returns the function type `t0 -> (t1 -> (t2 -> ... -> tn))`.
     /// If the collection of types provided is empty, then the initial type `t0`
     /// is returned.
-    pub fn try_mk_fun(head: Self, rest: impl DoubleEndedIterator + Iterator<Item = Self>) -> Self {
+    pub fn maybe_fun(head: Self, rest: impl DoubleEndedIterator + Iterator<Item = Self>) -> Self {
         if let Some(tail) = rest.rev().reduce(|a, c| Self::mk_fun_ty(a, c)) {
             Self::Con(Con::Arrow, vec![head, tail])
         } else {
@@ -1117,14 +1129,64 @@ impl<Id> Ty<Id> {
     }
 }
 
-pub struct TypeStr<'t, Id, T>(&'t Type<Id, T>);
-impl<'t, Id, T> std::fmt::Debug for TypeStr<'t, Id, T>
-where
-    Id: 't + std::fmt::Display,
-    T: 't + std::fmt::Display,
-{
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub enum Kind {
+    Star,
+    Arrow(Box<Kind>, Box<Kind>),
+}
+
+impl std::fmt::Debug for Kind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+        match self {
+            Self::Star => write!(f, "*"),
+            Self::Arrow(arg0, arg1) => {
+                write!(f, "{:?} -> {:?}", arg0, arg1)
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for Kind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Kind::Star => write!(f, "*"),
+            Kind::Arrow(a, b) => write!(f, "{} -> {}", a, b),
+        }
+    }
+}
+
+impl Kind {
+    pub fn from_poly(tvs: &[Tv]) -> Self {
+        let mut kind = Self::Star;
+        for _ in tvs {
+            kind = Self::Arrow(Box::new(Self::Star), Box::new(kind));
+        }
+        kind
+    }
+    pub fn from_type(ty: &Type) -> Self {
+        match ty {
+            Type::Var(_) => Self::Star,
+            Type::Con(Con::Tuple(0), _) => Self::Star,
+            Type::Con(Con::List, t) if t.len() == 1 => {
+                Self::Arrow(Box::new(Self::Star), Box::new(Self::from_type(&t[0])))
+            }
+            Type::Con(_, xs) if xs.is_empty() => Self::Star,
+            Type::Con(_, xs) => xs.into_iter().fold(Self::Star, |a, c| {
+                Self::Arrow(Box::new(Self::from_type(c)), Box::new(a))
+            }),
+            Type::Fun(..) => Self::Star,
+            Type::Tup(xs) if xs.is_empty() => Self::Star,
+            Type::Tup(xs) => Self::Arrow(
+                xs.into_iter().fold(Box::new(Self::Star), |a, c| {
+                    Box::new(Self::Arrow(a, Box::new(Self::from_type(c))))
+                }),
+                Box::new(Self::Star),
+            ),
+            Type::Vec(t) => {
+                Self::Arrow(Box::new(Self::Star), Box::new(Self::from_type(t.as_ref())))
+            }
+            Type::Rec(_) => Self::Star,
+        }
     }
 }
 
@@ -1465,6 +1527,7 @@ impl<T, Id> Field<T, Id> {
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Context<Id = Ident, T = Ident> {
+    /// The name of the type class for which this holds
     pub class: Id,
     /// Defaults to `Tv`, but is parametrized in order to allow for simple
     /// (lowercase) identifiers to be used during parsing (which should then be
@@ -1473,15 +1536,16 @@ pub struct Context<Id = Ident, T = Ident> {
     pub tyvar: T,
 }
 
+pub type Predicate<Id, T> = Context<Id, Type<Id, T>>;
+
 impl<Id, T> Context<Id, T> {
     pub fn map_id<F, X>(self, mut f: F) -> Context<X, T>
     where
         F: FnMut(Id) -> X,
     {
-        let Context { class, tyvar } = self;
         Context {
-            class: f(class),
-            tyvar,
+            class: f(self.class),
+            tyvar: self.tyvar,
         }
     }
     pub fn map_id_ref<X>(&self, f: &mut impl FnMut(&Id) -> X) -> Context<X, T>
@@ -1497,10 +1561,9 @@ impl<Id, T> Context<Id, T> {
     where
         F: FnMut(T) -> U,
     {
-        let Context { class, tyvar } = self;
         Context {
-            class,
-            tyvar: f(tyvar),
+            class: self.class,
+            tyvar: f(self.tyvar),
         }
     }
     pub fn map_t_ref<U>(&self, f: &mut impl FnMut(&T) -> U) -> Context<Id, U>
@@ -1516,6 +1579,8 @@ impl<Id, T> Context<Id, T> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Signature<Id = Ident, T = Ident> {
+    /// quantified type variables -- should this be here or a separate struct or
+    /// type variant?
     pub each: Vec<T>,
     pub ctxt: Vec<Context<Id, T>>,
     pub tipo: Type<Id, T>,
@@ -1523,7 +1588,7 @@ pub struct Signature<Id = Ident, T = Ident> {
 
 wy_common::struct_field_iters! {
     |Id, T| Signature<Id, T>
-    | each => quant_iter :: T
+    | each => each_iter :: T
     | ctxt => ctxt_iter :: Context<Id, T>
 }
 
@@ -1591,7 +1656,7 @@ impl<Id, T> Signature<Id, T> {
         Id: Copy,
     {
         Signature {
-            each: self.quant_iter().map(|t| f(t)).collect(),
+            each: self.each_iter().map(|t| f(t)).collect(),
             ctxt: self.ctxt_iter().map(|c| c.map_t_ref(f)).collect(),
             tipo: self.tipo.map_t_ref(f),
         }
@@ -1683,7 +1748,7 @@ macro_rules! Ty {
     (Char) => {{ Type::Char }};
     (Float) => {{ Type::FLOAT }};
     (Double) => {{ Type::DOUBLE }};
-    (()) => {{ $crate::tipo::Type::UNIT }};
+    (#()) => {{ $crate::tipo::Type::UNIT }};
     (
         ($($ts:tt)+)
     ) => {{
@@ -1756,7 +1821,7 @@ mod test {
         let vars = (0..10).map(Tv).collect::<Vec<_>>();
         if let [a, b, c, d, e, f, g, h] = vars[..] {
             assert_eq!(
-                Ty! { 0 -> 1 -> (2 -> 3) -> #(Foo 4 5 6)},
+                Ty! { 0 -> 1 -> (2 -> 3) -> #(Foo 4 5 6 7) },
                 Type::mk_fun(
                     Type::Var(a),
                     Type::mk_fun(
@@ -1765,7 +1830,7 @@ mod test {
                             Type::mk_fun(Type::Var(c), Type::Var(d)),
                             Type::Con(
                                 Con::Data(Ident::Upper(Symbol::from("Foo"))),
-                                vec![Type::Var(e), Type::Var(f), Type::Var(g)]
+                                vec![Type::Var(e), Type::Var(f), Type::Var(g), Type::Var(h)]
                             )
                         )
                     )
