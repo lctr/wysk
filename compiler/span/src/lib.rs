@@ -1,4 +1,4 @@
-use wy_common::newtype;
+use wy_common::{either::Either, newtype};
 
 newtype! {
     { u32 in Row | New Show Usize Deref (+=) (-)
@@ -310,6 +310,22 @@ impl Span {
             }
         };
         self
+    }
+
+    /// Grows the total width of the span by reducing the *starting point* by
+    /// according to the number bytes provided.
+    pub fn grow_left(self, bytes: &[u8]) -> Self {
+        let Span(BytePos(start), end) = self;
+        let len = bytes.len() as u32;
+        if len < start {
+            return Span(BytePos(start - len), end);
+        }
+        self
+    }
+
+    pub fn grow_right(self, bytes: &[u8]) -> Self {
+        let Span(start, BytePos(end)) = self;
+        Span(start, BytePos(bytes.len() as u32 + end))
     }
 
     pub fn in_str(&self, s: &str) -> Box<str> {
