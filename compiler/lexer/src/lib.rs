@@ -81,6 +81,7 @@ impl<'t> Lexer<'t> {
         use Lexeme::Lit;
         use Literal::Char;
         let start = self.source.get_pos();
+        // skip the first apostrophe
         self.source.next();
         match self.source.peek().copied() {
             Some(c) if c != '\\' => {
@@ -89,7 +90,16 @@ impl<'t> Lexer<'t> {
                     self.source.next();
                     Lit(Char(c))
                 } else {
-                    Lexeme::Unknown(LexError::UnterminatedChar)
+                    if c == '_' && self.on_char(char::is_whitespace) {
+                        Lexeme::Unlabel
+                    } else 
+                    if is_ident_start(c) {
+                        let posn = self.source.eat_while(|c| is_ident_char(c));
+                        let symbol = wy_intern::intern_once(&self.source[posn.span()]);
+                        Lexeme::Label(symbol)
+                    } else {
+                        Lexeme::Unknown(LexError::UnterminatedChar)
+                    }
                 };
                 Token {
                     lexeme,
@@ -193,6 +203,7 @@ impl<'t> Lexer<'t> {
     }
 
     fn shebang(&mut self) {
+        #![allow(unused)]
         todo!()
     }
 
@@ -327,13 +338,19 @@ impl<'t> Lexer<'t> {
     }
 
     fn identifier(&mut self, first: char) -> Token {
-        debug_assert!(matches!(self.source.peek(), Some(c) if is_ident_start(*c)));
-        let name = if first.is_uppercase() {
-            Lexeme::Upper
-        } else {
-            Lexeme::Lower
-        };
+        if first == 'w'  && self.source.bump_on('#') {            
+            let (span, _) = self.source.eat_until_whitespace().parts();
+            let sym = symbol::intern_once(&self.source[span]);
+            // lex all raw idents as lower
+            return Token { 
+                lexeme: Lexeme::Lower(sym), 
+                span: span.grow_left(b"w#") }
+        } 
+
+        debug_assert!(self.source.on_char(is_ident_start));
+
         let (span, _) = self.source.eat_while(is_ident_char).parts();
+        
         let text = &self.source[span];
         let token = |lexeme: Lexeme| Token { lexeme, span };
 
@@ -342,7 +359,11 @@ impl<'t> Lexer<'t> {
         } else if let Some(kw) = Keyword::from_str(text) {
             token(Lexeme::Kw(kw))
         } else {
-            token(name(symbol::intern_once(text)))
+            token(if first.is_uppercase() {
+                Lexeme::Upper
+            } else {
+                Lexeme::Lower
+            }(symbol::intern_once(text)))
         }
     }
 
