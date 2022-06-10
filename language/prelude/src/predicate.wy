@@ -107,4 +107,4 @@ infixl 2 `xor`
 fn xor :: Bool -> Bool -> Bool
    | True False = True
    | False True = True
-   | _ _ False
+   | _ _ = False 
