@@ -2,7 +2,6 @@ use wy_syntax::tipo::Tv;
 
 use super::{
     constraint::{Constraint, ConstraintBuilder, Type},
-    engine::Inference,
     error::Error,
     subst::{Subst, Substitutable},
 };
@@ -115,19 +114,6 @@ impl Unifier {
 
     pub fn get_subst_mut(&mut self) -> &mut Subst {
         &mut self.subst
-    }
-
-    pub fn from_inference(inferred: Inference) -> (Type, Self) {
-        inferred.finalize_deduped(|ty, constraints| {
-            (
-                ty,
-                Unifier {
-                    subst: Subst::new(),
-                    constraints,
-                    bound: vec![],
-                },
-            )
-        })
     }
 
     pub fn unify(&mut self, t1: Type, t2: Type) -> Result<Subst, Error> {
