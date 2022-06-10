@@ -92,6 +92,7 @@ impl PartialEq<Token> for Literal {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Lexeme {
     Underline, // `_`
+    Unlabel,   // `'_`
     Tilde,     // '~'
     Lambda,    // `\`
     At,        // `@`
@@ -118,6 +119,7 @@ pub enum Lexeme {
     Upper(Symbol),
     Lower(Symbol),
     Infix(Symbol),
+    Label(Symbol),
     Lit(Literal),
     Meta(Pragma),
     Unknown(LexError),
@@ -137,6 +139,7 @@ wy_common::variant_preds! {
     | is_upper => Upper (_)
     /// NOTE: This includes `:`, even though it is lexed as a `Lexeme::Colon`
     | is_infix => Infix (_) [ | Self::Colon]
+    | is_label => Label (_)
     | is_eof => Eof
     /// Tests whether a lexeme is an identifier; this includes names beginning
     /// with an uppercase letter, names beginning with either a lowercase
@@ -171,16 +174,18 @@ impl Lexeme {
     #[inline]
     pub fn symbol(&self) -> Option<Symbol> {
         match self {
-            Self::Lower(s) | Self::Upper(s) | Self::Infix(s) | Self::Lit(Literal::Str(s)) => {
-                Some(*s)
-            }
+            Self::Lower(s)
+            | Self::Upper(s)
+            | Self::Infix(s)
+            | Self::Label(s)
+            | Self::Lit(Literal::Str(s)) => Some(*s),
             _ => None,
         }
     }
 
     #[inline]
-    pub fn ident(&self) -> Option<Symbol> {
-        if let Self::Lower(s) | Self::Upper(s) | Self::Infix(s) = self {
+    pub fn ident_symbol(&self) -> Option<Symbol> {
+        if let Self::Lower(s) | Self::Upper(s) | Self::Infix(s) | Self::Label(s) = self {
             Some(*s)
         } else {
             None
@@ -193,8 +198,8 @@ impl Lexeme {
     #[inline]
     pub fn special_ident(&self) -> Option<Symbol> {
         match self {
-            Self::Colon => Some(*wy_intern::COLON),
-            Self::ArrowL => Some(*wy_intern::ARROW),
+            Self::Colon => Some(symbol::COLON),
+            Self::ArrowL => Some(symbol::ARROW),
             // should underscore/wildcard be included?
             _ => None,
         }
@@ -278,7 +283,7 @@ impl Lexeme {
 
     #[inline]
     pub fn is_minus_sign(&self) -> bool {
-        matches!(self, Lexeme::Infix(s) if *s == *wy_intern::MINUS)
+        matches!(self, Lexeme::Infix(s) if *s == symbol::MINUS)
     }
 }
 
@@ -316,6 +321,7 @@ impl std::fmt::Display for Lexeme {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Lexeme::Underline => write!(f, "_"),
+            Lexeme::Unlabel => write!(f, "'_"),
             Lexeme::Tilde => write!(f, "~"),
             Lexeme::Lambda => write!(f, "\\"),
             Lexeme::At => write!(f, "@"),
@@ -342,6 +348,7 @@ impl std::fmt::Display for Lexeme {
             Lexeme::Upper(s) => write!(f, "{}", s),
             Lexeme::Lower(s) => write!(f, "{}", s),
             Lexeme::Infix(s) => write!(f, "{}", s),
+            Lexeme::Label(s) => write!(f, "'{}", s),
             Lexeme::Lit(lit) => write!(f, "{}", lit),
             Lexeme::Meta(pr) => write!(f, "<PRAGMA: {:?}>", pr),
             Lexeme::Unknown(err) => write!(f, "<[INVALID]: {}>", err),
@@ -379,6 +386,8 @@ pub enum LexKind {
     /// Identifiers consisting of ascii symbols `~!@#$%%^&*-+:?/\\.<>=` with the
     /// exception of `->`, `<-`, `=`, `|`, `::`, `.`, `..`, and `@`
     Infix,
+    /// Identifiers beginning with an apostrophe
+    Label,
     /// The reserved symbols `->`, `<-`, `=`, `|`, `::`, `.`, `..`, and `@`
     Punct,
     /// An open or left delimiter, such as `(`, `[`, or `{`
@@ -446,6 +455,7 @@ impl From<Lexeme> for LexKind {
             Lexeme::Upper(_) => Self::Upper,
             Lexeme::Lower(_) => Self::Lower,
             Lexeme::Infix(_) | Lexeme::Colon => Self::Infix,
+            Lexeme::Unlabel | Lexeme::Label(_) => Self::Label,
             Lexeme::Lit(_) => Self::Literal,
             Lexeme::Unknown(..) | Lexeme::Eof => Self::Specified(lexeme),
             Lexeme::Meta(..) => Self::Attribute,
@@ -470,6 +480,9 @@ impl std::fmt::Display for LexKind {
             }
             LexKind::Infix => {
                 write!(f, "infix or identifier surrounded by backticks")
+            }
+            LexKind::Label => {
+                write!(f, "identifier prefixed with an apostrophe")
             }
             LexKind::Punct => write!(f, "punctuation"),
             LexKind::LeftDelim => write!(f, "left delimiter"),
@@ -530,7 +543,7 @@ impl PartialEq<Lexeme> for Token {
     fn eq(&self, other: &Lexeme) -> bool {
         match (&self.lexeme, other) {
             (Lexeme::Colon, Lexeme::Infix(s)) | (Lexeme::Infix(s), Lexeme::Colon) => {
-                *s == *wy_intern::COLON
+                *s == symbol::COLON
             }
             (me, other) => me == other,
         }
