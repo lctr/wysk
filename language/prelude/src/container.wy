@@ -10,30 +10,30 @@ infixl 4 />
 ~~> Functor typeclass
 ~~| The class of `mappable` types. A `Functor` represents a parametrized
 ~~| container type that allows for composition of actions without modifying the
-~~| external structure using the function `fmap`. In other words, a type `f` 
+~~| external structure using the function `map`. In other words, a type `f` 
 ~~| is a Functor if it implements a function `map` that, given a function
 ~~| `a -> b`, will transform an `f a` into an `f b`. 
 ~~| 
 ~~| A key feature of `Functors` is *composition*. Namely, every functor is
 ~~| endowed with a function `map` that upholds the following laws:
 ~~| * *Identity:* `map identity = identity``
-~~| * *Composition:* `map (f \> g) = fmap f \> fmap g`
+~~| * *Composition:* `map (f \> g) = map f \> map g`
 ~~| 
 ~~| Functors operate on types of kind `(* -> *) -> Constraint``
 class Functor f {
-   ~~> Applies a function `g` to every `a` parametrizing a functor  f``.
+   ~~> Applies a function `g` to every `a` parametrizing a functor `f`.
    ~~| Notice that this function is identical to the function `fmap` in Haskell.
    ~~| 
    ~~| # Examples
-   ~~| The type `Option a` is a member of the functor typeclass, with `fmap`
+   ~~| The type `Option a` is a member of the functor typeclass, with `map`
    ~~| applying a given function to the inner value of type `a` if it exists.
    ~~|
    ~~| ```
-   ~~| fmap 
+   ~~| map 
    ~~| | f None = None
    ~~| | f (Some x) = Some (f x) 
    ~~|
-   ~~| assert <| let plus2 x = x + 2 in fmap plus2 (Some 5) == Some 7
+   ~~| assert <| let plus2 x = x + 2 in map plus2 (Some 5) == Some 7
    ~~| ``` 
    ~~|
    ~~| The general collection type `[a]` is a functor, with the canonical 
@@ -43,9 +43,9 @@ class Functor f {
    ~~| | f [] = []
    ~~| | f (x:xs) = f x : f xs
    ~~| 
-   ~~| assert <| let plus2 | x = x + 2 in fmap plus2 [1, 2, 3] == [3, 4, 5]
+   ~~| assert <| let plus2 | x = x + 2 in map plus2 [1, 2, 3] == [3, 4, 5]
    ~~| ```
-   fmap :: (a -> b) -> f a -> f b;
+   map :: (a -> b) -> f a -> f b;
    ~~> Replace all values in a functor with a given value.
    ~~|
    ~~| ```
@@ -57,7 +57,7 @@ class Functor f {
    ~~| assert <| 3 /> "abc" == [3, 3, 3]
    ~~| ```
    (/>) :: b -> f a -> f b
-      = fmap \> const
+      = map \> const
 }
 
 infixl 4 <* <*> *>
@@ -110,7 +110,7 @@ impl |Eq a| Eq (Option a) {
 }
 
 impl Functor Option {
-   fmap 
+   map 
       | f None = None 
       | f (Some x) = Some (f x)
 }
@@ -147,7 +147,7 @@ fn map_err :: (a -> c) -> Result a b -> Result c b
    | _ (Ok x) = Ok x
 
 impl Functor (Result a b) {
-   fmap 
+   map 
       | f (Ok x) = Ok (f x) 
       | _ (Err y) = Err y
 }
