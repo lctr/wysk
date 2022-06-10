@@ -544,12 +544,12 @@ mod test {
     fn test_text() {
         let [a, b, c] = wy_intern::intern_many(["a", "b", "c"]);
         let x = Text::List(vec![
-            Text::Lit(&Literal::Int(0)),
-            Text::Lit(&Literal::Char('x')),
             Text::Indent {
                 offset: Offset(0),
                 lines: vec![
-                    Text::Raw("fn() -> ()"),
+                    Text::Lit(&Literal::Int(0)),
+                    Text::Lit(&Literal::Char('x')),
+                    Text::Raw("() -> ()"),
                     Text::Dict(vec![
                         Text::Sym(a),
                         Text::Pair(vec![Text::Sym(b), Text::Sym(c)]),
