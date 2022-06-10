@@ -1,10 +1,9 @@
 use wy_span::{Coord, Location, Row};
 
 #[derive(Debug)]
-pub enum Failure<E, V = bool> {
+pub enum Failure<E> {
     Io(std::io::Error),
     Err(E),
-    Ok(V),
 }
 
 pub struct It<X>(pub(crate) X);
@@ -74,28 +73,14 @@ impl<X: std::fmt::Display> std::fmt::Display for It<X> {
     }
 }
 
-impl<E, X> TryFrom<Failure<E, X>> for It<X> {
-    type Error = E;
-
-    fn try_from(value: Failure<E, X>) -> Result<Self, Self::Error> {
-        match value {
-            Failure::Io(_) => todo!(),
-            Failure::Err(e) => Err(e),
-            Failure::Ok(x) => Ok(It(x)),
-        }
-    }
-}
-
-impl<E, V> std::fmt::Display for Failure<E, V>
+impl<E> std::fmt::Display for Failure<E>
 where
     E: std::error::Error,
-    V: std::fmt::Display,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Failure::Io(err) => write!(f, "IO error: {}", err),
             Failure::Err(e) => write!(f, "{}", e),
-            Failure::Ok(e) => write!(f, "{}", e),
         }
     }
 }
