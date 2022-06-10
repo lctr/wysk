@@ -623,7 +623,7 @@ mod tests {
     use wy_parser::error::Parsed;
     use wy_syntax::tipo::Con;
 
-    use crate::infer::constraint::Constraint;
+    use crate::typed::constraint::Constraint;
 
     use super::*;
 

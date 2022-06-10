@@ -173,7 +173,7 @@ fn infer_array_expr(env: &mut Environment, exprs: &Vec<Expr>) -> Inferred<(Type,
 
 #[cfg(test)]
 mod test {
-    use crate::infer::envr::Builder;
+    use crate::typed::envr::Builder;
 
     use super::*;
     use wy_common::pretty::Many;
