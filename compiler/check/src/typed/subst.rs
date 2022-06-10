@@ -1,11 +1,15 @@
-use wy_common::{Deque, Map, Set};
+use std::collections::hash_map;
+
+use wy_common::{iter::Envr, push_if_absent, Deque, Set};
 use wy_syntax::{
     ident::Ident,
-    tipo::{Con, Tv, Ty, Type},
+    tipo::{Con, Context, Signature, Tv, Ty, Type},
 };
 
 pub trait Substitutable {
     fn ftv(&self) -> Set<Tv>;
+
+    fn tv(&self) -> Vec<Tv>;
 
     fn apply_once(&self, subst: &Subst) -> Self
     where
@@ -57,6 +61,14 @@ impl Substitutable for Con<Ident, Tv> {
         }
     }
 
+    fn tv(&self) -> Vec<Tv> {
+        if let Con::Free(t) = self {
+            vec![*t]
+        } else {
+            vec![]
+        }
+    }
+
     fn apply_once(&self, subst: &Subst) -> Self
     where
         Self: Sized,
@@ -98,6 +110,10 @@ impl Substitutable for Type<Ident, Tv> {
                 .flat_map(Substitutable::ftv)
                 .collect(),
         }
+    }
+
+    fn tv(&self) -> Vec<Tv> {
+        self.fv()
     }
 
     fn apply_once(&self, subst: &Subst) -> Self
@@ -146,6 +162,26 @@ impl Substitutable for Ty<Ident> {
         }
     }
 
+    fn tv(&self) -> Vec<Tv> {
+        match self {
+            Ty::Var(tv) => vec![*tv],
+            Ty::Con(con, args) => args
+                .into_iter()
+                .cloned()
+                .flat_map(|ty| ty.tv())
+                .fold(con.tv(), push_if_absent),
+            Ty::App(xy) => {
+                let [x, y] = xy.as_ref();
+                y.tv().into_iter().fold(x.tv(), |mut acc, c| {
+                    if !acc.contains(&c) {
+                        acc.push(c);
+                    }
+                    acc
+                })
+            }
+        }
+    }
+
     fn apply_once(&self, subst: &Subst) -> Self
     where
         Self: Sized,
@@ -164,12 +200,12 @@ impl Substitutable for Ty<Ident> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Subst(Map<Tv, Type<Ident, Tv>>);
+#[derive(Clone, Debug)]
+pub struct Subst(Envr<Tv, Type<Ident, Tv>>);
 
 impl Subst {
     pub fn new() -> Self {
-        Self(Map::new())
+        Self(Envr::new())
     }
 
     pub fn clear(&mut self) {
@@ -177,7 +213,7 @@ impl Subst {
     }
 
     pub fn singleton(var: Tv, typ: Type<Ident, Tv>) -> Self {
-        Self(Map::from([(var, typ)]))
+        Self(Envr::from([(var, typ)]))
     }
 
     #[inline]
@@ -187,24 +223,56 @@ impl Subst {
 
     pub fn compose(&self, sub2: &Subst) -> Self {
         sub2.iter()
-            .map(|(var, ty)| (*var, ty.apply_once(sub2)))
-            .chain(self.0.clone())
+            .map(|(var, ty)| (*var, ty.apply(sub2)))
+            .chain(self.0.store.clone())
             .collect()
     }
 
+    pub fn merge(&self, other: &Self) -> Option<Self> {
+        if self
+            .iter()
+            .filter_map(|(tv, _)| other.get(tv).map(|_| tv))
+            .all(|tv| {
+                let ty = tv.as_type();
+                ty.apply(self) == ty.apply(other)
+            })
+        {
+            Some(
+                self.clone()
+                    .into_iter()
+                    .chain(other.clone().into_iter())
+                    .collect(),
+            )
+        } else {
+            None
+        }
+    }
+
+    pub fn r#match(left: &Type<Ident, Tv>, right: &Type<Ident, Tv>) -> Option<Self> {
+        match (left, right) {
+            (Type::Fun(a, b), Type::Fun(c, d)) => {
+                let u = Self::r#match(a.as_ref(), c.as_ref());
+                let v = Self::r#match(b.as_ref(), d.as_ref());
+                u.zip(v).and_then(|(ref sl, ref sr)| sl.merge(sr))
+            }
+            (Type::Var(u), t) => todo!(),
+            _ => todo!(),
+        }
+    }
+
     #[inline]
-    pub fn iter(&self) -> std::collections::hash_map::Iter<'_, Tv, Type<Ident, Tv>> {
+    pub fn iter(&self) -> hash_map::Iter<'_, Tv, Type<Ident, Tv>> {
         self.0.iter()
     }
 
     #[inline]
-    pub fn iter_mut(&mut self) -> std::collections::hash_map::IterMut<'_, Tv, Type<Ident, Tv>> {
+    pub fn iter_mut(&mut self) -> hash_map::IterMut<'_, Tv, Type<Ident, Tv>> {
         self.0.iter_mut()
     }
 
     #[inline]
-    pub fn into_iter(self) -> std::collections::hash_map::IntoIter<Tv, Type<Ident, Tv>> {
-        self.0.into_iter()
+    pub fn into_iter(self) -> hash_map::IntoIter<Tv, Type<Ident, Tv>> {
+        self.0.store.into_iter()
     }
 
     #[inline]
@@ -224,7 +292,7 @@ impl Subst {
 impl FromIterator<(Tv, Type<Ident, Tv>)> for Subst {
     #[inline]
     fn from_iter<I: IntoIterator<Item = (Tv, Type<Ident, Tv>)>>(iter: I) -> Self {
-        Subst(iter.into_iter().collect::<Map<_, _>>())
+        Subst(iter.into_iter().collect::<Envr<_, _>>())
     }
 }
 
@@ -249,7 +317,7 @@ where
 
 impl<const N: usize> From<[(Tv, Type<Ident, Tv>); N]> for Subst {
     fn from(kvs: [(Tv, Type<Ident, Tv>); N]) -> Self {
-        Subst(Map::from(kvs))
+        Subst(Envr::from(kvs))
     }
 }
 
@@ -299,6 +367,10 @@ where
         self.into_iter().flat_map(Substitutable::ftv).collect()
     }
 
+    fn tv(&self) -> Vec<Tv> {
+        todo!()
+    }
+
     fn apply_once(&self, subst: &Subst) -> Self
     where
         Self: Sized,
@@ -313,6 +385,10 @@ where
 {
     fn ftv(&self) -> Set<Tv> {
         self.into_iter().flat_map(Substitutable::ftv).collect()
+    }
+
+    fn tv(&self) -> Vec<Tv> {
+        todo!()
     }
 
     fn apply_once(&self, subst: &Subst) -> Self
@@ -331,11 +407,41 @@ where
         self.as_ref().ftv()
     }
 
+    fn tv(&self) -> Vec<Tv> {
+        todo!()
+    }
+
     fn apply_once(&self, subst: &Subst) -> Self
     where
         Self: Sized,
     {
         Box::new(self.as_ref().apply_once(subst))
+    }
+}
+
+impl Substitutable for Signature<Ident, Tv> {
+    fn ftv(&self) -> Set<Tv> {
+        self.ctxt_iter()
+            .map(|ctx| ctx.tyvar)
+            .chain(self.tipo.ftv())
+            .chain(self.each_iter().copied())
+            .collect()
+    }
+
+    fn tv(&self) -> Vec<Tv> {
+        let vs = self.ctxt_iter().map(|ctx| ctx.tyvar).collect();
+        self.tipo.tv().into_iter().fold(vs, push_if_absent)
+    }
+
+    fn apply_once(&self, subst: &Subst) -> Self
+    where
+        Self: Sized,
+    {
+        Signature {
+            each: self.each.clone(),
+            ctxt: self.ctxt.clone(),
+            tipo: self.tipo.apply_once(subst),
+        }
     }
 }
 
