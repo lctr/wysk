@@ -3,6 +3,349 @@ use std::hash::Hash;
 
 use crate::Mappable;
 
+#[derive(Clone)]
+pub struct Pair<X>(Box<[X; 2]>);
+
+impl<X> Pair<X> {
+    pub fn new(first: X, second: X) -> Pair<X> {
+        Pair(Box::new([first, second]))
+    }
+
+    pub fn map<Y>(self, mut f: impl FnMut(X) -> Y) -> Pair<Y> {
+        let [u, v] = *self.0;
+        Pair(Box::new([f(u), f(v)]))
+    }
+
+    pub fn for_each(self, mut f: impl FnMut(X)) {
+        let [u, v] = *self.0;
+        f(u);
+        f(v);
+    }
+
+    pub fn head(&self) -> &X {
+        &self.0.as_ref()[0]
+    }
+
+    pub fn replace_head(&mut self, x: X) -> X {
+        let [a, _] = self.0.as_mut();
+        std::mem::replace(a, x)
+    }
+
+    pub fn tail(&self) -> &X {
+        &self.0.as_ref()[1]
+    }
+
+    pub fn replace_tail(&mut self, x: X) -> X {
+        let [_, b] = self.0.as_mut();
+        std::mem::replace(b, x)
+    }
+
+    pub fn flip(self) -> Pair<X> {
+        let [u, v] = *self.0;
+        Pair(Box::new([v, u]))
+    }
+
+    pub fn reverse(&mut self) {
+        let [x, y] = self.0.as_mut();
+        std::mem::swap(x, y)
+    }
+
+    pub fn split(self) -> [Box<X>; 2] {
+        let [u, v] = *self.0;
+        [Box::new(u), Box::new(v)]
+    }
+
+    pub fn parts(self) -> (X, X) {
+        let [u, v] = *self.0;
+        (u, v)
+    }
+
+    pub fn as_array(self) -> [X; 2] {
+        *self.0
+    }
+
+    pub fn as_ref(&self) -> &[X; 2] {
+        self.0.as_ref()
+    }
+
+    pub fn as_mut(&mut self) -> &mut [X; 2] {
+        self.0.as_mut()
+    }
+
+    pub fn into_iter(self) -> std::array::IntoIter<X, 2> {
+        self.0.into_iter()
+    }
+}
+
+#[derive(Clone)]
+pub struct Envr<K, V> {
+    pub store: Map<K, V>,
+}
+
+impl<K, V> Mappable<V> for Envr<K, V>
+where
+    K: Eq + Hash,
+{
+    type M<A> = Envr<K, A>;
+
+    fn fmap<F, Y>(self, mut f: F) -> Self::M<Y>
+    where
+        F: FnMut(V) -> Y,
+    {
+        self.into_iter().map(|(k, v)| (k, f(v))).collect()
+    }
+}
+
+impl<K, V> Envr<K, V>
+where
+    K: Eq + Hash,
+{
+    pub fn new() -> Self {
+        Self { store: Map::new() }
+    }
+
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            store: Map::with_capacity(capacity),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.store.len()
+    }
+
+    pub fn has_key(&self, k: &K) -> bool {
+        self.store.contains_key(k)
+    }
+
+    pub fn has_value(&self, v: &V) -> bool
+    where
+        V: PartialEq,
+    {
+        for (_, w) in self.iter() {
+            if v == w {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Returns a clone with the entry for the given key removed. If the key did
+    /// not exist, then this is equivalent to cloning.
+    pub fn cloned_without(&self, k: &K) -> Self
+    where
+        K: Copy,
+        V: Clone,
+    {
+        self.store
+            .iter()
+            .filter_map(|(id, v)| {
+                if id != k {
+                    Some((*id, v.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Returns an `Envr` containing key-value (reference) pairs found in *both*
+    /// `Envr`s.
+    pub fn intersect(&self, rhs: &Self) -> Envr<&K, &V>
+    where
+        V: PartialEq,
+    {
+        self.iter()
+            .filter_map(|(k, v)| {
+                rhs.get_key_value(k)
+                    .and_then(|(_, v2)| if v == v2 { Some((k, v)) } else { None })
+            })
+            .fold(
+                Envr::with_capacity(self.len().min(rhs.len())),
+                |mut inter, (k, v)| {
+                    inter.insert(k, v);
+                    inter
+                },
+            )
+    }
+
+    /// Returns an `Envr` containing key-value (reference) pairs found in `Self`
+    /// as well as in `other`. Since this is a `left` union, if a key exists in
+    /// both `Envr`s, the left one (i.e., the one in `Self`) will take
+    /// precedence.
+    pub fn left_union<'a>(&'a self, other: &'a Self) -> Envr<&'a K, &'a V> {
+        other.iter().chain(self.iter()).fold(
+            Envr::with_capacity(self.len() + other.len()),
+            |mut a, (k, v)| {
+                a.insert(k, v);
+                a
+            },
+        )
+    }
+
+    /// Returns an `Envr` containing key-value (reference) pairs found in `Self`
+    /// as well as in `other`. Since this is a `right` union, if a key exists in
+    /// both `Envr`s, the right one (i.e., the one in `other`) will take
+    /// precedence.
+    pub fn right_union<'a>(&'a self, other: &'a Self) -> Envr<&'a K, &'a V> {
+        self.iter().chain(other.iter()).fold(
+            Envr::with_capacity(self.len() + other.len()),
+            |mut a, (k, v)| {
+                a.insert(k, v);
+                a
+            },
+        )
+    }
+
+    pub fn difference<'a>(&'a self, other: &'a Self) -> Envr<&'a K, &'a V> {
+        self.iter().fold(Envr::new(), |mut a, (k, v)| {
+            if !other.has_key(k) {
+                a.insert(k, v);
+            }
+            a
+        })
+    }
+
+    #[inline]
+    pub fn iter(&self) -> std::collections::hash_map::Iter<'_, K, V> {
+        self.store.iter()
+    }
+
+    #[inline]
+    pub fn iter_mut(&mut self) -> std::collections::hash_map::IterMut<'_, K, V> {
+        self.store.iter_mut()
+    }
+
+    #[inline]
+    pub fn into_iter(self) -> std::collections::hash_map::IntoIter<K, V> {
+        self.store.into_iter()
+    }
+
+    #[inline]
+    pub fn keys(&self) -> std::collections::hash_map::Keys<'_, K, V> {
+        self.store.keys()
+    }
+
+    #[inline]
+    pub fn values(&self) -> std::collections::hash_map::Values<'_, K, V> {
+        self.store.values()
+    }
+
+    #[inline]
+    pub fn entry(&mut self, k: K) -> std::collections::hash_map::Entry<'_, K, V> {
+        self.store.entry(k)
+    }
+}
+
+impl<K: Eq + Hash, V> Extend<(K, V)> for Envr<K, V> {
+    fn extend<T: IntoIterator<Item = (K, V)>>(&mut self, iter: T) {
+        self.store.extend(iter)
+    }
+}
+
+impl<K: Eq + Hash, V, I> From<I> for Envr<K, V>
+where
+    I: IntoIterator<Item = (K, V)>,
+{
+    fn from(iter: I) -> Self {
+        Envr {
+            store: iter.into_iter().collect::<Map<_, _>>(),
+        }
+    }
+}
+
+impl<K: Eq + Hash, V> FromIterator<(K, V)> for Envr<K, V> {
+    fn from_iter<T: IntoIterator<Item = (K, V)>>(iter: T) -> Self {
+        Envr {
+            store: iter.into_iter().collect::<Map<_, _>>(),
+        }
+    }
+}
+
+impl<K, V> AsRef<Map<K, V>> for Envr<K, V> {
+    fn as_ref(&self) -> &Map<K, V> {
+        &self.store
+    }
+}
+
+impl<K, V> std::ops::Deref for Envr<K, V> {
+    type Target = Map<K, V>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.store
+    }
+}
+
+impl<K, V> std::ops::DerefMut for Envr<K, V> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.store
+    }
+}
+
+impl<K, V> std::ops::Index<K> for Envr<K, V>
+where
+    Map<K, V>: std::ops::Index<K>,
+{
+    type Output = <Map<K, V> as std::ops::Index<K>>::Output;
+
+    fn index(&self, index: K) -> &Self::Output {
+        &self.store[index]
+    }
+}
+
+impl<K, V> std::ops::IndexMut<K> for Envr<K, V>
+where
+    Map<K, V>: std::ops::IndexMut<K>,
+{
+    fn index_mut(&mut self, index: K) -> &mut Self::Output {
+        &mut self.store[index]
+    }
+}
+
+impl<K, V> std::fmt::Debug for Envr<K, V>
+where
+    K: std::fmt::Debug,
+    V: std::fmt::Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Envr {:?}", crate::pretty::Dictionary(self.as_ref()))
+    }
+}
+
+impl<K, V> std::fmt::Display for Envr<K, V>
+where
+    K: std::fmt::Display,
+    V: std::fmt::Display,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Envr {}", crate::pretty::Dictionary(self.as_ref()))
+    }
+}
+
+pub fn intersect_slices<'a, X: PartialEq>(left: &'a [X], right: &'a [X]) -> Vec<&'a X> {
+    // given two collections X and Y, the intersection Z is the set of elements
+    // such that for all z in Z, z is in X and z is in Y, hence it follows that
+    // the cardinality |Z| of the intersection Z will be bounded above by the
+    // minimum of the cardinalities |X| and |Y|, i.e.,
+    //
+    //      |intersection(X, Y)| <= min { |X|, |Y| }
+    //
+    // if X and Y are disjoint, then |Z| = 0. this allows us to optimize the
+    // number of allocations down to a *maximum* of two: first we allocate for
+    // the upper bound of the intersection, then upon completion, we shrink the
+    // vector's capacity to fit. it is clear that, in the event the two
+    // collections are *not* disjoint, we will only perform the initial
+    // allocation.
+    let mut inter = Vec::with_capacity(left.len().min(right.len()));
+    for x in left {
+        if right.contains(x) {
+            inter.push(x)
+        }
+    }
+    inter.shrink_to_fit();
+    inter
+}
+
 /// The `Pointer` trait exposes a basic interface for dealing with `usize`
 /// newtypes.
 pub trait IdxPtr: Copy + Eq + Hash + std::fmt::Debug + 'static {
