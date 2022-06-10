@@ -409,11 +409,19 @@ macro_rules! with_reserved {
                 }
             }
 
-            impl From<Reserved> for Symbol {
-                fn from(reserved: Reserved) -> Symbol {
-                    reserved.symbol
-                }
+            impl AsRef<Symbol> for Reserved {
+                fn as_ref(&self) -> &Symbol { &self.symbol }
             }
+
+            impl AsRef<str> for Reserved {
+                fn as_ref(&self) -> &str { self.text }
+            }
+
+            // impl From<Reserved> for Symbol {
+            //     fn from(reserved: Reserved) -> Symbol {
+            //         reserved.symbol
+            //     }
+            // }
 
             impl From<Reserved> for &str {
                 fn from(reserved: Reserved) -> &'static str {
@@ -436,6 +444,10 @@ macro_rules! with_reserved {
                 };
             )*
         }
+
+        $(
+            pub const $name: Symbol = reserved::$name.symbol;
+        )*
 
         lazy_static::lazy_static! {
             static ref $interner_id: Arc<Mutex<Lexicon>> =
