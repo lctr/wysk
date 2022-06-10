@@ -1,4 +1,4 @@
-use wy_common::{Deque, Map, Set};
+use wy_common::{push_if_absent, Deque, Map, Set};
 use wy_syntax::{
     ident::Ident,
     tipo::{Con, Tv, Type as Type_, Var},
@@ -147,6 +147,14 @@ impl Substitutable for Scheme {
             .collect()
     }
 
+    fn tv(&self) -> Vec<Tv> {
+        self.tipo
+            .tv()
+            .into_iter()
+            .filter(|tv| !self.poly.contains(tv))
+            .collect()
+    }
+
     fn apply_once(&self, subst: &Subst) -> Self
     where
         Self: Sized,
@@ -223,6 +231,16 @@ impl Substitutable for Constraint {
                 class_name: _,
                 instance,
             } => instance.ftv(),
+        }
+    }
+
+    fn tv(&self) -> Vec<Tv> {
+        match self {
+            Constraint::Join(t1, t2) => t2.tv().into_iter().fold(t1.tv(), push_if_absent),
+            Constraint::Class {
+                class_name,
+                instance,
+            } => instance.tv(),
         }
     }
 
