@@ -147,11 +147,9 @@ impl<'t> Parser<'t> {
     }
 
     pub fn peek_ahead(&mut self) -> &Token {
-        if self.queue.len() < 2 {
-            let tok = self.bump();
-            self.queue.push_back(tok);
-        }
-        &self.queue[1]
+        let tok = self.bump();
+        self.queue.push_front(tok);
+        &self.queue[0]
     }
 
     pub fn lookahead<const N: usize>(&mut self) -> [Token; N] {
@@ -722,7 +720,7 @@ impl<'t> DeclParser<'t> {
         let ctxt = self.ty_contexts()?;
         let name = self.expect_upper()?;
         let tipo = self.ty_atom()?;
-        self.ignore(Keyword::With);
+        self.ignore([Keyword::With, Keyword::Where]);
         self.eat(Lexeme::CurlyL)?;
         let mut defs = vec![];
         while !self.peek_on(Lexeme::CurlyR) {
@@ -743,7 +741,7 @@ impl<'t> DeclParser<'t> {
         use Lexeme::{Colon2, Comma, CurlyL, CurlyR, Equal, ParenL, ParenR};
 
         fn until_semi_kw(parser: &mut Parser) -> bool {
-            lexpat!(parser on [;] | [kw])
+            !lexpat!(parser on [;] | [kw])
         }
 
         self.eat(Newtype)?;
@@ -780,26 +778,21 @@ impl<'t> DeclParser<'t> {
     }
 }
 
-/// DEPRECATED: Utility combinator for type variables, which are to initially be
-/// parsed as `Ident::Fresh` variants before being transformed to `Tv` instances
-/// later on the pipeline
-fn _variable<F, P>(mut parse_ident: F) -> impl FnMut(&mut P) -> Parsed<Ident>
-where
-    F: FnMut(&mut P) -> Parsed<Ident>,
-{
-    move |p: &mut P| parse_ident(p).map(|id| Ident::Fresh(id.symbol()))
-}
-
 // DATA TYPES
 impl<'t> Parser<'t> {
     fn data_variant(&mut self) -> Parsed<Variant> {
-        // let coord = self.get_coord();
         self.ignore(Lexeme::Pipe);
         // constructor name
         let name = self.expect_upper()?;
         let mut args = vec![];
+        // while self.peek_on(Lexeme::begins_ty) {
+        //     // }
         while !(self.is_done() || lexpat!(self on [;] | [|] | [kw])) {
-            args.push(self.ty_atom()?);
+            args.push(if lexpat!(self on [curlyL]) {
+                self.curly_ty()
+            } else {
+                self.ty_atom()
+            }?);
         }
         let arity = Arity::new(args.len());
         Ok(Variant {
@@ -810,10 +803,6 @@ impl<'t> Parser<'t> {
         })
     }
 }
-
-// fn on_ty_start(parser: &mut Parser) -> bool {
-//     lexpat!(parser on [var][Var])
-// }
 
 // TYPES TODO: refactor to differentiate between TYPEs (type only) and
 // SIGNATURES (context + type)
@@ -836,24 +825,23 @@ impl<'t> TypeParser<'t> {
     }
 
     fn maybe_quantified(&mut self) -> Parsed<Vec<Ident>> {
-        Ok(if self.bump_on(Keyword::Forall) {
-            let es = self.many_while_on(Lexeme::is_lower, Self::expect_lower)?;
+        let mut quants = vec![];
+        if self.bump_on(Keyword::Forall) {
+            quants = self.many_while_on(Lexeme::is_lower, Self::expect_lower)?;
             self.eat(Lexeme::Dot)?;
-            es
-        } else {
-            vec![]
-        })
+        }
+        Ok(quants)
     }
 
     fn ty_contexts(&mut self) -> Parsed<Vec<Context>> {
+        let mut ctxts = vec![];
         if self.peek_on(Lexeme::Pipe) {
-            self.delimited(
+            ctxts = self.delimited(
                 [Lexeme::Pipe, Lexeme::Comma, Lexeme::Pipe],
                 Self::ty_constraint,
-            )
-        } else {
-            Ok(vec![])
+            )?;
         }
+        Ok(ctxts)
     }
 
     /// A context is syntactically simple, yet restrictive, as it must be of the
@@ -1964,7 +1952,6 @@ pub fn try_parse_file<P: AsRef<std::path::Path>>(
     filepath: P,
 ) -> Result<Program, Failure<ParseError>> {
     let path = filepath.as_ref();
-    debug_assert_eq!("wy", path.extension().unwrap());
     let content = std::fs::read_to_string(path)?;
     Parser::new(content.as_str(), Some(path.to_owned()))
         .parse()
@@ -1975,7 +1962,7 @@ pub fn parse_prelude() -> Parsed<Program> {
     let dirp = "../../../language";
     let src = include_str!("../../../language/prim.wy");
     let prim = Parser::from_str(src).parse()?.map_t(&mut |t| Tv::from(t));
-    let mut ast = Ast::with_program(prim);
+    let ast = Ast::with_program(prim);
     let imported_modules =
         ast.imported_modules()
             .into_iter()
@@ -1997,7 +1984,7 @@ pub fn parse_prelude() -> Parsed<Program> {
         for item in dir {
             match item {
                 Ok(entry) => {
-                    for (uid, pth) in &imported_modules {
+                    for (_uid, pth) in &imported_modules {
                         if entry.path().ends_with(pth) {
                             newpaths.push(entry.path());
                         }
@@ -2015,7 +2002,6 @@ pub fn parse_prelude() -> Parsed<Program> {
         a.add_program(try_parse_file(c).map_err(|failure| match failure {
             Failure::Err(p) => p,
             Failure::Io(e) => panic!("{}", e),
-            Failure::Ok(_) => todo!(),
         })?);
         Ok(a)
     });
