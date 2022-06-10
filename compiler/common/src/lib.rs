@@ -111,8 +111,41 @@ macro_rules! deque {
     }};
 }
 
+/// Generates `.iter()` methods for the provided fields in a struct.
+///
+/// For example, a generic struct `Foo<X, Y>` with fields `bar` of type `Bar<X>`
+/// and `baz` of type `Baz<Y>` would be implemented as following:
+///
+/// ```
+/// struct Foo<X, Y> {
+///     bar: Bar<X>,
+///     baz: Baz<Y>,
+/// }
+///
+/// struct_field_iters! {
+///     |X, Y| Foo<X, Y>
+///     | bar => get_bar :: Bar<X>
+///     | baz => get_baz :: Baz<Y>
+/// }
+/// ```
 #[macro_export]
 macro_rules! struct_field_iters {
+    (
+        $(|$g0:ident $(, $gs:ident)*|)?
+        $object:ty
+        $(
+           | $($($field:ident .)+)? # $rest:ident :: $ty:ty
+        )+
+    ) => {
+        impl $(<$g0 $(, $gs)*>)? $object {
+            $(
+                #[inline]
+                pub fn $rest(&self) -> std::slice::Iter<'_, $ty> {
+                    self. $($($field .)+)? $rest.iter()
+                }
+            )+
+        }
+    };
     (
         $(|$g0:ident $(, $gs:ident)*|)?
         $object:ty
@@ -150,6 +183,22 @@ macro_rules! struct_field_iters {
 /// ```
 #[macro_export]
 macro_rules! struct_getters {
+    (
+        $(|$g0:ident $(, $gs:ident)*|)?
+        $object:ty
+        $(
+           | $($($field:ident.)+)? # $rest:ident :: $ty:ty
+        )+
+    ) => {
+        impl $(<$g0 $(, $gs)*>)? $object {
+            $(
+                #[inline]
+                pub fn $rest(&self) -> &$ty {
+                    &self. $($($field.)+)? $rest
+                }
+            )+
+        }
+    };
     (
         $(|$g0:ident $(, $gs:ident)*|)?
         $object:ty
@@ -220,6 +269,26 @@ pub fn distribute<X: Copy, Y: Copy>(
         }
     }
     pairs
+}
+
+pub fn push_if_absent<T: PartialEq>(mut acc: Vec<T>, t: T) -> Vec<T> {
+    if !acc.contains(&t) {
+        acc.push(t);
+    }
+    acc
+}
+
+/// Same functionality as the std macro `matches!`, but with arguments reversed,
+/// i.e., pattern then expression as opposed to expression and then pattern.
+#[macro_export]
+macro_rules! case {
+    ($pat:pat, $expr:expr) => {{
+        if let $pat = $expr {
+            true
+        } else {
+            false
+        }
+    }};
 }
 
 #[cfg(test)]
