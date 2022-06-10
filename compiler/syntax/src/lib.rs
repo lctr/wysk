@@ -34,7 +34,7 @@ use tipo::*;
 wy_common::newtype!({ u64 in Uid | Show (+= usize |rhs| rhs as u64) });
 
 #[derive(Clone, Debug)]
-pub struct Ast<I> {
+pub struct Ast<I = Ident> {
     programs: Vec<Program<I, Uid, Tv>>,
     packages: Map<Uid, Chain<I>>,
 }
