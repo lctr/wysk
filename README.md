@@ -13,6 +13,20 @@ Below are some of the things I'm hoping to implement.
 * Interactive bytecode interpreter
 * LLVM JIT compilation
 
+## [WIP] Examples
+### Hello world
+```hs,rust
+fn main :: IO ()
+  = printLine "Hello world!"
+```
+
+### Factorial
+```hs,rust
+fn factorial n :: Int -> Int
+  | n if n < 2 = 1
+  | n = n * factorial (n - 1)
+```
+
 ## Todo
 - [x] Implement project manifest serializer/deserializer
 - [x] Design spans to allow for byte-indexing the source code
