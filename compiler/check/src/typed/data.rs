@@ -11,67 +11,6 @@ use super::{
     subst::{Subst, Substitutable},
 };
 
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub enum Kind {
-    Star,
-    Arrow(Box<Kind>, Box<Kind>),
-}
-
-impl std::fmt::Debug for Kind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Star => write!(f, "*"),
-            Self::Arrow(arg0, arg1) => {
-                write!(f, "{:?} -> {:?}", arg0, arg1)
-            }
-        }
-    }
-}
-
-impl std::fmt::Display for Kind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Kind::Star => write!(f, "*"),
-            Kind::Arrow(a, b) => write!(f, "{} -> {}", a, b),
-        }
-    }
-}
-
-impl Kind {
-    pub fn from_poly(tvs: &[Tv]) -> Self {
-        let mut kind = Self::Star;
-        for _ in tvs {
-            kind = Self::Arrow(Box::new(Self::Star), Box::new(kind));
-        }
-        kind
-    }
-    pub fn from_type(ty: &Type) -> Self {
-        match ty {
-            Type::Var(_) => Self::Star,
-            Type::Con(Con::Tuple(0), _) => Self::Star,
-            Type::Con(Con::List, t) if t.len() == 1 => {
-                Self::Arrow(Box::new(Self::Star), Box::new(Self::from_type(&t[0])))
-            }
-            Type::Con(_, xs) if xs.is_empty() => Self::Star,
-            Type::Con(_, xs) => xs.into_iter().fold(Self::Star, |a, c| {
-                Self::Arrow(Box::new(Self::from_type(c)), Box::new(a))
-            }),
-            Type::Fun(..) => Self::Star,
-            Type::Tup(xs) if xs.is_empty() => Self::Star,
-            Type::Tup(xs) => Self::Arrow(
-                xs.into_iter().fold(Box::new(Self::Star), |a, c| {
-                    Box::new(Self::Arrow(a, Box::new(Self::from_type(c))))
-                }),
-                Box::new(Self::Star),
-            ),
-            Type::Vec(t) => {
-                Self::Arrow(Box::new(Self::Star), Box::new(Self::from_type(t.as_ref())))
-            }
-            Type::Rec(_) => Self::Star,
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// TODO: should this be polymorphic with respect to the type representation?
 pub struct DataCon {
@@ -104,6 +43,10 @@ impl DataCon {
 impl Substitutable for DataCon {
     fn ftv(&self) -> Set<Tv> {
         self.tipo.ftv()
+    }
+
+    fn tv(&self) -> Vec<Tv> {
+        self.tipo.tv()
     }
 
     fn apply_once(&self, subst: &Subst) -> Self
