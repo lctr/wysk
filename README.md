@@ -20,7 +20,7 @@ Below are some of the things I'm hoping to implement.
 - [x] Separate lexeme and token definitions to minimize footprint and facilitate error reporting
 - [x] Modify lexer to depend on byte positions rather than character indices
 - [x] Design module-friendly and polymorphic AST to facilitate later simplification and semantic analysis phases
-- [ ] Implement parser to allow for code-reuse in later syntactic analysis
+- [x] Implement parser to allow for code-reuse in later syntactic analysis
 - [x] Implement post-parse pass to reflect user-defined operator precedence and associativity (either from definitions within the same module or from dependencies)
 - [ ] Implement identifier renaming pass to identify name clashes and generate unique names for entities involved
 - [ ] Implement support for (hygienic) macros in lexing and parsing
@@ -41,13 +41,17 @@ Below are some of the things I'm hoping to implement.
 - [ ] Implement documentation generation and integrate with doc comments
 
 ## Some reading
-The following may not necessarily be directly involved within the development of this compiler, but have proven nonetheless to be valuable sources of information.
+The following may not necessarily be directly involved within the development of
+this compiler, but have proven nonetheless to be valuable sources of
+information. 
 * [[1992] Simon Peyton Jones. *Implementing lazy functional languages on stock
   hardware: the Spineless Tagless
   G-machine*](https://www.microsoft.com/en-us/research/wp-content/uploads/1992/04/spineless-tagless-gmachine.pdf)
 * [[1997] Simon Peyton Jones, Jones & Meijer. *Type classes: an exploration of the design space*](https://www.microsoft.com/en-us/research/wp-content/uploads/1997/01/multi.pdf)
 * [[1999] Simon Peyton Jones, Simon Marlow. *Secrets of the Glasgow Haskell
-  Compiler inliner*](https://www.microsoft.com/en-us/research/wp-content/uploads/2002/07/inline.pdf)
+  Compiler
+  inliner*](https://www.microsoft.com/en-us/research/wp-content/uploads/2002/07/inline.pdf)
+* [[2000] Mark P. Jones, *Typing Haskell in Haskell*](https://web.cecs.pdx.edu/~mpj/thih/thih.pdf)
 * [[2005] Daan Leijen. *Extensible records with scoped labels*](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/scopedlabels.pdf)
 * [[2010] The Haskell Community. *The Haskell 2010 report*](https://www.haskell.org/definition/haskell2010.pdf)
 * [[2011] Vytiniotis et al. *OutsideIn(X): Modular type inference with local assumptions*](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/jfp-outsidein.pdf)
