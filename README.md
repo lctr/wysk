@@ -15,13 +15,13 @@ Below are some of the things I'm hoping to implement.
 
 ## [WIP] Examples
 ### Hello world
-```hs,rust
+```haskell,rust
 fn main :: IO ()
   = printLine "Hello world!"
 ```
 
 ### Factorial
-```hs,rust
+```haskell,rust
 fn factorial n :: Int -> Int
   | n if n < 2 = 1
   | n = n * factorial (n - 1)
