@@ -8,3 +8,9 @@ edition = "2021"
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 toml = "*" 
+wy_sources = { path = "../sources" }
+wy_parser = { path = "../parser" }
+wy_syntax = { path = "../syntax" }
+wy_intern = { path = "../intern" }
+wy_span = { path = "../span" }
+wy_failure = { path = "../failure" }
