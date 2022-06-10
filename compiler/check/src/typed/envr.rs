@@ -1,7 +1,6 @@
-use std::collections::{hash_map, HashMap};
 use std::hash::Hash;
 
-use wy_common::{Map, Mappable, Set};
+use wy_common::{iter::Envr, push_if_absent, Map, Mappable, Set};
 use wy_syntax::{
     decl::{
         AliasDecl, Arity, ClassDecl, DataDecl, FnDecl, InstDecl, MethodDef, NewtypeArg,
@@ -14,148 +13,12 @@ use wy_syntax::{
 };
 
 use super::{
-    constraint::{Constraint, Ctv, Injection, Scheme, Type},
+    constraint::{Scheme, Type},
     data::{dataty_ctors, DataCon},
     error::{Error, Inferred},
     subst::{Subst, Substitutable},
-    unify::{Unifier, Unify},
+    // unify::{Unifier, Unify},
 };
-
-#[derive(Clone)]
-pub struct Envr<K, V> {
-    pub store: HashMap<K, V>,
-}
-
-impl<K, V> Envr<K, V>
-where
-    K: Eq + Hash,
-{
-    pub fn new() -> Self {
-        Self {
-            store: HashMap::new(),
-        }
-    }
-
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self {
-            store: HashMap::with_capacity(capacity),
-        }
-    }
-
-    pub fn contains_key(&self, k: &K) -> bool {
-        self.store.contains_key(k)
-    }
-
-    pub fn keys(&self) -> hash_map::Keys<'_, K, V> {
-        self.store.keys()
-    }
-
-    pub fn values(&self) -> hash_map::Values<'_, K, V> {
-        self.store.values()
-    }
-
-    pub fn entry(&mut self, k: K) -> hash_map::Entry<K, V> {
-        self.store.entry(k)
-    }
-
-    pub fn get(&self, k: &K) -> Option<&V> {
-        self.store.get(k)
-    }
-
-    pub fn get_mut(&mut self, k: &K) -> Option<&mut V> {
-        self.store.get_mut(k)
-    }
-
-    pub fn insert(&mut self, k: K, v: V) -> Option<V> {
-        self.store.insert(k, v)
-    }
-
-    pub fn remove(&mut self, k: &K) -> Option<V> {
-        self.store.remove(k)
-    }
-
-    pub fn find<F>(&self, predicate: F) -> Option<(&K, &V)>
-    where
-        F: FnMut(&(&K, &V)) -> bool,
-    {
-        self.store.iter().find(predicate)
-    }
-
-    pub fn find_mut<F>(&mut self, predicate: F) -> Option<(&K, &mut V)>
-    where
-        F: FnMut(&(&K, &mut V)) -> bool,
-    {
-        self.store.iter_mut().find(predicate)
-    }
-
-    /// Returns a clone with the entry for the given key removed. If the key did
-    /// not exist, then this is equivalent to cloning.
-    pub fn without(&self, k: &K) -> Self
-    where
-        K: Copy,
-        V: Clone,
-    {
-        self.store
-            .iter()
-            .filter_map(|(id, v)| {
-                if id != k {
-                    Some((*id, v.clone()))
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-
-    pub fn without_many(&self, ks: &[K]) -> Self
-    where
-        K: Copy,
-        V: Clone,
-    {
-        self.store
-            .iter()
-            .filter_map(|(id, v)| {
-                if ks.contains(id) {
-                    None
-                } else {
-                    Some((*id, v.clone()))
-                }
-            })
-            .collect()
-    }
-
-    pub fn iter(&self) -> hash_map::Iter<K, V> {
-        self.store.iter()
-    }
-
-    pub fn iter_mut(&mut self) -> hash_map::IterMut<K, V> {
-        self.store.iter_mut()
-    }
-
-    pub fn into_iter(self) -> hash_map::IntoIter<K, V> {
-        self.store.into_iter()
-    }
-}
-
-impl<K: Eq + Hash, V> Extend<(K, V)> for Envr<K, V> {
-    fn extend<T: IntoIterator<Item = (K, V)>>(&mut self, iter: T) {
-        self.store.extend(iter)
-    }
-}
-
-impl<K: Eq + Hash, V> FromIterator<(K, V)> for Envr<K, V> {
-    fn from_iter<T: IntoIterator<Item = (K, V)>>(iter: T) -> Self {
-        Envr {
-            store: iter.into_iter().collect::<HashMap<_, _>>(),
-        }
-    }
-}
-
-impl<K, V> AsRef<Map<K, V>> for Envr<K, V> {
-    fn as_ref(&self) -> &Map<K, V> {
-        &self.store
-    }
-}
 
 impl<K: Copy + Eq + Hash, V> Substitutable for Envr<K, V>
 where
@@ -163,6 +26,12 @@ where
 {
     fn ftv(&self) -> wy_common::Set<wy_syntax::tipo::Tv> {
         self.values().flat_map(Substitutable::ftv).collect()
+    }
+
+    fn tv(&self) -> Vec<Tv> {
+        self.values()
+            .flat_map(Substitutable::tv)
+            .fold(vec![], push_if_absent)
     }
 
     fn apply_once(&self, subst: &super::subst::Subst) -> Self
@@ -173,46 +42,6 @@ where
             .iter()
             .map(|(k, v)| (*k, v.apply_once(subst)))
             .collect()
-    }
-}
-
-impl<K, V> std::ops::Index<K> for Envr<K, V>
-where
-    Map<K, V>: std::ops::Index<K>,
-{
-    type Output = <Map<K, V> as std::ops::Index<K>>::Output;
-
-    fn index(&self, index: K) -> &Self::Output {
-        &self.store[index]
-    }
-}
-
-impl<K, V> std::ops::IndexMut<K> for Envr<K, V>
-where
-    Map<K, V>: std::ops::IndexMut<K>,
-{
-    fn index_mut(&mut self, index: K) -> &mut Self::Output {
-        &mut self.store[index]
-    }
-}
-
-impl<K, V> std::fmt::Debug for Envr<K, V>
-where
-    K: std::fmt::Debug,
-    V: std::fmt::Debug,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Envr {:?}", wy_common::pretty::Dictionary(self.as_ref()))
-    }
-}
-
-impl<K, V> std::fmt::Display for Envr<K, V>
-where
-    K: std::fmt::Display,
-    V: std::fmt::Display,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Envr {}", wy_common::pretty::Dictionary(self.as_ref()))
     }
 }
 
@@ -267,7 +96,6 @@ pub struct Environment {
     locals: Envr<Ident, Scheme>,
     classes: Vec<Class>,
     instances: Vec<Instance>,
-    unifier: Unifier,
 }
 
 wy_common::struct_field_iters! {
@@ -288,7 +116,6 @@ impl Environment {
             constructors: vec![],
             classes: vec![],
             instances: vec![],
-            unifier: Unifier::new(),
         }
     }
     pub fn tick(&mut self) -> Tv {
@@ -333,11 +160,8 @@ impl Environment {
 
     /// Modify the current local environment in place, removing any entry for
     /// which the predicate returns `false`.
-    pub fn retain_locals(&mut self, predicate: impl FnMut(&(Ident, Scheme)) -> bool) {
-        self.locals = std::mem::replace(&mut self.locals, Envr::new())
-            .into_iter()
-            .filter(predicate)
-            .collect();
+    pub fn retain_locals(&mut self, predicate: impl FnMut(&Ident, &mut Scheme) -> bool) {
+        self.locals.retain(predicate)
     }
 
     pub fn reset_locals(&mut self) -> Envr<Ident, Scheme> {
@@ -409,30 +233,7 @@ impl Environment {
             .copied()
             .collect::<Vec<_>>();
 
-        let ctxt = poly
-            .iter()
-            .enumerate()
-            .filter_map(|(i, tv)| {
-                let insts = self
-                    .instances_iter()
-                    .filter_map(|inst| {
-                        let sch = &self[inst.tyid];
-                        if sch.tipo.get_con() == tipo.get_con() {
-                            Some(sch.var_classes(tv).zip(std::iter::repeat(Ctv::new(i))))
-                        } else {
-                            None
-                        }
-                    })
-                    .flatten()
-                    .collect::<Vec<_>>();
-                if insts.is_empty() {
-                    None
-                } else {
-                    Some(Injection::deduped(insts))
-                }
-            })
-            .flatten()
-            .collect::<Vec<_>>();
+        let ctxt = vec![];
 
         Scheme { poly, tipo, ctxt }
     }
@@ -514,96 +315,16 @@ impl Environment {
     pub fn canonicalize_with_globals(&self, tipo: Type) -> Scheme {
         self.generalize_globally(tipo).normalize()
     }
-
-    pub fn swap_unifier(&mut self, uni: Unifier) -> Unifier {
-        std::mem::replace(&mut self.unifier, uni)
-    }
-
-    pub fn prepare_constraints(&mut self, constraints: Vec<Constraint>) -> &mut Self {
-        self.unifier.clear();
-        self.unifier.add_constraints(constraints);
-        self
-    }
-
-    pub fn solve(&mut self) -> Result<Subst, Error> {
-        let Unifier {
-            mut subst,
-            mut constraints,
-            bound: _,
-        } = self.unifier.clone();
-        if constraints.is_empty() {
-            return Ok(subst.clone());
-        }
-
-        constraints.reverse();
-        let mut tmp;
-        loop {
-            if constraints.is_empty() {
-                break;
-            }
-
-            tmp = constraints.split_off(1);
-            if tmp.is_empty() {
-                break;
-            }
-
-            // we know it'll never be empty otherwise we'd have broken out of
-            // the loop
-            match tmp.pop().unwrap() {
-                Constraint::Join(t1, t2) => {
-                    let s1 = self.unify(t1, t2)?;
-                    let s2 = s1.compose(&subst);
-                    constraints.apply_mut(&subst);
-                    // constraints = constraints.apply(&s1);
-                    subst = s2;
-                }
-                Constraint::Class {
-                    class_name,
-                    instance,
-                } => {
-                    println!(
-                        "unifying class constraint: ({}, {})",
-                        &class_name, &instance
-                    );
-                    if let Some(instances) = self.lookup_class_instances(&class_name) {
-                        println!("{} instances:\n{:#?}", class_name, &instances);
-                        let sch = self.generalize_globally(instance.clone()).normalize();
-                        println!(
-                            "scheme from generalizing instance `{}` globally in env's unifier",
-                            &sch
-                        );
-                        if let Some(inst) =
-                            instances.into_iter().find(|inst| &self[inst.tyid] == &sch)
-                        {
-                            println!(
-                                "type `{}` has {} instance {:#?}",
-                                &instance, class_name, &inst
-                            );
-                            let inst_sch = self[inst.tyid].clone();
-                            println!("stored global instance scheme: {}", &inst_sch);
-                            let s1 = self.unify(instance, inst_sch.tipo)?;
-                            println!("unification results: {}", &s1);
-                            let s2 = s1.compose(&subst);
-                            constraints = constraints.apply(&s1);
-                            subst = s2;
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(subst)
-    }
 }
 
-impl Unify for Environment {
-    fn unifier(&self) -> &Unifier {
-        &self.unifier
-    }
-    fn unifier_mut(&mut self) -> &mut Unifier {
-        &mut self.unifier
-    }
-}
+// impl Unify for Environment {
+//     fn unifier(&self) -> &Unifier {
+//         &self.unifier
+//     }
+//     fn unifier_mut(&mut self) -> &mut Unifier {
+//         &mut self.unifier
+//     }
+// }
 
 impl std::ops::Index<TyId> for Environment {
     type Output = Scheme;
@@ -652,7 +373,6 @@ impl Builder {
                 locals: Envr::new(),
                 classes: vec![],
                 instances: vec![],
-                unifier: Unifier::new(),
             },
             bindings: Vec::new(),
         }
@@ -899,6 +619,7 @@ impl Builder {
 
 #[cfg(test)]
 mod tests {
+    #![allow(unused)]
     use wy_parser::error::Parsed;
     use wy_syntax::tipo::Con;
 
@@ -907,8 +628,8 @@ mod tests {
     use super::*;
 
     fn two_fun_types() -> (Type, Type) {
-        let bool_ = *wy_intern::BOOL;
-        let int_ = *wy_intern::INT;
+        let bool_ = wy_intern::BOOL;
+        let int_ = wy_intern::INT;
         let concrete = Type::Fun(
             Box::new(Type::Con(Con::Data(Ident::Upper(bool_)), vec![])),
             Box::new(Type::Con(Con::Data(Ident::Upper(int_)), vec![])),
@@ -940,40 +661,6 @@ mod tests {
                 Ok(env)
             }
             Err(err) => Err(err),
-        }
-    }
-
-    #[test]
-    fn test_build_envr() {
-        match with_program() {
-            Ok(mut envr) => {
-                let (t1, t2) = two_fun_types();
-                println!("unifying `{}` and `{}`", &t1, &t2);
-                let subst = envr.unify(t1, t2);
-                if let Ok(subst) = subst {
-                    println!("unified: {}", &subst);
-                    envr.unifier_mut().add_constraints([
-                        Constraint::Join(
-                            Type::Var(Tv(0)),
-                            Type::Con(Con::Data(Ident::Upper(*wy_intern::BOOL)), vec![]),
-                        ),
-                        Constraint::Join(
-                            Type::Var(Tv(1)),
-                            Type::Con(Con::Data(Ident::Upper(*wy_intern::INT)), vec![]),
-                        ),
-                    ]);
-                    *envr.unifier_mut().get_subst_mut() = subst;
-                }
-                match envr.solve() {
-                    Ok(solved) => println!("solved: {}", &solved),
-                    Err(e) => println!("not solved: {:?}", e),
-                }
-                println!(
-                    "{:?}",
-                    envr.lookup_scheme(&Ident::Infix(wy_intern::intern_once("==")))
-                )
-            }
-            Err(err) => println!("{}", err),
         }
     }
 }
