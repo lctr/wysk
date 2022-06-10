@@ -1,6 +1,5 @@
 pub mod symbol;
 
-pub use symbol::reserved::*;
 pub use symbol::*;
 
 use wy_span::{Located, Positioned, Spanned};
