@@ -237,7 +237,7 @@ where
 {
     pub fn new(mut infixify: impl FnMut(Symbol) -> Id) -> Self {
         let mut map = Map::new();
-        map.insert(infixify(symbol::intern_once(":")), Fixity::CONS);
+        map.insert(infixify(symbol::COLON), Fixity::CONS);
         Self(map)
     }
     /// Returns default fixity (left, 9) if not found.

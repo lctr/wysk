@@ -1,4 +1,4 @@
-use wy_common::{deque, variant_preds, Deque, Set};
+use wy_common::{deque, variant_preds, Deque, Mappable, Set};
 use wy_lexer::Literal;
 
 use crate::{
@@ -783,7 +783,9 @@ impl<Id, T> Expression<Id, T> {
                     .collect(),
             ),
             Expression::Cast(x, t) => Expression::Cast(Box::new(x.map_t(f)), t.map_t(f)),
-            Expression::Do(_, _) => todo!(),
+            Expression::Do(stmts, expr) => {
+                Expression::Do(stmts.fmap(|s| s.map_t(f)), Box::new(expr.map_t(f)))
+            }
             Expression::Range(a, b) => Expression::Range(
                 Box::new(a.map_t(f)),
                 if let Some(b) = b {
