@@ -25,6 +25,14 @@ impl Atlas {
     pub fn new() -> Self {
         Self { sources: vec![] }
     }
+
+    pub fn new_within_dir(dir: impl AsRef<Path>) -> Result<Self, std::io::Error> {
+        let mut atlas = Self::new();
+        let paths = Self::walk_path(dir.as_ref())?;
+        atlas.add_paths(paths);
+        Ok(atlas)
+    }
+
     pub fn add_paths(&mut self, pbs: Vec<PathBuf>) {
         for path in pbs {
             let fid = FileId(self.sources.len());
