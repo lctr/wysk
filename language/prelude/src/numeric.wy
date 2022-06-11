@@ -96,6 +96,10 @@ class |Num a| Mul a {
    (*) :: a -> a -> a 
 }
 
+class |Num a| Div a { 
+   (/) :: a -> a -> a 
+}
+
 class |Num a, Ord a| Real a {
    intoRational :: a -> Rational
 }
@@ -110,11 +114,10 @@ class |Real a, Enum a| Integral a {
    intoInteger :: a -> Integer;
 }
 
-class |Num a| Fractional a { (/) :: a -> a -> a }
-
 impl Add Int { (+) = prim'AddInt }
 impl Sub Int { (-) = prim'SubInt }
 impl Mul Int { (*) = prim'MulInt }
+impl Div Int { (/) = prim'DivInt }
 
 impl Num Int {
     fromInt = identity;
