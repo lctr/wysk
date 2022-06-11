@@ -1006,6 +1006,10 @@ impl<Id, T> Type<Id, T> {
     }
 }
 
+pub fn poly_vars<'a, Id>(poly: impl IntoIterator<Item = &'a Tv>) -> Vec<Type<Id, Tv>> {
+    poly.into_iter().copied().map(Tv::as_type).collect()
+}
+
 pub struct TypeStr<'t, Id, T>(&'t Type<Id, T>, usize);
 impl<'t, Id, T> std::fmt::Debug for TypeStr<'t, Id, T>
 where
@@ -1646,6 +1650,17 @@ impl<Id, T> Context<Id, T> {
             class: self.class,
             head: f(&self.head),
         }
+    }
+
+    pub fn unzip(contexts: &[Self]) -> Vec<(Id, T)>
+    where
+        Id: Copy,
+        T: Clone,
+    {
+        contexts
+            .into_iter()
+            .map(|ctx| (ctx.class, ctx.head.clone()))
+            .collect()
     }
 }
 
