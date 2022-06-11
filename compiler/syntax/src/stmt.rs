@@ -50,6 +50,9 @@ impl<Id, T> Match<Id, T> {
             wher,
         }
     }
+    pub fn arity(&self) -> Arity {
+        Arity(self.args.len())
+    }
     pub fn free_vars(&self) -> Set<Id>
     where
         Id: Copy + Eq + std::hash::Hash,
