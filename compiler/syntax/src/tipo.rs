@@ -117,7 +117,7 @@ impl<Id> Var<Id> {
     }
 
     #[inline]
-    pub fn id(self) -> Id {
+    pub fn head(self) -> Id {
         self.0
     }
 
@@ -146,7 +146,7 @@ impl<Id> Var<Id> {
         std::mem::replace(&mut self.1, tv)
     }
 
-    pub fn replace_id(&mut self, id: Id) -> Id {
+    pub fn replace_head(&mut self, id: Id) -> Id {
         std::mem::replace(&mut self.0, id)
     }
 }
@@ -158,6 +158,49 @@ impl<Id: std::fmt::Debug> std::fmt::Debug for Var<Id> {
 impl<Id: std::fmt::Display> std::fmt::Display for Var<Id> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}.[{}]", &self.0, &self.1)
+    }
+}
+
+impl<T> std::ops::Deref for Var<T> {
+    type Target = Tv;
+
+    fn deref(&self) -> &Self::Target {
+        &self.1
+    }
+}
+
+impl<T> From<(T, Tv)> for Var<T> {
+    fn from((t, tv): (T, Tv)) -> Self {
+        Var(t, tv)
+    }
+}
+
+impl Default for Var<Kind> {
+    fn default() -> Self {
+        Self(Kind::Star, Tv(0))
+    }
+}
+
+impl Var<Kind> {
+    pub fn kind(&self) -> &Kind {
+        &self.0
+    }
+    pub fn kind_mut(&mut self) -> &mut Kind {
+        &mut self.0
+    }
+    pub fn set_kind(&mut self, kind: Kind) {
+        self.0 = kind;
+    }
+    #[inline]
+    pub fn is_star(&self) -> bool {
+        matches!(&self.0, Kind::Star)
+    }
+    #[inline]
+    pub fn is_arrow(&self) -> bool {
+        matches!(&self.0, Kind::Arrow(..))
+    }
+    pub fn kinds_eq(&self, var: &Self) -> bool {
+        self.0 == var.0
     }
 }
 
@@ -182,11 +225,19 @@ impl<T> Extend<Var<T>> for Vec<(T, Tv)> {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Con<Id = Ident, T = Id> {
+    /// List constructor `[]`; arity = 1
     List,
+    /// Tuple constructor(s) of provided arity. A value of 0 is taken to refer
+    /// to the empty tuple unit type `()`.
     Tuple(usize),
+    /// Function constructor `(->)`; arity = 2
     Arrow,
+    /// User-defined type constructor
     Data(Id),
     Free(T),
+    /// Type constructor aliases, used to superficially preserve type aliases
+    /// within an environment where the alias can be resolved
+    Alias(Id),
 }
 
 impl<Id: Symbolic> Symbolic for Con<Id, Tv> {
@@ -200,27 +251,23 @@ impl<Id: Symbolic> Symbolic for Con<Id, Tv> {
             Con::Arrow => wy_intern::ARROW,
             Con::Data(s) => s.get_symbol(),
             Con::Free(t) => wy_intern::intern_once(&*t.display()),
+            Con::Alias(s) => s.get_symbol(),
         }
     }
 }
 
-impl<Id, T> Con<Id, T> {
-    pub fn is_list(&self) -> bool {
-        matches!(self, Con::List)
-    }
-    pub fn is_tuple(&self) -> bool {
-        matches!(self, Con::Tuple(..))
-    }
-    pub fn is_arrow(&self) -> bool {
-        matches!(self, Con::Arrow)
-    }
-    pub fn is_data(&self) -> bool {
-        matches!(self, Con::Data(..))
-    }
-    pub fn is_variable(&self) -> bool {
-        matches!(self, Con::Free(..))
-    }
+wy_common::variant_preds! {
+    |Id, T| Con[Id, T]
+    | is_list => List
+    | is_tuple => Tuple(_)
+    | is_unit => Tuple(xs) [if *xs == 0]
+    | is_arrow => Arrow
+    | is_data => Data(_)
+    | is_free => Free(_)
+    | is_alias => Alias(_)
+}
 
+impl<Id, T> Con<Id, T> {
     /// If this constructor is not concrete (i.e., is a `Con::Free` variant),
     /// then it returns an option, wrapped with `Some`, containing a reference
     /// to the type variable standing in place of the type constructor.
@@ -265,6 +312,7 @@ impl<Id, T> Con<Id, T> {
             Con::Arrow => Con::Arrow,
             Con::Data(id) => Con::Data(f(id)),
             Con::Free(t) => Con::Free(t),
+            Con::Alias(id) => Con::Alias(f(id)),
         }
     }
     pub fn map_id_ref<X>(&self, mut f: impl FnMut(&Id) -> X) -> Con<X, T>
@@ -277,6 +325,7 @@ impl<Id, T> Con<Id, T> {
             Con::Arrow => Con::Arrow,
             Con::Data(id) => Con::Data(f(id)),
             Con::Free(t) => Con::Free(*t),
+            Con::Alias(id) => Con::Alias(f(id)),
         }
     }
 
@@ -287,6 +336,7 @@ impl<Id, T> Con<Id, T> {
             Con::Arrow => Con::Arrow,
             Con::Data(id) => Con::Data(id),
             Con::Free(t) => Con::Free(f(t)),
+            Con::Alias(id) => Con::Alias(id),
         }
     }
     pub fn map_t_ref<X>(&self, mut f: impl FnMut(&T) -> X) -> Con<Id, X>
@@ -299,6 +349,7 @@ impl<Id, T> Con<Id, T> {
             Con::Arrow => Con::Arrow,
             Con::Data(id) => Con::Data(*id),
             Con::Free(t) => Con::Free(f(t)),
+            Con::Alias(id) => Con::Alias(*id),
         }
     }
 }
@@ -333,7 +384,7 @@ impl<Id: std::fmt::Display, T: std::fmt::Display> std::fmt::Display for Con<Id, 
                 f.write_char(')')
             }
             Con::Arrow => f.write_str("(->)"),
-            Con::Data(id) => write!(f, "{}", id),
+            Con::Data(id) | Con::Alias(id) => write!(f, "{}", id),
             Con::Free(v) => write!(f, "{}", v),
         }
     }
@@ -394,6 +445,7 @@ wy_common::variant_preds! {
     | is_arrow_con_form => Con(Con::Arrow, _)
     | is_con_var => Con(Con::Free(_), _)
     | is_concrete_con => Con(Con::Data(_), _)
+    | is_alias_con => Con(Con::Alias(_), _)
 }
 
 impl<Id, T> Type<Id, T> {
@@ -933,6 +985,7 @@ impl<Id, T> Type<Id, T> {
                     Con::Tuple(n) => Con::Tuple(n),
                     Con::Data(id) => Con::Data(id),
                     Con::Free(c) => Con::Free(f(c)),
+                    Con::Alias(id) => Con::Alias(id),
                 };
                 for ty in ts {
                     args.push(ty.map_t(f))
@@ -1135,6 +1188,12 @@ pub enum Kind {
     Arrow(Box<Kind>, Box<Kind>),
 }
 
+wy_common::variant_preds! {
+    Kind
+    | is_star => Star
+    | is_arrow => Arrow(..)
+}
+
 impl std::fmt::Debug for Kind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -1186,6 +1245,13 @@ impl Kind {
                 Self::Arrow(Box::new(Self::Star), Box::new(Self::from_type(t.as_ref())))
             }
             Type::Rec(_) => Self::Star,
+        }
+    }
+    pub fn split(&self) -> Option<(&Self, &Self)> {
+        if let Self::Arrow(x, y) = self {
+            Some((x.as_ref(), y.as_ref()))
+        } else {
+            None
         }
     }
 }
@@ -1533,19 +1599,25 @@ pub struct Context<Id = Ident, T = Ident> {
     /// (lowercase) identifiers to be used during parsing (which should then be
     /// *normalized* once the RHS is available so that `T` directly matches any
     /// type variables from the RHS).
-    pub tyvar: T,
+    pub head: T,
 }
 
 pub type Predicate<Id, T> = Context<Id, Type<Id, T>>;
 
 impl<Id, T> Context<Id, T> {
+    pub fn class_id(&self) -> &Id {
+        &self.class
+    }
+    pub fn head(&self) -> &T {
+        &self.head
+    }
     pub fn map_id<F, X>(self, mut f: F) -> Context<X, T>
     where
         F: FnMut(Id) -> X,
     {
         Context {
             class: f(self.class),
-            tyvar: self.tyvar,
+            head: self.head,
         }
     }
     pub fn map_id_ref<X>(&self, f: &mut impl FnMut(&Id) -> X) -> Context<X, T>
@@ -1554,7 +1626,7 @@ impl<Id, T> Context<Id, T> {
     {
         Context {
             class: f(&self.class),
-            tyvar: self.tyvar,
+            head: self.head,
         }
     }
     pub fn map_t<F, U>(self, mut f: F) -> Context<Id, U>
@@ -1563,7 +1635,7 @@ impl<Id, T> Context<Id, T> {
     {
         Context {
             class: self.class,
-            tyvar: f(self.tyvar),
+            head: f(self.head),
         }
     }
     pub fn map_t_ref<U>(&self, f: &mut impl FnMut(&T) -> U) -> Context<Id, U>
@@ -1572,7 +1644,7 @@ impl<Id, T> Context<Id, T> {
     {
         Context {
             class: self.class,
-            tyvar: f(&self.tyvar),
+            head: f(&self.head),
         }
     }
 }
@@ -1606,7 +1678,7 @@ impl<Id, T> Signature<Id, T> {
         T: Copy + PartialEq,
     {
         let tyvars = self.tipo.fv();
-        self.ctxt.iter().all(|ctxt| tyvars.contains(&ctxt.tyvar))
+        self.ctxt.iter().all(|ctxt| tyvars.contains(&ctxt.head))
     }
 
     pub fn ctxt_iter_mut(&mut self) -> std::slice::IterMut<'_, Context<Id, T>> {
@@ -1638,10 +1710,10 @@ impl<Id, T> Signature<Id, T> {
 
     pub fn map_t<U>(self, f: &mut impl FnMut(T) -> U) -> Signature<Id, U> {
         let mut ctxt = vec![];
-        for Context { class, tyvar } in self.ctxt {
+        for Context { class, head: tyvar } in self.ctxt {
             ctxt.push(Context {
                 class,
-                tyvar: f(tyvar),
+                head: f(tyvar),
             })
         }
         Signature {

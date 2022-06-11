@@ -385,6 +385,7 @@ impl<Id, T> Pattern<Id, T> {
                                 Con::Arrow => Con::Arrow,
                                 Con::Data(d) => Con::Data(*d),
                                 Con::Free(t) => Con::Free(f(t)),
+                                Con::Alias(id) => Con::Alias(*id),
                             },
                             args.into_iter().map(|ty| map_ty(ty, f)).collect(),
                         ),
