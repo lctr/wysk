@@ -303,7 +303,7 @@ impl<Id, T> DataDecl<Id, T> {
 
     #[inline]
     pub fn class_vars(&self) -> impl Iterator<Item = &T> + '_ {
-        self.context_iter().map(|Context { tyvar, .. }| tyvar)
+        self.context_iter().map(|Context { head: tyvar, .. }| tyvar)
     }
 
     #[inline]
@@ -359,9 +359,9 @@ impl<Id, T> DataDecl<Id, T> {
             poly: self.poly_iter().map(|t| f(t)).collect(),
             ctxt: self
                 .context_iter()
-                .map(|Context { class, tyvar }| Context {
+                .map(|Context { class, head: tyvar }| Context {
                     class: *class,
-                    tyvar: f(tyvar),
+                    head: f(tyvar),
                 })
                 .collect(),
             vnts: self
@@ -406,9 +406,9 @@ impl DataDecl {
             .zip(0..)
             .map(|(v, i)| (Tv::from_ident(v), Tv(i)))
             .collect::<Map<_, _>>();
-        let ctxt = ctxt.fmap(|Context { class, tyvar }| Context {
+        let ctxt = ctxt.fmap(|Context { class, head: tyvar }| Context {
             class,
-            tyvar: pair[&Tv::from_ident(tyvar)],
+            head: pair[&Tv::from_ident(tyvar)],
         });
         let vnts = vnts.fmap(
             |Variant {
@@ -713,7 +713,7 @@ impl<Id, T> AliasDecl<Id, T> {
         Id: Identifier,
     {
         let fvs = self.sign.tipo.fv();
-        self.sign.ctxt.iter().all(|ctx| fvs.contains(&ctx.tyvar))
+        self.sign.ctxt.iter().all(|ctx| fvs.contains(&ctx.head))
     }
 
     /// Checks whether all type variables in the `Type` (right-hand-side) are
@@ -731,7 +731,7 @@ impl<Id, T> AliasDecl<Id, T> {
             .tipo
             .fv()
             .into_iter()
-            .chain(self.sign.ctxt.iter().map(|ctx| ctx.tyvar))
+            .chain(self.sign.ctxt.iter().map(|ctx| ctx.head))
             .all(|t| self.poly.contains(&t))
     }
 
@@ -1096,6 +1096,15 @@ impl<Id, T> FnDecl<Id, T> {
                 .collect(),
         }
     }
+
+    pub fn has_tysig(&self) -> bool {
+        self.sign.is_some()
+    }
+
+    pub fn sign_iter(&self) -> std::option::Iter<'_, Signature<Id, T>> {
+        self.sign.iter()
+    }
+
     pub fn map_id_ref<U>(&self, f: &mut impl FnMut(&Id) -> U) -> FnDecl<U, T>
     where
         T: Copy,
