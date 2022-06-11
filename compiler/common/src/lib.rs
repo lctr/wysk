@@ -218,6 +218,26 @@ macro_rules! struct_getters {
 }
 
 /// Generating predicates for a given enum to test for variants.
+///
+/// # Example
+/// ```
+/// use wy_common::variant_preds;
+///
+/// enum Foo<X, Y> {
+///     Bar,
+///     Baz { baz: X, count: usize },
+///     Barbaz(X, Y)
+/// }
+///
+/// variant_preds! {
+///     |X, Y| Foo[X, Y]
+///     | is_bar => Bar
+///     | is_baz => Baz {..}
+///     | is_barbaz => Barbaz (..)
+///     | is_baz_with_count_zero => Baz { count: 0, .. }
+///     | is_baz_with_even_count => Baz { count, .. } [if count % 2 == 0]
+/// }
+/// ```
 #[macro_export]
 macro_rules! variant_preds {
     (
