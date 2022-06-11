@@ -1,7 +1,7 @@
 use wy_failure::Failure;
 use wy_parser::error::ParseError;
 use wy_sources::Atlas;
-use wy_syntax::Ast;
+use wy_syntax::{tipo::Tv, Ast};
 
 pub fn parse_atlas(atlas: &Atlas) -> Result<Ast, Failure<ParseError>> {
     let mut tree = Ast::new();
@@ -12,6 +12,11 @@ pub fn parse_atlas(atlas: &Atlas) -> Result<Ast, Failure<ParseError>> {
     }
 
     Ok(tree)
+}
+
+pub fn parse_prelude() -> Result<Ast, Failure<ParseError>> {
+    let atlas = Atlas::new_within_dir("../../language")?;
+    parse_atlas(&atlas)
 }
 
 #[cfg(test)]
