@@ -1,5 +1,5 @@
 use meta::{Placement, Pragma, Attr, Digit, Associativity};
-use stream::Mode;
+// use stream::Mode;
 use wy_intern as intern;
 use wy_span as span;
 
@@ -181,7 +181,7 @@ impl<'t> Lexer<'t> {
         Token { lexeme, span }
     }
 
-    fn hash(&mut self) -> Lexeme {
+    fn _hash(&mut self) -> Lexeme {
         let hash = Lexeme::Pound;
         let bang = self.source.spanned(|s| {
             if s.bump_on('!') { 
