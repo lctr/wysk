@@ -308,7 +308,12 @@ where
     V: std::fmt::Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Envr {:?}", crate::pretty::Dictionary(self.as_ref()))
+        use crate::pretty::Dictionary;
+        if f.alternate() {
+            write!(f, "Envr {:#?}", self.as_ref())
+        } else {
+            write!(f, "Envr {:?}", &Dictionary(self.as_ref()))
+        }
     }
 }
 
