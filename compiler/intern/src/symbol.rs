@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::mem;
 use std::sync::{Arc, Mutex};
 
+use wy_common::Mappable;
+
 /// Key used to reference stored strings. When a string is interened, a
 /// `Symbol` is returned, which can then be used to retrieve the original
 /// string representation. This helps reduce the footprint of data structures
@@ -304,6 +306,22 @@ pub fn intern_many<S: AsRef<str>, const N: usize>(strings: [S; N]) -> [Symbol; N
             }
             syms
         }
+        Err(e) => {
+            eprintln!("{}", e);
+            panic!(
+                "poisoned while interning `{:?}`",
+                &strings.iter().map(|s| s.as_ref()).collect::<Vec<_>>()
+            )
+        }
+    }
+}
+
+pub fn intern_many_with<S: AsRef<str>, I, const N: usize>(
+    strings: [S; N],
+    mut f: impl FnMut(Symbol) -> I,
+) -> [I; N] {
+    match INTERNER.lock() {
+        Ok(mut guard) => strings.fmap(|s| f(guard.intern(s.as_ref()))),
         Err(e) => {
             eprintln!("{}", e);
             panic!(
