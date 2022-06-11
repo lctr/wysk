@@ -872,7 +872,7 @@ impl<'t> TypeParser<'t> {
     fn ty_constraint(&mut self) -> Parsed<Context> {
         let class = self.expect_upper()?;
         let tyvar = self.expect_lower()?;
-        Ok(Context { class, tyvar })
+        Ok(Context { class, head: tyvar })
     }
 
     fn ty_node(&mut self) -> Parsed<Type> {
