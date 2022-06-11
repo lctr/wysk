@@ -154,7 +154,87 @@ where
     }
 }
 
-pub struct Dict<'a, K: 'a, V: 'a>(pub &'a str, pub &'a [(&'a K, &'a V)]);
+macro_rules! debug_alt {
+    ($f:ident, $($vars:ident)+, $reg:literal | #$alt:literal) => {{
+        if $f.alternate() {
+            write!($f, $alt, $($vars,)+)
+        } else {
+            write!($f, $reg, $($vars,)+)
+        }
+    }};
+}
+
+pub struct Record<'a, F: 'a, K: 'a, V: 'a>(pub &'a [(&'a F, &'a [(&'a K, &'a V)])]);
+
+impl<'a, F, K, V> fmt::Display for Record<'a, F, K, V>
+where
+    F: 'a + fmt::Display,
+    K: 'a + fmt::Display,
+    V: 'a + fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", '{')?;
+        match &self.0 {
+            [] => (),
+            [(fld, kvs0), rest @ ..] => {
+                write!(f, "\n    {}: {}", fld, Dict("=", kvs0))?;
+                for (fld, kvs) in rest {
+                    write!(f, ",\n    {}: {}", fld, Dict("=", kvs))?;
+                }
+                write!(f, "\n")?;
+            }
+        }
+        write!(f, "{}", '}')
+    }
+}
+
+impl<'a, F, K, V> fmt::Debug for Record<'a, F, K, V>
+where
+    F: 'a + fmt::Debug,
+    K: 'a + fmt::Debug,
+    V: 'a + fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let dx = "    ";
+        let Record(fields) = &self;
+        write!(f, "{}", '{')?;
+        match fields {
+            [] => (),
+            [(fld, kvs0), rest @ ..] => {
+                let d0 = Dict(": ", kvs0);
+                debug_alt!(f, dx fld d0, "\n{}{:?} {:?}" | #"{}{:?} {:#?}")?;
+                // write!(f, "\n{}{:?} {:?}", dx, fld, Dict(": ", kvs0))?;
+                for (fld, kvs) in rest {
+                    let d0 = Dict(": ", kvs);
+                    debug_alt!(f, dx fld d0, ",\n{}{:?} {:?}" | #",\n{}{:?} {:#?}")?;
+                    // write!(f, ",\n{}{:?} {:?}", dx, fld, Dict(": ", kvs))?;
+                }
+                write!(f, "\n")?;
+            }
+        }
+        write!(f, "{}", '}')
+    }
+}
+
+pub struct Dict<'a, K: 'a, V: 'a>(pub &'a str, pub &'a [(K, V)]);
+
+impl<'a, K: fmt::Debug, V: fmt::Debug> fmt::Debug for Dict<'a, K, V> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", '{')?;
+        let sep = &self.0;
+        match &self.1 {
+            [] => (),
+            [(k0, v0), rest @ ..] => {
+                debug_alt!(f, k0 sep v0, "\n    {:?} {} {:?}" | #"\n    {:?} {} {:#?}")?;
+                for (k, v) in rest {
+                    debug_alt!(f, k sep v, ",\n    {:?} {} {:?}" | #",\n    {:?} {} {:#?}")?;
+                }
+                write!(f, "\n")?;
+            }
+        }
+        write!(f, "{}", '}')
+    }
+}
 
 pub struct Dictionary<'a, K, V>(pub &'a HashMap<K, V>);
 
@@ -164,7 +244,7 @@ where
     V: fmt::Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let map = self.0;
+        let map = &self.0;
         f.write_char('{')?;
         match map.len() {
             0 => (),
@@ -192,20 +272,20 @@ where
     V: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let map = self.0;
+        let map = &self.0;
         f.write_char('{')?;
         match map.len() {
             0 => (),
             1 => {
                 let (k, v) = map.into_iter().next().unwrap();
-                write!(f, " {:?} = {:?} ", k, v)?;
+                debug_alt!(f, k v, "\n    {:?} = {:?}" | #"{:?} = {:#?}")?;
             }
             _ => {
                 let mut iter = map.into_iter();
                 let (k0, v0) = iter.next().unwrap();
-                write!(f, "\n    {:?} = {:?}", k0, v0)?;
+                debug_alt!(f, k0 v0, "\n    {:?} = {:?}" | #"{:?} = {:#?}")?;
                 for (k, v) in iter {
-                    write!(f, ",\n    {:?} = {:?}", k, v)?;
+                    debug_alt!(f, k v, ", {:?} = {:?}" | #"{:?} = {:#?}")?;
                 }
                 write!(f, "\n")?;
             }
