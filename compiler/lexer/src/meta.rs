@@ -2,7 +2,7 @@ use wy_common::strenum;
 use wy_intern::{Symbol, Symbolic};
 use wy_span::{Span, Spanned};
 
-use crate::Source;
+use crate::{is_ident_char, Source};
 
 strenum! { Lint is_lint ::
     All "all"
@@ -30,7 +30,12 @@ strenum! { Attr is_attr ::
 
 impl Attr {
     pub fn scan(stream: &mut Source) -> Option<Spanned<Self>> {
-        todo!()
+        let mut iter = stream.clone();
+        let (span, _loc) = iter.eat_while(is_ident_char).parts();
+        Self::from_str(&iter[span]).map(|attr| {
+            *stream = iter;
+            Spanned::new(attr, span)
+        })
     }
 }
 
