@@ -800,6 +800,29 @@ pub fn is_escapable(c: char) -> bool {
     matches!(c, 't' | 'n' | 'r' | '"' | '\'' | '\\' | 'b' | 'f')
 }
 
+pub fn unescape_string(mut s: &str) -> String {
+    let mut buf = String::new();
+    while let Some(i) = s.bytes().position(|byte| byte == b'\\') {
+        let c = match s.as_bytes()[i + 1] {
+            b'\'' => '\'',
+            b'"' => '"',
+            b'\\' => '\\',
+            b'/' => '/',
+            b'n' => '\n',
+            b'r' => '\r',
+            b't' => '\t',
+            _ => {
+                panic!("Invalid escape found at byte {} for string `{}`", i, s)
+            }
+        };
+        buf.push_str(&s[..i]);
+        buf.push(c);
+        s = &s[i + 2 ..];
+    }
+    buf.push_str(s);
+    buf 
+}
+
 pub fn is_infix_char(c: char) -> bool {
     matches!(
         c,
