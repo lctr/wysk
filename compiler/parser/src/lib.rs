@@ -591,10 +591,9 @@ impl<'t> DeclParser<'t> {
             vec![]
         };
         let name = self.expect_upper()?;
-        let poly = self.many_while(
-            |p| !lexpat!(p on [=] | [;]),
-            |p| p.expect_lower().map(|ident| Ident::Fresh(ident.symbol())),
-        )?;
+        let poly = self.many_while_on(Not([Equal, Semi]), |p| {
+            p.expect_lower().map(|ident| Ident::Fresh(ident.symbol()))
+        })?;
         let mut decl = DataDecl {
             name,
             ctxt,
@@ -661,10 +660,9 @@ impl<'t> DeclParser<'t> {
         use Lexeme::Equal;
         self.eat(Type)?;
         let name = self.expect_upper()?;
-        let poly = self.many_while(
-            |p| !p.peek_on(Equal),
-            |p| p.expect_lower().map(|ident| Ident::Fresh(ident.symbol())),
-        )?;
+        let poly = self.many_while_on(Not(Equal), |p| {
+            p.expect_lower().map(|ident| Ident::Fresh(ident.symbol()))
+        })?;
         self.eat(Equal)?;
         let sign = self.total_signature()?;
         Ok(AliasDecl { name, poly, sign })
@@ -785,8 +783,6 @@ impl<'t> Parser<'t> {
         // constructor name
         let name = self.expect_upper()?;
         let mut args = vec![];
-        // while self.peek_on(Lexeme::begins_ty) {
-        //     // }
         while !(self.is_done() || lexpat!(self on [;] | [|] | [kw])) {
             args.push(if lexpat!(self on [curlyL]) {
                 self.curly_ty()
@@ -834,12 +830,11 @@ impl<'t> TypeParser<'t> {
     }
 
     fn ty_contexts(&mut self) -> Parsed<Vec<Context>> {
+        use Lexeme::{Comma, Pipe};
+
         let mut ctxts = vec![];
-        if self.peek_on(Lexeme::Pipe) {
-            ctxts = self.delimited(
-                [Lexeme::Pipe, Lexeme::Comma, Lexeme::Pipe],
-                Self::ty_constraint,
-            )?;
+        if self.peek_on(Pipe) {
+            ctxts = self.delimited([Pipe, Comma, Pipe], Self::ty_constraint)?;
         }
         Ok(ctxts)
     }
@@ -871,8 +866,8 @@ impl<'t> TypeParser<'t> {
     /// type `(uvw, xyz)` has its type variables remaped to `(a, b)`.
     fn ty_constraint(&mut self) -> Parsed<Context> {
         let class = self.expect_upper()?;
-        let tyvar = self.expect_lower()?;
-        Ok(Context { class, head: tyvar })
+        let head = self.expect_lower()?;
+        Ok(Context { class, head })
     }
 
     fn ty_node(&mut self) -> Parsed<Type> {
@@ -1842,11 +1837,11 @@ impl<'t> ExprParser<'t> {
         self.eat(Keyword::Do)?;
         self.eat(Lexeme::CurlyL)?;
 
-        let mut statements = vec![];
-        while !(self.is_done() || lexpat!(self on [curlyR])) {
-            statements.push(self.statement()?);
-            self.ignore(Lexeme::Semi);
-        }
+        let mut statements = self.many_while_on(Not(Lexeme::is_brack_r), |p| {
+            let stmt = p.statement()?;
+            p.ignore(Lexeme::Semi);
+            Ok(stmt)
+        })?;
 
         self.eat(Lexeme::CurlyR)?;
 
