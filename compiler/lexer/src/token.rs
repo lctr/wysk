@@ -39,6 +39,8 @@ strenum! { Keyword is_keyword ::
     Import "import"
     Qualified "qualified"
     Hiding "hiding"
+
+    Extern "extern"
 }
 
 impl PartialEq<Lexeme> for Keyword {
