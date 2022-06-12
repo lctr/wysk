@@ -138,6 +138,18 @@ impl Scheme {
     }
 }
 
+/// Will convert a `Type` into a `Scheme` *without* any qualifying predicates or
+/// quantified variables. Identical to calling `Scheme::monotype`.
+impl From<Type> for Scheme {
+    fn from(ty: Type) -> Self {
+        Scheme {
+            poly: vec![],
+            tipo: ty,
+            ctxt: vec![],
+        }
+    }
+}
+
 impl Substitutable for Scheme {
     fn ftv(&self) -> Set<Tv> {
         self.tipo
@@ -238,7 +250,7 @@ impl Substitutable for Constraint {
         match self {
             Constraint::Join(t1, t2) => t2.tv().into_iter().fold(t1.tv(), push_if_absent),
             Constraint::Class {
-                class_name,
+                class_name: _,
                 instance,
             } => instance.tv(),
         }
