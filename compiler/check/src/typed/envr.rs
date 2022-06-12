@@ -8,16 +8,17 @@ use wy_syntax::{
     },
     ident::Ident,
     stmt::Binding,
-    tipo::{Con, Context, Tv},
+    tipo::{poly_vars, Con, Context, Tv},
     Program,
 };
 
 use super::{
+    class::ClassEnv,
+    // unify::{Unifier, Unify},
     constraint::{Scheme, Type},
-    data::{dataty_ctors, DataCon},
+    data::{data_constructors, dataty_ctors, DataCon},
     error::{Error, Inferred},
     subst::{Subst, Substitutable},
-    // unify::{Unifier, Unify},
 };
 
 impl<K: Copy + Eq + Hash, V> Substitutable for Envr<K, V>
@@ -64,6 +65,12 @@ wy_common::struct_field_iters! {
     | ctxt => ctxt_iter :: Context<ClassId, Tv>
 }
 
+impl Class {
+    pub fn super_classes(&self) -> impl Iterator<Item = ClassId> + '_ {
+        self.ctxt_iter().map(|Context { class, .. }| *class)
+    }
+}
+
 wy_common::newtype! { usize in InstId | Show AsUsize (+) [Instance] }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -96,6 +103,7 @@ pub struct Environment {
     locals: Envr<Ident, Scheme>,
     classes: Vec<Class>,
     instances: Vec<Instance>,
+    class_env: ClassEnv,
 }
 
 wy_common::struct_field_iters! {
@@ -116,6 +124,7 @@ impl Environment {
             constructors: vec![],
             classes: vec![],
             instances: vec![],
+            class_env: ClassEnv::new(),
         }
     }
     pub fn tick(&mut self) -> Tv {
@@ -317,15 +326,6 @@ impl Environment {
     }
 }
 
-// impl Unify for Environment {
-//     fn unifier(&self) -> &Unifier {
-//         &self.unifier
-//     }
-//     fn unifier_mut(&mut self) -> &mut Unifier {
-//         &mut self.unifier
-//     }
-// }
-
 impl std::ops::Index<TyId> for Environment {
     type Output = Scheme;
 
@@ -373,9 +373,20 @@ impl Builder {
                 locals: Envr::new(),
                 classes: vec![],
                 instances: vec![],
+                class_env: ClassEnv::new(),
             },
             bindings: Vec::new(),
         }
+    }
+
+    pub fn add_program<U>(program: &Program<Ident, U, Tv>) -> Environment {
+        Self::new()
+            .add_data_tys(program.get_datatys())
+            .add_newtypes(program.get_newtyps())
+            .add_classes(program.get_classes())
+            .add_instances(program.get_implems())
+            .add_fundefs(program.get_fundefs())
+            .build()
     }
 
     pub fn with_program(program: &Program) -> Environment {
@@ -394,7 +405,7 @@ impl Builder {
             let decl = decl.map_t_ref(&mut |t| Tv::from(t));
             let name = decl.name;
             if let Some(sign) = decl.sign.clone() {
-                let ctxt = sign.ctxt_iter().map(|ctx| (ctx.class, ctx.tyvar)).collect();
+                let ctxt = sign.ctxt_iter().map(|ctx| (ctx.class, ctx.head)).collect();
                 let scheme = Scheme::instance(sign.tipo, ctxt);
                 let tyid = self.env.add_global(name, scheme);
                 annot.insert(name, tyid);
@@ -407,6 +418,56 @@ impl Builder {
             self.bindings.push(binding)
         });
         self.env.globals.extend(annot);
+        self
+    }
+
+    pub fn add_fundefs(mut self, fundefs: &[FnDecl<Ident, Tv>]) -> Self {
+        let mut anns = Map::new();
+        for decl in fundefs {
+            let decl = decl.clone();
+            let name = decl.name;
+            if let Some(ref sign) = decl.sign {
+                let ctxts = sign.ctxt_iter().map(|ctx| (ctx.class, ctx.head)).collect();
+                let tipo = sign.tipo.clone();
+                let scheme = Scheme::instance(tipo, ctxts);
+                let tyid = self.env.add_global(name, scheme);
+                anns.insert(name, tyid);
+            }
+            self.bindings.push(Binding {
+                name,
+                arms: decl.defs,
+                tipo: decl.sign,
+            });
+        }
+        self.env.globals.extend(anns);
+        self
+    }
+
+    /// Add a non-raw data declaration to the environment builder. For data
+    /// declarations not parametrized by `Ident` and `Tv`, use the method
+    /// `with_data_tys`.
+    pub fn add_data_tys(mut self, data_decls: &[DataDecl<Ident, Tv>]) -> Self {
+        for decl in data_decls {
+            let (dty, ctors) = data_constructors(decl);
+            self.env.add_scheme(Scheme::polytype(dty).normalize());
+            ctors.into_iter().for_each(
+                |DataCon {
+                     name,
+                     tipo,
+                     tag,
+                     arity,
+                 }| {
+                    let scheme = Scheme::polytype(tipo).normalize();
+                    let tyid = self.env.add_global(name, scheme);
+                    self.env.constructors.push(Datum {
+                        name,
+                        tyid,
+                        tag,
+                        arity,
+                    })
+                },
+            )
+        }
         self
     }
 
@@ -435,7 +496,47 @@ impl Builder {
         self
     }
 
-    /// TODO: how to represent type aliases? How does that affect unification?
+    /// TODO:
+    /// * how to represent type aliases? How does that affect unification?
+    /// * how can we preserve alias use superficially (i.e., reporting using the
+    ///   alias instead of the resolved type, while avoiding duplicate efforts
+    ///   when dealing with the resolved type?)
+    ///
+    /// For example, the type aliases
+    /// ```wysk
+    /// type Pair a = (a, a)
+    /// type Point = (Int, Int)
+    /// ```
+    /// have a left representation of
+    ///
+    ///     Type::Con(Con::Data(Pair), [a, a])
+    ///         := Type::Tup([Type::Var(Tv(0)), Type::Var(Tv(0))])
+    ///
+    /// and
+    ///     
+    ///     Type::Con(Con::Data(Point), [])
+    ///         := Type::Tup([
+    ///             Type::Con(Con::Data(Int), []),
+    ///             Type::Con(Con::Data(Int), [])
+    ///         ])
+    ///
+    /// but have a right representation of (and hence resolve to)
+    ///
+    ///
+    ///
+    /// thus a function like
+    ///
+    /// ```wysk
+    /// fn pair_fst :: Pair a -> a
+    ///     | ...
+    /// ```
+    ///     
+    /// will resolve to
+    /// ```wysk
+    /// fn pair_fst :: (a, a) -> a
+    ///     | ...
+    /// ```
+    ///
     /// MOVE OUT INTO SEPARATE PRE-PROCESS ON THE AST
     pub fn with_aliases(mut self, aliases: &[AliasDecl]) -> Self {
         aliases.into_iter().for_each(|alias| {
@@ -447,6 +548,50 @@ impl Builder {
             };
             self.env.schemes.push(scheme);
         });
+        self
+    }
+
+    pub fn add_classes(mut self, classes: &[ClassDecl<Ident, Tv>]) -> Self {
+        // will need to traverse the list of classes twice
+        let mut contexts = Map::new();
+        for decl in classes {
+            let id = ClassId(self.env.classes.len());
+            let class = Class {
+                name: decl.name,
+                vars: decl.poly.clone(),
+                methods: decl
+                    .methods_iter()
+                    .map(|MethodDef { name, sign, .. }| {
+                        let tipo = sign.tipo.clone();
+                        let ctxt = decl.poly_iter().map(|tv| (decl.name, *tv)).collect();
+                        let scheme = Scheme::instance(tipo, ctxt).normalize();
+                        let tyid = self.env.add_global(*name, scheme);
+                        (*name, tyid)
+                    })
+                    .collect(),
+                // empty for now, will update when all `ClassId`s are generated for
+                // each class
+                ctxt: vec![],
+            };
+            self.env.classes.push(class);
+            contexts.insert(decl.name, (id, decl.ctxt.clone()));
+        }
+
+        // now that we've "indexed" all classes, we can now get their respective
+        // `ClassId`s and update existing class records to contain information
+        // regarding their own constraints (= contexts for the class, NOT the
+        // contexts found in the implementation of a class's instance(s)).
+        for class in &mut self.env.classes {
+            if let Some((cid, cxs)) = contexts.get(&class.name) {
+                for c in cxs {
+                    class.ctxt.push(Context {
+                        class: *cid,
+                        head: c.head,
+                    });
+                }
+            }
+        }
+        self.env.class_env = ClassEnv::with_core_classes();
         self
     }
 
@@ -487,9 +632,9 @@ impl Builder {
                     id,
                     class
                         .context_iter()
-                        .map(|Context { class, tyvar }| Context {
+                        .map(|Context { class, head: tyvar }| Context {
                             class: *class,
-                            tyvar: Tv::from_ident(*tyvar),
+                            head: Tv::from_ident(*tyvar),
                         })
                         .collect::<Vec<_>>(),
                 ),
@@ -505,11 +650,12 @@ impl Builder {
                 for c in cxs {
                     class.ctxt.push(Context {
                         class: *cid,
-                        tyvar: c.tyvar,
+                        head: c.head,
                     });
                 }
             }
         }
+        self.env.class_env = ClassEnv::with_core_classes();
         self
     }
 
@@ -524,12 +670,12 @@ impl Builder {
             let sch = Scheme::instance(
                 tipo.map_t_ref(&mut |t| Tv::from(t)),
                 ctxt.iter()
-                    .map(|ctx| (ctx.class, Tv::from_ident(ctx.tyvar)))
+                    .map(|ctx| (ctx.class, Tv::from_ident(ctx.head)))
                     .collect(),
             )
             .normalize();
             if let Some(scid) = self.env.schemes.iter().position(|s| s == &sch) {
-                if let Some(idx) = self.env.classes.iter().position(|cl| cl.name == *name) {
+                if let Some(idx) = self.env.classes_iter().position(|cl| cl.name == *name) {
                     self.env.instances.push(Instance {
                         class: ClassId(idx),
                         tyid: TyId(scid),
@@ -538,6 +684,86 @@ impl Builder {
             }
         }
 
+        self
+    }
+
+    pub fn add_instances(mut self, instances: &[InstDecl<Ident, Tv>]) -> Self {
+        for decl in instances {
+            let scheme =
+                Scheme::instance(decl.tipo.clone(), Context::unzip(&decl.ctxt[..])).normalize();
+            if let Some(scid) = self.env.schemes.iter().position(|s| s == &scheme) {
+                if let Some(idx) = self.env.classes_iter().position(|cl| cl.name == decl.name) {
+                    self.env.instances.push(Instance {
+                        class: ClassId(idx),
+                        tyid: TyId(scid),
+                    })
+                }
+            }
+        }
+        self
+    }
+
+    pub fn add_newtypes(mut self, newtyps: &[NewtypeDecl<Ident, Tv>]) -> Self {
+        for newtype in newtyps {
+            match &newtype.narg {
+                NewtypeArg::Stacked(tys) => {
+                    let arity = Arity(tys.len());
+                    let tag = Tag(0);
+                    let tyid = if tys.is_empty() {
+                        self.env.add_global(
+                            newtype.ctor,
+                            Scheme::polytype(Type::Con(
+                                Con::Data(newtype.name),
+                                newtype.poly_iter().map(|tv| tv.as_type()).collect(),
+                            ))
+                            .normalize(),
+                        )
+                    } else {
+                        let poly = newtype
+                            .poly_iter()
+                            .map(|tv| tv.as_type())
+                            .collect::<Vec<_>>();
+                        let scheme = Scheme::polytype(
+                            tys.into_iter()
+                                .cloned()
+                                .chain([Type::Con(Con::Data(newtype.name), poly)])
+                                .rev()
+                                .reduce(|a, c| Type::mk_fun(c, a))
+                                .unwrap(),
+                        )
+                        .normalize();
+                        self.env.add_global(newtype.ctor, scheme)
+                    };
+                    self.env.constructors.push(Datum {
+                        name: newtype.name,
+                        tyid,
+                        tag,
+                        arity,
+                    });
+                }
+                NewtypeArg::Record(sel, sel_sig) => {
+                    let ctor = newtype.ctor;
+                    let name = newtype.name;
+                    let sel_ty = sel_sig.tipo.clone();
+                    let the_ty = Type::Con(Con::Data(name), poly_vars(newtype.poly_iter()));
+                    let _ty_sch = Scheme::polytype(the_ty.clone());
+
+                    let the_sel = Type::mk_fun(the_ty.clone(), sel_ty.clone());
+                    let con_ty = Type::mk_fun(sel_ty.clone(), the_ty);
+                    let con_sch = Scheme::polytype(con_ty).normalize();
+                    let _sel_sch = Scheme::polytype(the_sel).normalize();
+                    let _sel_tyid = self.env.add_global(*sel, _sel_sch);
+                    let con_tyid = self.env.add_global(ctor, con_sch);
+
+                    self.env.constructors.push(Datum {
+                        name: ctor,
+                        tyid: con_tyid,
+                        tag: Tag(0),
+                        arity: Arity(1),
+                    })
+                }
+            }
+        }
         self
     }
 
@@ -606,7 +832,7 @@ impl Builder {
         self.env
     }
 
-    pub fn from_program(program: &Program) -> Environment {
+    pub fn from_raw_program(program: &Program) -> Environment {
         Self::new()
             .with_data_tys(program.get_datatys())
             .with_aliases(program.get_aliases())
@@ -620,7 +846,7 @@ impl Builder {
 #[cfg(test)]
 mod tests {
     #![allow(unused)]
-    use wy_parser::error::Parsed;
+    use wy_parser::error::{wy_failure::Outcome, ParseError, Parsed};
     use wy_syntax::tipo::Con;
 
     use crate::typed::constraint::Constraint;
@@ -638,29 +864,27 @@ mod tests {
         (variable, concrete)
     }
 
-    fn with_program() -> Parsed<Environment> {
-        match wy_parser::parse_prelude() {
-            Ok(program) => {
-                let _ = program
-                    .module
-                    .fundefs_iter()
-                    .map(|f| f.map_t_ref(&mut |f| Tv::from(f)))
-                    .collect::<Vec<_>>();
-                let mut names = Map::new();
-                let _ = program.map_id_ref(&mut |n| {
-                    *names.entry(*n).or_insert(0) += 1;
-                });
-                println!("{:#?}", names);
-                // println!("Ast: {:#?}", &program);
-                let env = Builder::new()
-                    .with_data_tys(program.get_datatys())
-                    .with_aliases(program.get_aliases())
-                    .with_classes(program.get_classes())
-                    .with_instances(program.get_implems())
-                    .build();
-                Ok(env)
+    fn prelude_env() -> Outcome<Environment, ParseError> {
+        wy_session::sources::parse_prelude().map(|tree| {
+            tree.programs_iter()
+                .fold(Builder::new(), |mut a, program| {
+                    a.add_data_tys(program.get_datatys())
+                        .add_newtypes(program.get_newtyps())
+                        .add_classes(program.get_classes())
+                        .add_instances(program.get_implems())
+                        .add_fundefs(program.get_fundefs())
+                })
+                .build()
+        })
+    }
+
+    #[test]
+    fn try_prelude_env() {
+        match prelude_env() {
+            Err(e) => eprintln!("{}", e),
+            Ok(env) => {
+                println!("{:#?}", &env)
             }
-            Err(err) => Err(err),
         }
     }
 }
