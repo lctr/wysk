@@ -3,7 +3,7 @@ use std::collections::hash_map;
 use wy_common::{iter::Envr, push_if_absent, Deque, Set};
 use wy_syntax::{
     ident::Ident,
-    tipo::{Con, Context, Signature, Tv, Ty, Type},
+    tipo::{Con, Signature, Tv, Ty, Type},
 };
 
 pub trait Substitutable {
@@ -245,18 +245,6 @@ impl Subst {
             )
         } else {
             None
-        }
-    }
-
-    pub fn r#match(left: &Type<Ident, Tv>, right: &Type<Ident, Tv>) -> Option<Self> {
-        match (left, right) {
-            (Type::Fun(a, b), Type::Fun(c, d)) => {
-                let u = Self::r#match(a.as_ref(), c.as_ref());
-                let v = Self::r#match(b.as_ref(), d.as_ref());
-                u.zip(v).and_then(|(ref sl, ref sr)| sl.merge(sr))
-            }
-            (Type::Var(u), t) => todo!(),
-            _ => todo!(),
         }
     }
 
