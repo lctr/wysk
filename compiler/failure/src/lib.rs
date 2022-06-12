@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use wy_span::{Coord, Location, Row};
 
 pub type Outcome<X, E> = Result<X, Failure<E>>;
@@ -160,14 +162,17 @@ impl std::fmt::Display for RowGutter {
     }
 }
 
-pub enum SrcPath<P = String> {
+pub enum SrcPath<P: AsRef<Path> = String> {
     Direct,
     File(P),
 }
 
-impl std::fmt::Display for SrcPath {
+impl<P: AsRef<Path>> std::fmt::Display for SrcPath<P> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        todo!()
+        match self {
+            SrcPath::Direct => write!(f, "<INTERACTIVE>"),
+            SrcPath::File(p) => write!(f, "{}", p.as_ref().display()),
+        }
     }
 }
 
@@ -181,7 +186,7 @@ pub struct Dialogue {
 }
 
 impl Dialogue {
-    fn new(srcloc: SrcLoc, top_msg: String, source: String, underlined: Location) -> Self {
+    pub fn new(srcloc: SrcLoc, top_msg: String, source: String, underlined: Location) -> Self {
         Self {
             gutter: srcloc.gutter(),
             path: if let Some(p) = srcloc.pathstr {
