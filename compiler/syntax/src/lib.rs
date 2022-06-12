@@ -26,19 +26,59 @@ use pattern::*;
 use stmt::*;
 use tipo::*;
 
-// TODO: documentation; potential split-up of definitions into separate files?
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ModuleId(u32);
 
-wy_common::newtype!({ u64 in Uid | Show (+= usize |rhs| rhs as u64) });
+impl ModuleId {
+    pub fn new(n: u32) -> Self {
+        Self(n)
+    }
+
+    pub fn as_usize(self) -> usize {
+        self.0 as usize
+    }
+
+    pub fn enumerate(
+        modules: impl IntoIterator<Item = Module>,
+    ) -> impl Iterator<Item = (ModuleId, Module)> {
+        modules
+            .into_iter()
+            .enumerate()
+            .map(|(id, mdl)| (ModuleId(id as u32), mdl))
+    }
+}
+
+impl std::ops::Add<u32> for ModuleId {
+    type Output = Self;
+
+    fn add(self, rhs: u32) -> Self::Output {
+        Self(self.0 + rhs)
+    }
+}
+
+impl std::ops::AddAssign<u32> for ModuleId {
+    fn add_assign(&mut self, rhs: u32) {
+        self.0 += rhs
+    }
+}
+
+impl std::fmt::Display for ModuleId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ModuleId({})", &self.0)
+    }
+}
+
+// wy_common::newtype!({ u64 in Uid | Show (+= usize |rhs| rhs as u64) });
 
 #[derive(Clone, Debug)]
 pub struct Ast<I = Ident> {
-    programs: Vec<Program<I, Uid, Tv>>,
-    packages: Map<Uid, Chain<I>>,
+    programs: Vec<Program<I, ModuleId, Tv>>,
+    packages: Map<ModuleId, Chain<I>>,
 }
 
 wy_common::struct_field_iters!(
     |I| Ast<I>
-    | programs => programs_iter :: Program<I, Uid, Tv>
+    | programs => programs_iter :: Program<I, ModuleId, Tv>
 );
 
 impl<I> Ast<I> {
@@ -52,30 +92,30 @@ impl<I> Ast<I> {
         self.programs.len()
     }
 
-    pub fn get_uid_chain(&self, uid: &Uid) -> Option<&Chain<I>> {
+    pub fn get_uid_chain(&self, uid: &ModuleId) -> Option<&Chain<I>> {
         self.packages.get(uid)
     }
 
-    pub fn with_program<U, T>(program: Program<I, U, T>) -> Self
+    pub fn with_program<M, T>(program: Program<I, M, T>) -> Self
     where
         I: Copy,
-        U: Copy,
+        M: Copy,
         Tv: From<T>,
     {
-        let program = program.map_t(|t| Tv::from(t)).map_u(|_| Uid(0));
-        let packages = Map::from([(Uid(0), program.module.modname.clone())]);
+        let program = program.map_t(|t| Tv::from(t)).map_u(|_| ModuleId(0));
+        let packages = Map::from([(ModuleId(0), program.module.modname.clone())]);
         Self {
             programs: vec![program],
             packages,
         }
     }
-    pub fn add_program<U, T>(&mut self, program: Program<I, U, T>) -> Uid
+    pub fn add_program<M, T>(&mut self, program: Program<I, M, T>) -> ModuleId
     where
         I: Copy,
-        U: Copy,
+        M: Copy,
         Tv: From<T>,
     {
-        let uid = Uid(self.programs.len() as u64);
+        let uid = ModuleId(self.programs.len() as u32);
         let chain = program.module.modname.clone();
         let program = program.map_t(|t| Tv::from(t)).map_u(|_| uid);
         self.programs.push(program);
@@ -83,13 +123,13 @@ impl<I> Ast<I> {
         uid
     }
 
-    pub fn add_programs<U, T>(
+    pub fn add_programs<M, T>(
         &mut self,
-        programs: impl IntoIterator<Item = Program<I, U, T>>,
-    ) -> Vec<Uid>
+        programs: impl IntoIterator<Item = Program<I, M, T>>,
+    ) -> Vec<ModuleId>
     where
         I: Copy,
-        U: Copy,
+        M: Copy,
         Tv: From<T>,
     {
         programs
@@ -98,7 +138,7 @@ impl<I> Ast<I> {
             .collect()
     }
 
-    pub fn imported_modules(&self) -> Vec<(Uid, Chain<I>)>
+    pub fn imported_modules(&self) -> Vec<(ModuleId, Chain<I>)>
     where
         I: Copy,
     {
@@ -106,7 +146,7 @@ impl<I> Ast<I> {
             .enumerate()
             .flat_map(|(u, prog)| {
                 prog.get_imports_iter()
-                    .map(move |imp| (Uid(u as u64), imp.name.clone()))
+                    .map(move |import| (ModuleId(u as u32), import.name.clone()))
             })
             .collect()
     }
