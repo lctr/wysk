@@ -538,7 +538,7 @@ fn test_data_record() {
     newtype Column = Col Int with (Eq, Ord, Show)
     newtype Symbol = Sym Int with (Eq, Ord, Show)
     newtype Pos = Pos Byte with (Eq, Ord, Show)
-    newtype Span = (Pos, Pos) with (Eq, Ord, Show)
+    newtype Span = Span Pos Pos with (Eq, Ord, Show)
     newtype Position = Pos (Line, Column) with (Eq, Ord, Show)
     
     data Location = Loc { line :: Row, column :: Column, pos :: Pos } 
