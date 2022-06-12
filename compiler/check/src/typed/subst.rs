@@ -422,14 +422,14 @@ where
 impl Substitutable for Signature<Ident, Tv> {
     fn ftv(&self) -> Set<Tv> {
         self.ctxt_iter()
-            .map(|ctx| ctx.tyvar)
+            .map(|ctx| ctx.head)
             .chain(self.tipo.ftv())
             .chain(self.each_iter().copied())
             .collect()
     }
 
     fn tv(&self) -> Vec<Tv> {
-        let vs = self.ctxt_iter().map(|ctx| ctx.tyvar).collect();
+        let vs = self.ctxt_iter().map(|ctx| ctx.head).collect();
         self.tipo.tv().into_iter().fold(vs, push_if_absent)
     }
 
