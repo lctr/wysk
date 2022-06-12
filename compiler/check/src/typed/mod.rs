@@ -1,3 +1,4 @@
+pub mod class;
 pub mod constraint;
 pub mod data;
 pub mod engine;
