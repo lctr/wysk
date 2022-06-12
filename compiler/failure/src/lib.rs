@@ -1,5 +1,7 @@
 use wy_span::{Coord, Location, Row};
 
+pub type Outcome<X, E> = Result<X, Failure<E>>;
+
 #[derive(Debug)]
 pub enum Failure<E> {
     Io(std::io::Error),
