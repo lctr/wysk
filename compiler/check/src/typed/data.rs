@@ -62,10 +62,38 @@ impl Substitutable for DataCon {
     }
 }
 
+/// Generates function types corresponding to the constructors in a data
+/// declaration. Note: this function assumes that data declarations have been
+/// normalized to depend on `Tv` for type variables (i.e., `Type::Var`
+/// instances).
+pub fn data_constructors(data_decl: &DataDecl<Ident, Tv>) -> (Type<Ident, Tv>, Vec<DataCon>) {
+    let data_ty = Type::Con(
+        Con::Data(data_decl.name),
+        data_decl.poly_iter().map(|tv| tv.as_type()).collect(),
+    );
+    let ctors = data_decl
+        .variants_iter()
+        .map(
+            |variant @ Variant {
+                 name, tag, arity, ..
+             }| DataCon {
+                name: *name,
+                tag: *tag,
+                arity: *arity,
+                tipo: variant.fun_ty(data_ty.clone()),
+            },
+        )
+        .collect::<Vec<_>>();
+    (data_ty, ctors)
+}
+
 /// Rounds up all of a data type's constructors into a vector of structures
 /// holding their types as functions. Note that this returns types with type
 /// variables parametrized over the type `Tv`, unlike the (more general)
 /// `Variant` method.
+///
+/// For the same functionality on `DataDecl<Ident, Tv>`, use the
+/// `data_constructor` function.
 pub fn dataty_ctors(data_decl: &DataDecl) -> (Type<Ident, Tv>, Vec<DataCon>) {
     let data_ty = Type::Con(
         Con::Data(data_decl.name),
