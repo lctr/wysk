@@ -1,9 +1,6 @@
 use attr::Attribute;
 use wy_common::{deque, struct_field_iters, Map, Mappable};
-use wy_intern::{
-    symbol::{self, Symbol},
-    Symbolic,
-};
+use wy_intern::symbol::{self, Symbol};
 
 pub use wy_lexer::{
     comment::{self, Comment},

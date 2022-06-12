@@ -7,7 +7,7 @@ use crate::{
     ident::{Chain, Ident},
     pattern::Pattern,
     stmt::{Alternative, Binding, Match, Statement},
-    tipo::{Signature, Tv, Type},
+    tipo::{Signature, Type},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -122,9 +122,7 @@ enum Delims {
     Pair,
     List,
     Dict,
-    Pipe,
     Space,
-    Line,
 }
 
 impl std::ops::Index<usize> for Delims {
@@ -138,9 +136,7 @@ impl std::ops::Index<usize> for Delims {
             Delims::Pair => f("(", ")"),
             Delims::List => f("[", "]"),
             Delims::Dict => f("{", "}"),
-            Delims::Pipe => "|",
             Delims::Space => " ",
-            Delims::Line => "\n",
         }
     }
 }
@@ -155,9 +151,7 @@ impl<'t> std::ops::Index<(&[Text<'t>], &mut String)> for Delims {
             Delims::List => ["[", "]"],
             Delims::Dict if !texts.into_iter().next().is_some() => ["{ ", " }"],
             Delims::Dict => ["{", "}"],
-            Delims::Pipe => ["|", "|"],
             Delims::Space => [" ", " "],
-            Delims::Line => ["\n", "\n"],
         };
         buf.push_str(a);
         match texts {
@@ -543,20 +537,18 @@ mod test {
     #[test]
     fn test_text() {
         let [a, b, c] = wy_intern::intern_many(["a", "b", "c"]);
-        let x = Text::List(vec![
-            Text::Indent {
-                offset: Offset(0),
-                lines: vec![
-                    Text::Lit(&Literal::Int(0)),
-                    Text::Lit(&Literal::Char('x')),
-                    Text::Raw("() -> ()"),
-                    Text::Dict(vec![
-                        Text::Sym(a),
-                        Text::Pair(vec![Text::Sym(b), Text::Sym(c)]),
-                    ]),
-                ],
-            },
-        ]);
+        let x = Text::List(vec![Text::Indent {
+            offset: Offset(0),
+            lines: vec![
+                Text::Lit(&Literal::Int(0)),
+                Text::Lit(&Literal::Char('x')),
+                Text::Raw("() -> ()"),
+                Text::Dict(vec![
+                    Text::Sym(a),
+                    Text::Pair(vec![Text::Sym(b), Text::Sym(c)]),
+                ]),
+            ],
+        }]);
         println!("{}", x);
         let [a, b, c] = wy_intern::intern_many(["A", "B", "C"]).fmap(Ident::Upper);
         println!("{}", Chain::new(a, deque![b, c]).text())

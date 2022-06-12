@@ -1,6 +1,6 @@
 use wy_common::Mappable;
 
-use crate::{fixity::Fixity, tipo::Type};
+use crate::tipo::Type;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Attribute<Id, T> {

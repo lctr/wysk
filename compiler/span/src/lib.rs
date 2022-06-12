@@ -1,4 +1,4 @@
-use wy_common::{either::Either, newtype};
+use wy_common::newtype;
 
 newtype! {
     { u32 in Row | New Show Usize Deref (+=) (-)

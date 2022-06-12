@@ -1,7 +1,7 @@
 use wy_failure::Failure;
 use wy_parser::error::ParseError;
 use wy_sources::Atlas;
-use wy_syntax::{tipo::Tv, Ast};
+use wy_syntax::Ast;
 
 pub fn parse_atlas(atlas: &Atlas) -> Result<Ast, Failure<ParseError>> {
     let mut tree = Ast::new();
