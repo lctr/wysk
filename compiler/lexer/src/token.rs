@@ -615,6 +615,23 @@ pub trait Lexlike<Tok = Token, Lex = Lexeme> {
     }
 }
 
+/// Wrapper allowing for predicates to be negated and passed around without
+/// relying on closures.
+pub struct Not<F>(pub F);
+
+impl<F> Lexlike for Not<F>
+where
+    F: Lexlike,
+{
+    fn cmp_lex(&self, lex: &Lexeme) -> bool {
+        !self.0.cmp_lex(lex)
+    }
+
+    fn cmp_tok(&self, tok: &Token) -> bool {
+        !self.0.cmp_tok(tok)
+    }
+}
+
 impl Lexlike for fn(Lexeme) -> bool {
     fn cmp_lex(&self, lex: &Lexeme) -> bool {
         self(*lex)
