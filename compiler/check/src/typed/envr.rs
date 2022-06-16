@@ -1,12 +1,12 @@
 use std::hash::Hash;
 
 use wy_common::{iter::Envr, push_if_absent, Map, Mappable, Set};
+use wy_name::ident::Ident;
 use wy_syntax::{
     decl::{
         AliasDecl, Arity, ClassDecl, DataDecl, FnDecl, InstDecl, MethodDef, NewtypeArg,
         NewtypeDecl, Tag,
     },
-    ident::Ident,
     stmt::Binding,
     tipo::{poly_vars, Con, Context, Tv},
     Program,

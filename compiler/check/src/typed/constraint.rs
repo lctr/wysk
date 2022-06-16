@@ -1,8 +1,6 @@
 use wy_common::{push_if_absent, Deque, Map, Set};
-use wy_syntax::{
-    ident::Ident,
-    tipo::{Con, Tv, Type as Type_, Var},
-};
+use wy_name::ident::Ident;
+use wy_syntax::tipo::{Con, Tv, Type as Type_, Var};
 
 use super::subst::{Subst, Substitutable};
 

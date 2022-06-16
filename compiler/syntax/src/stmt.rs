@@ -1,6 +1,7 @@
 use wy_common::{Mappable, Set};
+use wy_name::ident::Ident;
 
-use crate::{decl::Arity, expr::Expression, ident::Ident, pattern::Pattern, tipo::Signature};
+use crate::{decl::Arity, expr::Expression, pattern::Pattern, tipo::Signature};
 
 /// ```wysk
 ///     fn foo :: Int -> Int -> Bool

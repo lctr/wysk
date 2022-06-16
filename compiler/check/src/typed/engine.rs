@@ -1,6 +1,6 @@
+use wy_name::ident::Ident;
 use wy_syntax::{
     expr::Expression,
-    ident::Ident,
     stmt::Binding,
     tipo::{Con, Tv},
     Literal,

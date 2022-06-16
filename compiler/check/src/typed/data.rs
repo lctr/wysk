@@ -1,8 +1,8 @@
 use std::{collections::HashSet as Set, hash::Hash};
 
+use wy_name::ident::Ident;
 use wy_syntax::{
     decl::{Arity, DataDecl, Tag, Variant},
-    ident::Ident,
     tipo::{Con, Context, Tv, Type},
 };
 

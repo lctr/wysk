@@ -2,8 +2,9 @@ use std::{fmt::Write, hash::Hash};
 
 use wy_common::{either::Either, push_if_absent, Map, Mappable};
 use wy_intern::{Symbol, Symbolic};
+use wy_name::ident::Ident;
 
-use crate::{decl::Arity, ident::Ident};
+use crate::decl::Arity;
 
 /// Represents a type variable.
 ///
@@ -62,21 +63,6 @@ impl PartialEq<Tv> for Ident {
     }
 }
 
-impl<S> From<S> for Tv
-where
-    S: Symbolic,
-{
-    fn from(s: S) -> Self {
-        Tv(s.get_symbol().as_u32())
-    }
-}
-
-impl From<&Ident> for Tv {
-    fn from(id: &Ident) -> Self {
-        Tv(id.as_u32())
-    }
-}
-
 impl std::fmt::Debug for Tv {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Tv({})", self.0)
@@ -86,6 +72,18 @@ impl std::fmt::Debug for Tv {
 impl std::fmt::Display for Tv {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.display())
+    }
+}
+
+impl From<&Ident> for Tv {
+    fn from(id: &Ident) -> Self {
+        Tv(id.get_symbol().as_u32())
+    }
+}
+
+impl From<Ident> for Tv {
+    fn from(id: Ident) -> Self {
+        Tv(id.get_symbol().as_u32())
     }
 }
 
@@ -1863,7 +1861,7 @@ macro_rules! Ty {
         $crate::tipo::Type::mk_fun(
             $crate::tipo::Type::mk_app(
                 $crate::tipo::Con::Data(
-                    $crate::ident::Ident::Upper(wy_intern::intern_once(stringify!($t0)))
+                    wy_name::ident::Ident::Upper(wy_intern::intern_once(stringify!($t0)))
                 ),
                 [$($($crate::Ty! { $ts },)+)?]
             ),

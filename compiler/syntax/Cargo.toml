@@ -9,6 +9,7 @@ edition = "2021"
 serde = { version = "1", features = ["derive"] }
 wy_common = { path = "../common" }
 wy_intern = { path = "../intern" }
+wy_name = { path = "../name" }
 wy_failure = { path = "../failure" }
 wy_span = { path = "../span" }
 wy_lexer = { path = "../lexer" }

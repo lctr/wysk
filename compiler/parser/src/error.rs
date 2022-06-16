@@ -4,8 +4,8 @@ use wy_lexer::{
     stream::Source,
     token::{LexKind, Lexeme, Token},
 };
+use wy_name::ident::Ident;
 use wy_span::Span;
-use wy_syntax::ident::Ident;
 
 pub trait Report {
     fn get_srcloc(&mut self) -> SrcLoc;

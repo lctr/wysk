@@ -1,11 +1,12 @@
 use wy_common::{Map, Mappable};
+use wy_name::ident::{Ident, Identifier};
 
 pub use wy_lexer::{
     comment::{self, Comment},
     Literal,
 };
 
-use crate::{attr::*, fixity::*, ident::*, stmt::*, tipo::*};
+use crate::{attr::*, fixity::*, stmt::*, tipo::*};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FixityDecl<Id = Ident> {

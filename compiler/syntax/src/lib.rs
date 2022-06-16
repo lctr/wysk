@@ -1,6 +1,7 @@
 use attr::Attribute;
 use wy_common::{deque, struct_field_iters, Map, Mappable};
 use wy_intern::symbol::{self, Symbol};
+use wy_name::ident::*;
 
 pub use wy_lexer::{
     comment::{self, Comment},
@@ -11,7 +12,6 @@ pub mod attr;
 pub mod decl;
 pub mod expr;
 pub mod fixity;
-pub mod ident;
 pub mod pattern;
 pub mod pretty;
 pub mod stmt;
@@ -21,7 +21,6 @@ pub mod visit;
 use decl::*;
 use expr::*;
 use fixity::*;
-use ident::*;
 use pattern::*;
 use stmt::*;
 use tipo::*;

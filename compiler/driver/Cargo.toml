@@ -11,6 +11,7 @@ wy_pretty = { path = "../pretty" }
 wy_failure = { path = "../failure" }
 wy_intern = { path = "../intern" }
 wy_span = { path = "../span" }
+wy_name = { path = "../name" }
 wy_sources = { path = "../sources" }
 wy_lexer = { path = "../lexer" }
 wy_syntax = { path = "../syntax" }

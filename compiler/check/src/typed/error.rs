@@ -1,4 +1,4 @@
-use wy_syntax::ident::Ident;
+use wy_name::ident::Ident;
 
 use super::constraint::{Constraint, TyCon, Type};
 

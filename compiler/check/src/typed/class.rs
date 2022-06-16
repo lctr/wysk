@@ -1,5 +1,5 @@
 use wy_common::iter::Envr;
-use wy_syntax::ident::Ident;
+use wy_name::ident::Ident;
 
 use super::constraint::Type;
 

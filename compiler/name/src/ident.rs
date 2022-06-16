@@ -400,6 +400,22 @@ impl<Id> Chain<Id> {
     {
         self.pure()(self.canonicalize())
     }
+
+    pub fn from_strings<S: AsRef<str>, const N: usize>(head: S, strings: [S; N]) -> Chain<Symbol> {
+        let root = wy_intern::intern_once(head.as_ref());
+        let tail = wy_intern::intern_many(strings);
+        Chain::from((root, tail))
+    }
+
+    pub fn from_strings_with<S: AsRef<str>, const N: usize>(
+        head: S,
+        strings: [S; N],
+        mut f: impl FnMut(Symbol) -> Id,
+    ) -> Self {
+        let root = f(wy_intern::intern_once(head.as_ref()));
+        let tail = wy_intern::intern_many_with(strings, f);
+        Self::from((root, tail))
+    }
 }
 
 impl<Id, const N: usize> From<(Id, [Id; N])> for Chain<Id> {

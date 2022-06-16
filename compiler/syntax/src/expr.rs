@@ -1,9 +1,9 @@
 use wy_common::{deque, variant_preds, Deque, Mappable, Set};
 use wy_lexer::Literal;
+use wy_name::ident::{Ident, Identifier};
 
 use crate::{
     decl::Arity,
-    ident::{Ident, Identifier},
     stmt::Alternative,
     tipo::{Record, Type},
     Binding,

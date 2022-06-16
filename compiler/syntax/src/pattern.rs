@@ -1,10 +1,7 @@
+use crate::tipo::{Con, Field, Record, Type};
 use wy_common::{variant_preds, Mappable, Set};
 use wy_lexer::literal::Literal;
-
-use crate::{
-    ident::Ident,
-    tipo::{Con, Field, Record, Type},
-};
+use wy_name::ident::Ident;
 
 variant_preds! { Pattern
     | is_wild => Wild

@@ -1,10 +1,7 @@
 use std::collections::hash_map;
-
 use wy_common::{iter::Envr, push_if_absent, Deque, Set};
-use wy_syntax::{
-    ident::Ident,
-    tipo::{Con, Signature, Tv, Ty, Type},
-};
+use wy_name::ident::Ident;
+use wy_syntax::tipo::{Con, Signature, Tv, Ty, Type};
 
 pub trait Substitutable {
     fn ftv(&self) -> Set<Tv>;
@@ -464,7 +461,8 @@ impl Substitutable for Signature<Ident, Tv> {
 #[cfg(test)]
 mod tests {
     use wy_intern::symbol;
-    use wy_syntax::{ident::Ident, tipo::Con};
+    use wy_name::ident::Ident;
+    use wy_syntax::tipo::Con;
 
     use super::*;
 

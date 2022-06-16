@@ -5,6 +5,7 @@ use token::*;
 
 use wy_intern::Symbol;
 use wy_lexer::*;
+use wy_name::ident::{Chain, Ident};
 use wy_span::{Dummy, WithLoc, WithSpan};
 use wy_syntax::{
     attr::Attribute,
@@ -14,7 +15,6 @@ use wy_syntax::{
     },
     expr::{Expression, Section},
     fixity::{Assoc, Fixity, FixityTable, Prec},
-    ident::{Chain, Ident},
     pattern::Pattern,
     stmt::{Alternative, Binding, Match, Statement},
     tipo::{Con, Context, Field, Record, Signature, Tv, Type},

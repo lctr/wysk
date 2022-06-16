@@ -1,10 +1,10 @@
 use wy_common::{deque, Deque};
 use wy_intern::{Symbol, Symbolic};
 use wy_lexer::Literal;
+use wy_name::ident::{Chain, Ident};
 
 use crate::{
     expr::Expression,
-    ident::{Chain, Ident},
     pattern::Pattern,
     stmt::{Alternative, Binding, Match, Statement},
     tipo::{Signature, Type},
