@@ -126,6 +126,12 @@ impl Symbolic for Symbol {
     }
 }
 
+impl Symbolic for str {
+    fn get_symbol(&self) -> Symbol {
+        Symbol::from_str(&self)
+    }
+}
+
 impl Symbolic for &str {
     fn get_symbol(&self) -> Symbol {
         Symbol::from_str(*self)
