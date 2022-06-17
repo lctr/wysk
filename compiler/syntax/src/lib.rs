@@ -1,7 +1,7 @@
 use attr::Attribute;
 use wy_common::{deque, struct_field_iters, Map, Mappable};
 use wy_intern::symbol::{self, Symbol};
-use wy_name::ident::*;
+use wy_name::{ident::*, module::ModuleId};
 
 pub use wy_lexer::{
     comment::{self, Comment},
@@ -24,48 +24,6 @@ use fixity::*;
 use pattern::*;
 use stmt::*;
 use tipo::*;
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ModuleId(u32);
-
-impl ModuleId {
-    pub fn new(n: u32) -> Self {
-        Self(n)
-    }
-
-    pub fn as_usize(self) -> usize {
-        self.0 as usize
-    }
-
-    pub fn enumerate(
-        modules: impl IntoIterator<Item = Module>,
-    ) -> impl Iterator<Item = (ModuleId, Module)> {
-        modules
-            .into_iter()
-            .enumerate()
-            .map(|(id, mdl)| (ModuleId(id as u32), mdl))
-    }
-}
-
-impl std::ops::Add<u32> for ModuleId {
-    type Output = Self;
-
-    fn add(self, rhs: u32) -> Self::Output {
-        Self(self.0 + rhs)
-    }
-}
-
-impl std::ops::AddAssign<u32> for ModuleId {
-    fn add_assign(&mut self, rhs: u32) {
-        self.0 += rhs
-    }
-}
-
-impl std::fmt::Display for ModuleId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ModuleId({})", &self.0)
-    }
-}
 
 // wy_common::newtype!({ u64 in Uid | Show (+= usize |rhs| rhs as u64) });
 
@@ -101,8 +59,8 @@ impl<I> Ast<I> {
         M: Copy,
         Tv: From<T>,
     {
-        let program = program.map_t(|t| Tv::from(t)).map_u(|_| ModuleId(0));
-        let packages = Map::from([(ModuleId(0), program.module.modname.clone())]);
+        let program = program.map_t(|t| Tv::from(t)).map_u(|_| ModuleId::new(0));
+        let packages = Map::from([(ModuleId::new(0), program.module.modname.clone())]);
         Self {
             programs: vec![program],
             packages,
@@ -114,7 +72,7 @@ impl<I> Ast<I> {
         M: Copy,
         Tv: From<T>,
     {
-        let uid = ModuleId(self.programs.len() as u32);
+        let uid = ModuleId::new(self.programs.len() as u32);
         let chain = program.module.modname.clone();
         let program = program.map_t(|t| Tv::from(t)).map_u(|_| uid);
         self.programs.push(program);
@@ -145,10 +103,28 @@ impl<I> Ast<I> {
             .enumerate()
             .flat_map(|(u, prog)| {
                 prog.get_imports_iter()
-                    .map(move |import| (ModuleId(u as u32), import.name.clone()))
+                    .map(move |import| (ModuleId::new(u as u32), import.name.clone()))
             })
             .collect()
     }
+}
+
+pub fn enumerate_programs<Id, U: Copy, T, I: IntoIterator<Item = Program<Id, U, T>>>(
+    progs: I,
+) -> impl Iterator<Item = Program<Id, ModuleId, T>> {
+    progs
+        .into_iter()
+        .enumerate()
+        .map(|(n, prog)| prog.map_u(|_| ModuleId::new(n as u32)))
+}
+
+pub fn enumerate_modules(
+    modules: impl IntoIterator<Item = Module>,
+) -> impl Iterator<Item = (ModuleId, Module)> {
+    modules
+        .into_iter()
+        .enumerate()
+        .map(|(id, mdl)| (ModuleId::new(id as u32), mdl))
 }
 
 #[derive(Clone, Debug)]
