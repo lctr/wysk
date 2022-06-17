@@ -31,6 +31,15 @@ impl std::fmt::Display for Unique {
     }
 }
 
+/// Interned identifier chains. Instead of collapsing a `Chain<Ident>` into a
+/// single `Symbol` by concatenating idents, we store the chains in a separate
+/// global static structure. This way, we can use simple pointer equality for
+/// identifier chains composed of identifiers, as well as preserve the
+/// identifiers comprising the chain. If we were to "collapse" multiple
+/// identifiers into a single one -- i.e., join identifiers `A`, `B`, `c` into
+/// the string `A.B.c` and interning it -- we would have to separate joined the
+/// string into its components and look each up to get the corresponding
+/// symbols.  
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Cache<T>(Vec<Chain<T>>);
 
