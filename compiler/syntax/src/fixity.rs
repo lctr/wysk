@@ -353,7 +353,7 @@ where
         }
     }
 
-    fn visit_expression(&mut self, expr: &mut Expression<Id>) -> Result<(), FixityFail<Id>>
+    fn visit_expression<T>(&mut self, expr: &mut Expression<Id, T>) -> Result<(), FixityFail<Id>>
     where
         Id: Clone,
     {
@@ -396,7 +396,7 @@ impl std::ops::DerefMut for FixityTable {
     }
 }
 
-impl From<Ident> for Expression {
+impl<T> From<Ident> for Expression<Ident, T> {
     fn from(name: Ident) -> Self {
         Expression::Ident(name)
     }
@@ -431,7 +431,7 @@ mod tests {
         let [a, b, c, d] = { map_array(symbol::intern_many(["a", "b", "c", "d"]), Ident::Lower) };
         let [plus, minus, times, div] =
             { map_array(symbol::intern_many(["+", "-", "*", "/"]), Ident::Infix) };
-        let var = Expression::<Ident>::Ident;
+        let var = Expression::<Ident, _>::Ident;
         // a + b * c - d
         // (a + (b * (c - d)))
         let og_expr = ifx(var(a), plus, ifx(var(b), times, ifx(var(c), minus, var(d))));
@@ -467,7 +467,7 @@ mod tests {
         assert_eq!(fixities.apply(Box::new(og_expr)), Ok(want_expr));
     }
 
-    fn ifx(left: Expression, infix: Ident, right: Expression) -> Expression {
+    fn ifx(left: RawExpression, infix: Ident, right: RawExpression) -> RawExpression {
         Expression::Infix {
             infix,
             left: Box::new(left),

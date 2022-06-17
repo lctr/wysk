@@ -3,7 +3,7 @@ use wy_common::{variant_preds, Mappable, Set};
 use wy_lexer::literal::Literal;
 use wy_name::ident::Ident;
 
-variant_preds! { Pattern
+variant_preds! { |Id, T| Pattern[Id, T]
     | is_wild => Wild
     | is_var => Var (_)
     | is_unit => Tup (vs) [if vs.is_empty()]
@@ -13,8 +13,10 @@ variant_preds! { Pattern
 
 }
 
+pub type RawPattern = Pattern<Ident, Ident>;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Pattern<Id = Ident, T = Ident> {
+pub enum Pattern<Id, T> {
     /// Describes the wildcard pattern and is written `_`. Since it is a
     /// wildcard pattern, it matches against *any* pattern.
     Wild,

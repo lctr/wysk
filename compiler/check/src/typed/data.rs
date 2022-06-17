@@ -166,7 +166,6 @@ mod tests {
         visit::Visit,
     };
 
-    use super::*;
     use std::collections::HashMap;
 
     #[test]
@@ -176,7 +175,7 @@ mod tests {
             Ok(program) => {
                 program
                     .module
-                    .map_t_ref(&mut |id| Tv::from(id))
+                    // .map_t_ref(&mut |id| Tv::from(id))
                     .datatys_iter()
                     .for_each(|decl| {
                         let mut tyn = true;
@@ -223,16 +222,16 @@ mod tests {
         }
     }
 
-    fn visit_match(
-        graph: &mut Graph<Ident>,
-        bindings: &HashMap<Ident, NodeId>,
+    fn visit_match<Id: Eq + std::hash::Hash, T>(
+        graph: &mut Graph<T>,
+        bindings: &HashMap<Id, NodeId>,
         Match {
             args: _,
             pred,
             body,
             wher,
-        }: &Match,
-        decl_name: &Ident,
+        }: &Match<Id, T>,
+        decl_name: &Id,
     ) {
         if let Some(pred) = pred {
             EdgeVisitor {

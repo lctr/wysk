@@ -9,7 +9,7 @@ use wy_syntax::{
     },
     stmt::Binding,
     tipo::{poly_vars, Con, Context, Tv},
-    Program,
+    Program, RawProgram,
 };
 
 use super::{
@@ -389,7 +389,7 @@ impl Builder {
             .build()
     }
 
-    pub fn with_program(program: &Program) -> Environment {
+    pub fn with_program(program: &RawProgram) -> Environment {
         Self::new()
             .with_data_tys(program.get_datatys())
             .with_newtypes(program.get_newtyps())
@@ -832,7 +832,7 @@ impl Builder {
         self.env
     }
 
-    pub fn from_raw_program(program: &Program) -> Environment {
+    pub fn from_raw_program(program: &RawProgram) -> Environment {
         Self::new()
             .with_data_tys(program.get_datatys())
             .with_aliases(program.get_aliases())

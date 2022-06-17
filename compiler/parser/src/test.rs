@@ -1,7 +1,7 @@
 #![cfg(test)]
 use wy_intern::{symbol, Symbol, Symbolic};
 use wy_lexer::Literal;
-use wy_syntax::expr::Expression;
+use wy_syntax::{expr::Expression, pattern::Pattern, stmt::Alternative};
 
 use super::*;
 
@@ -17,7 +17,7 @@ macro_rules! with_vars {
     }};
 }
 
-fn infixed(left: Expression, infix: wy_intern::Symbol, right: Expression) -> Expression {
+fn infixed(left: RawExpression, infix: wy_intern::Symbol, right: RawExpression) -> RawExpression {
     Expression::Infix {
         infix: Ident::Infix(infix),
         left: Box::new(left),
@@ -25,7 +25,7 @@ fn infixed(left: Expression, infix: wy_intern::Symbol, right: Expression) -> Exp
     }
 }
 
-fn tuplex<const N: usize>(subexps: [Expression; N]) -> Expression {
+fn tuplex<const N: usize>(subexps: [RawExpression; N]) -> RawExpression {
     Expression::Tuple(subexps.to_vec())
 }
 
@@ -143,7 +143,7 @@ y -> y;
     assert_eq!(expr, Ok(expected))
 }
 
-const fn var(s: Symbol) -> Pattern<Ident> {
+const fn var<T>(s: Symbol) -> Pattern<Ident, T> {
     Pattern::Var(Ident::Lower(s))
 }
 
@@ -432,7 +432,7 @@ fn test_section_expr() {
     let [map, plus] = symbol::intern_many(["map", "+"]);
     let map = Ident::Lower(map);
     let plus = Ident::Infix(plus);
-    let expected: Expression = E::App(
+    let expected: RawExpression = E::App(
         Box::new(E::App(
             Box::new(E::Ident(map)),
             Box::new(E::Section(Prefix {

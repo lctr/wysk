@@ -146,8 +146,11 @@ impl<Id, T> Section<Id, T> {
     }
 }
 
+pub type RawExpression = Expression<Ident, Ident>;
+pub type Expr<T> = Expression<Ident, T>;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Expression<Id = Ident, T = Ident> {
+pub enum Expression<Id, T> {
     /// Identifier expressions; these can contain either *lowercase*-initial
     /// identifiers (corresponding to values), *uppercase*-initial identifiers
     /// (correstpondingo constructors), OR infix identifiers (corresponding to
@@ -259,7 +262,7 @@ variant_preds! {
     | is_simple_do => Do (stmts, _) [if stmts.is_empty()]
 }
 
-variant_preds! { Expression[Ident]
+variant_preds! { |T| Expression[Ident, T]
     | is_list_cons => Infix { infix, ..} [if infix.is_cons_sign()]
 
 }
@@ -980,9 +983,9 @@ mod tests {
 
     #[test]
     fn test_flatten_app() {
-        let [f, g, h]: [Expression; 3] =
+        let [f, g, h]: [RawExpression; 3] =
             symbol::intern_many(["f", "g", "h"]).fmap(|sym| Expression::Ident(Ident::Lower(sym)));
-        let [one, three, four]: [Expression; 3] =
+        let [one, three, four]: [RawExpression; 3] =
             [1, 3, 4].fmap(|n| Expression::Lit(Literal::Int(n)));
 
         // (((f (g 1)) h) 3) 4)

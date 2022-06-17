@@ -19,12 +19,14 @@ use crate::{decl::Arity, expr::Expression, pattern::Pattern, tipo::Signature};
 /// ~~: `args`    `body`         `wher[0]`
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Match<Id = Ident, T = Ident> {
+pub struct Match<Id, T> {
     pub args: Vec<Pattern<Id, T>>,
     pub pred: Option<Expression<Id, T>>,
     pub body: Expression<Id, T>,
     pub wher: Vec<Binding<Id, T>>,
 }
+
+pub type RawMatch = Match<Ident, Ident>;
 
 wy_common::struct_field_iters! {
     |Id, T| Match<Id, T>
@@ -223,12 +225,14 @@ impl MatchArms {
 /// ~~:           ^^^^^^^^^ `wher[1]`
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Alternative<Id = Ident, T = Ident> {
+pub struct Alternative<Id, T> {
     pub pat: Pattern<Id, T>,
     pub pred: Option<Expression<Id, T>>,
     pub body: Expression<Id, T>,
     pub wher: Vec<Binding<Id, T>>,
 }
+
+pub type RawAlternative = Alternative<Ident, Ident>;
 
 wy_common::struct_field_iters! {
     |Id, T| Alternative<Id, T>
@@ -331,11 +335,13 @@ impl<Id, T> Alternative<Id, T> {
 /// ~~: ^^^^^^^^^^^^^^ `arms[0]`
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Binding<Id = Ident, T = Ident> {
+pub struct Binding<Id, T> {
     pub name: Id,
     pub arms: Vec<Match<Id, T>>,
     pub tipo: Option<Signature<Id, T>>,
 }
+
+pub type RawBinding = Binding<Ident, Ident>;
 
 wy_common::struct_field_iters! {
     |Id, T| Binding<Id, T>
@@ -450,7 +456,7 @@ impl<Id, T> Binding<Id, T> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Statement<Id = Ident, T = Ident> {
+pub enum Statement<Id, T> {
     // <PAT> <- <EXPR>
     Generator(Pattern<Id, T>, Expression<Id, T>),
     // <EXPR>
@@ -459,6 +465,8 @@ pub enum Statement<Id = Ident, T = Ident> {
     // let (<ID> <PAT>* = <EXPR>)+
     JustLet(Vec<Binding<Id, T>>),
 }
+
+pub type RawStatement = Statement<Ident, Ident>;
 
 impl<Id, T> Statement<Id, T> {
     pub fn map_id<F, X>(self, mut f: F) -> Statement<X, T>

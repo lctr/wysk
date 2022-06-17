@@ -60,7 +60,6 @@ impl<I> SyntaxTree<I> {
     pub fn with_program<M, T>(program: Program<I, M, T>) -> Self
     where
         I: Copy,
-        M: Copy,
         Tv: From<T>,
     {
         let program = program.map_t(|t| Tv::from(t)).map_u(|_| ModuleId::new(0));
@@ -73,7 +72,6 @@ impl<I> SyntaxTree<I> {
     pub fn add_program<M, T>(&mut self, program: Program<I, M, T>) -> ModuleId
     where
         I: Copy,
-        M: Copy,
         Tv: From<T>,
     {
         let uid = ModuleId::new(self.programs.len() as u32);
@@ -90,7 +88,6 @@ impl<I> SyntaxTree<I> {
     ) -> Vec<ModuleId>
     where
         I: Copy,
-        M: Copy,
         Tv: From<T>,
     {
         programs
@@ -130,7 +127,7 @@ impl<I> SyntaxTree<I> {
     pub fn map_id_ref<X>(&self, mut f: impl FnMut(&I) -> X) -> SyntaxTree<X>
     where
         I: std::hash::Hash + Eq + Copy,
-        X: std::hash::Hash + Eq + Copy,
+        X: std::hash::Hash + Eq,
     {
         SyntaxTree {
             programs: self
@@ -164,7 +161,7 @@ pub fn enumerate_modules(
 }
 
 #[derive(Clone, Debug)]
-pub struct Program<Id = Ident, U = (), T = Ident> {
+pub struct Program<Id, U, T> {
     pub module: Module<Id, U, T>,
     pub fixities: FixityTable<Id>,
     pub comments: Vec<Comment>,
@@ -225,18 +222,40 @@ impl<Id, U, T> Program<Id, U, T> {
         &self.module.uid
     }
 
-    pub fn map_u<V>(self, mut f: impl FnMut(U) -> V) -> Program<Id, V, T>
-    where
-        U: Copy,
-    {
+    pub fn map_u<V>(self, mut f: impl FnMut(U) -> V) -> Program<Id, V, T> {
         let Program {
             module,
             fixities,
             comments,
         } = self;
-        let mid = module.uid;
+        let Module {
+            uid,
+            modname,
+            imports,
+            infixes,
+            datatys,
+            classes,
+            implems,
+            fundefs,
+            aliases,
+            newtyps,
+            pragmas,
+        } = module;
+        let module = Module {
+            uid: f(uid),
+            modname,
+            imports,
+            infixes,
+            datatys,
+            classes,
+            implems,
+            fundefs,
+            aliases,
+            newtyps,
+            pragmas,
+        };
         Program {
-            module: module.with_uid(f(mid)),
+            module,
             fixities,
             comments,
         }
@@ -305,6 +324,9 @@ pub struct Module<Id = Ident, Uid = (), T = Ident> {
     pub pragmas: Vec<Attribute<Id, T>>,
 }
 
+pub type RawModule = Module<Ident, Option<std::path::PathBuf>, Ident>;
+pub type FreshModule = Module<Ident, ModuleId, Tv>;
+
 struct_field_iters! {
     |Id, U, T| Module<Id, U, T>
     | imports => imports_iter :: ImportSpec<Id>
@@ -318,10 +340,10 @@ struct_field_iters! {
     | pragmas => pragmas_iter :: Attribute<Id, T>
 }
 
-impl Default for Module {
+impl Default for RawModule {
     fn default() -> Self {
         Self {
-            uid: (),
+            uid: None,
             modname: Chain::new(Ident::Upper(*symbol::reserved::MAIN_MOD), deque![]),
             imports: vec![],
             infixes: vec![],
