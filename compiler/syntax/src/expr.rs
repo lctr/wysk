@@ -212,7 +212,7 @@ pub enum Expression<Id = Ident, T = Ident> {
     /// in ...
     /// ```
     List(Box<Expression<Id, T>>, Vec<Statement<Id, T>>),
-    Dict(Record<Expression<Id, T>, Id>),
+    Dict(Record<Id, Expression<Id, T>>),
     Lambda(Pattern<Id, T>, Box<Expression<Id, T>>),
     Let(Vec<Binding<Id, T>>, Box<Expression<Id, T>>),
     App(Box<Expression<Id, T>>, Box<Expression<Id, T>>),

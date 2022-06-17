@@ -41,7 +41,7 @@ pub enum Pattern<Id = Ident, T = Ident> {
     Lnk(Box<Pattern<Id, T>>, Box<Pattern<Id, T>>),
     At(Id, Box<Pattern<Id, T>>),
     Or(Vec<Pattern<Id, T>>),
-    Rec(Record<Pattern<Id, T>, Id>),
+    Rec(Record<Id, Pattern<Id, T>>),
     Cast(Box<Pattern<Id, T>>, Type<Id, T>),
     Rng(Box<Pattern<Id, T>>, Option<Box<Pattern<Id, T>>>),
 }

@@ -25,20 +25,20 @@ use pattern::*;
 use stmt::*;
 use tipo::*;
 
-// wy_common::newtype!({ u64 in Uid | Show (+= usize |rhs| rhs as u64) });
-
 #[derive(Clone, Debug)]
-pub struct Ast<I = Ident> {
+pub struct SyntaxTree<I> {
     programs: Vec<Program<I, ModuleId, Tv>>,
     packages: Map<ModuleId, Chain<I>>,
 }
 
+pub type Ast = SyntaxTree<Ident>;
+
 wy_common::struct_field_iters!(
-    |I| Ast<I>
+    |I| SyntaxTree<I>
     | programs => programs_iter :: Program<I, ModuleId, Tv>
 );
 
-impl<I> Ast<I> {
+impl<I> SyntaxTree<I> {
     pub fn new() -> Self {
         Self {
             programs: Vec::new(),
@@ -47,6 +47,10 @@ impl<I> Ast<I> {
     }
     pub fn program_count(&self) -> usize {
         self.programs.len()
+    }
+
+    pub fn packages_iter(&self) -> std::collections::hash_map::Iter<'_, ModuleId, Chain<I>> {
+        self.packages.iter()
     }
 
     pub fn get_uid_chain(&self, uid: &ModuleId) -> Option<&Chain<I>> {
@@ -106,6 +110,38 @@ impl<I> Ast<I> {
                     .map(move |import| (ModuleId::new(u as u32), import.name.clone()))
             })
             .collect()
+    }
+
+    pub fn map_id<X>(self, mut f: impl FnMut(I) -> X) -> SyntaxTree<X>
+    where
+        I: std::hash::Hash + Eq,
+        X: std::hash::Hash + Eq,
+    {
+        SyntaxTree {
+            programs: self.programs.fmap(|prog| prog.map_id(|id| f(id))),
+            packages: self
+                .packages
+                .into_iter()
+                .map(|(mid, chain)| (mid, chain.map(|id| f(id))))
+                .collect(),
+        }
+    }
+
+    pub fn map_id_ref<X>(&self, mut f: impl FnMut(&I) -> X) -> SyntaxTree<X>
+    where
+        I: std::hash::Hash + Eq + Copy,
+        X: std::hash::Hash + Eq + Copy,
+    {
+        SyntaxTree {
+            programs: self
+                .programs_iter()
+                .map(|prog| prog.map_id_ref(&mut |id| f(id)))
+                .collect(),
+            packages: self
+                .packages_iter()
+                .map(|(mid, chain)| (*mid, chain.map_ref(|id| f(id))))
+                .collect(),
+        }
     }
 }
 
@@ -181,6 +217,14 @@ impl_program! {
 }
 
 impl<Id, U, T> Program<Id, U, T> {
+    pub fn modname(&self) -> &Chain<Id> {
+        &self.module.modname
+    }
+
+    pub fn module_id(&self) -> &U {
+        &self.module.uid
+    }
+
     pub fn map_u<V>(self, mut f: impl FnMut(U) -> V) -> Program<Id, V, T>
     where
         U: Copy,
@@ -199,8 +243,8 @@ impl<Id, U, T> Program<Id, U, T> {
     }
     pub fn map_id<X>(self, mut f: impl FnMut(Id) -> X) -> Program<X, U, T>
     where
-        X: Copy + Eq + std::hash::Hash,
-        Id: Copy + Eq + std::hash::Hash,
+        X: Eq + std::hash::Hash,
+        Id: Eq + std::hash::Hash,
     {
         Program {
             module: self.module.map_id(|id| f(id)),
@@ -212,7 +256,7 @@ impl<Id, U, T> Program<Id, U, T> {
     where
         U: Copy,
         T: Copy,
-        X: Copy + Eq + std::hash::Hash,
+        X: Eq + std::hash::Hash,
         Id: Copy + Eq + std::hash::Hash,
     {
         Program {

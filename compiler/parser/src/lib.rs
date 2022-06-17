@@ -18,7 +18,7 @@ use wy_syntax::{
     pattern::Pattern,
     stmt::{Alternative, Binding, Match, Statement},
     tipo::{Con, Context, Field, Record, Signature, Tv, Type},
-    Ast, Import, ImportSpec, Module, Program,
+    Ast, Import, ImportSpec, Module, Program, SyntaxTree,
 };
 
 use wy_common::Deque;
@@ -1028,7 +1028,7 @@ impl<'t> TypeParser<'t> {
         )))
     }
 
-    fn record_entry_ty<F>(&mut self, mut f: F) -> Parsed<Field<Type, Ident>>
+    fn record_entry_ty<F>(&mut self, mut f: F) -> Parsed<Field<Ident, Type>>
     where
         F: FnMut(&mut Self) -> Parsed<Type>,
     {
@@ -1281,7 +1281,7 @@ impl<'t> PatParser<'t> {
         }
     }
 
-    fn field_pattern(&mut self) -> Parsed<Field<Pattern>> {
+    fn field_pattern(&mut self) -> Parsed<Field<Ident, Pattern>> {
         let key = self.expect_lower()?;
         if self.bump_on(Lexeme::Equal) {
             Ok(Field::Entry(key, self.pattern()?))
@@ -1574,7 +1574,7 @@ impl<'t> ExprParser<'t> {
         }
     }
 
-    fn curly_expr(&mut self) -> Parsed<Vec<Field<Expression>>> {
+    fn curly_expr(&mut self) -> Parsed<Vec<Field<Ident, Expression<Ident>>>> {
         use Lexeme::{Comma, CurlyL, CurlyR, Dot2, Equal};
         self.delimited([CurlyL, Comma, CurlyR], |p| {
             if p.bump_on(Dot2) {
@@ -1957,7 +1957,7 @@ pub fn parse_prelude() -> Parsed<Program> {
     let dirp = "../../../language";
     let src = include_str!("../../../language/prim.wy");
     let prim = Parser::from_str(src).parse()?.map_t(&mut |t| Tv::from(t));
-    let ast = Ast::with_program(prim);
+    let ast = SyntaxTree::with_program(prim);
     let imported_modules =
         ast.imported_modules()
             .into_iter()
@@ -1992,7 +1992,7 @@ pub fn parse_prelude() -> Parsed<Program> {
         }
     }
     println!("newpaths: {:?}", &newpaths);
-    let ast2: Parsed<Ast<Ident>> = newpaths.into_iter().fold(Ok(ast), |a, c| {
+    let ast2: Parsed<Ast> = newpaths.into_iter().fold(Ok(ast), |a, c| {
         let mut a = a?;
         a.add_program(try_parse_file(c).map_err(|failure| match failure {
             Failure::Err(p) => p,
