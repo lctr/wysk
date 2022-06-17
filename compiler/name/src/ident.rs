@@ -207,13 +207,13 @@ pub struct Chain<Id = Ident>(Id, Deque<Id>);
 
 impl From<Chain<Ident>> for Ident {
     fn from(chain: Chain<Ident>) -> Self {
-        chain.root().pure()(chain.canonicalize())
+        chain.root().pure()(chain.flattened_symbol())
     }
 }
 
 impl From<&Chain<Ident>> for Ident {
     fn from(chain: &Chain<Ident>) -> Self {
-        chain.root().pure()(chain.canonicalize())
+        chain.root().pure()(chain.flattened_symbol())
     }
 }
 
@@ -358,6 +358,30 @@ impl<Id> Chain<Id> {
         self.1.push_back(suffix);
     }
 
+    /// Clones and returns the current `Chain` instance with the given prefix
+    /// appended
+    pub fn with_prefix(&self, prefix: Id) -> Self
+    where
+        Id: Clone,
+    {
+        let mut chain = self.clone();
+        chain.add_prefix(prefix);
+        chain
+    }
+
+    /// Clones and returns the current `Chain` instance with the given suffix
+    /// appended
+    pub fn with_suffix(&self, suffix: Id) -> Self
+    where
+        Id: Clone,
+    {
+        let mut chain = self.clone();
+        chain.add_suffix(suffix);
+        chain
+    }
+
+    /// Returns an iterator of `Symbol`s contained by each identifier in this
+    /// chain.
     pub fn symbols(&self) -> impl Iterator<Item = Symbol> + '_
     where
         Id: Symbolic,
@@ -372,6 +396,7 @@ impl<Id> Chain<Id> {
         format!("{}", self)
     }
 
+    /// Collapses the `Chain` into a single vector.
     pub fn to_vec(self) -> Vec<Id> {
         std::iter::once(self.0).chain(self.1).collect()
     }
@@ -387,7 +412,7 @@ impl<Id> Chain<Id> {
     /// returning the `Symbol` corresponding to the concatenated (dot-separated)
     /// identifier. Notice that this does NOT return an `Ident`: this is because
     /// the upper/lower distinction is lost at this level!
-    pub fn canonicalize(&self) -> Symbol
+    pub fn flattened_symbol(&self) -> Symbol
     where
         Id: std::fmt::Display,
     {
@@ -398,7 +423,7 @@ impl<Id> Chain<Id> {
     where
         Id: Identifier + std::fmt::Display,
     {
-        self.pure()(self.canonicalize())
+        self.pure()(self.flattened_symbol())
     }
 
     pub fn from_strings<S: AsRef<str>, const N: usize>(head: S, strings: [S; N]) -> Chain<Symbol> {
