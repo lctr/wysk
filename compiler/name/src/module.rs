@@ -1,5 +1,3 @@
-pub trait Modular {}
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ModuleId(u32);
 
@@ -10,15 +8,6 @@ impl ModuleId {
 
     pub fn as_usize(self) -> usize {
         self.0 as usize
-    }
-
-    pub fn enumerate<M: Modular>(
-        modules: impl IntoIterator<Item = M>,
-    ) -> impl Iterator<Item = (ModuleId, M)> {
-        modules
-            .into_iter()
-            .enumerate()
-            .map(|(id, mdl)| (ModuleId(id as u32), mdl))
     }
 }
 
