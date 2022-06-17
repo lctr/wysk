@@ -339,15 +339,15 @@ impl<Id, T> Con<Id, T> {
     }
     pub fn map_t_ref<X>(&self, mut f: impl FnMut(&T) -> X) -> Con<Id, X>
     where
-        Id: Copy,
+        Id: Clone,
     {
         match self {
             Con::List => Con::List,
             Con::Tuple(n) => Con::Tuple(*n),
             Con::Arrow => Con::Arrow,
-            Con::Data(id) => Con::Data(*id),
+            Con::Data(id) => Con::Data(id.clone()),
             Con::Free(t) => Con::Free(f(t)),
-            Con::Alias(id) => Con::Alias(*id),
+            Con::Alias(id) => Con::Alias(id.clone()),
         }
     }
 }
@@ -425,7 +425,7 @@ pub enum Type<Id = Ident, T = Id> {
     Fun(Box<Type<Id, T>>, Box<Type<Id, T>>),
     Tup(Vec<Type<Id, T>>),
     Vec(Box<Type<Id, T>>),
-    Rec(Record<Type<Id, T>, Id>),
+    Rec(Record<Id, Type<Id, T>>),
 }
 
 wy_common::variant_preds! {
@@ -500,7 +500,7 @@ impl<Id, T> Type<Id, T> {
     #[inline]
     pub fn clone_to_list(&self) -> Self
     where
-        Id: Copy,
+        Id: Clone,
         T: Copy,
     {
         Self::mk_list(self.clone())
@@ -509,12 +509,12 @@ impl<Id, T> Type<Id, T> {
     #[inline]
     pub fn get_con(&self) -> Option<Con<Id, T>>
     where
-        Id: Copy,
+        Id: Clone,
         T: Copy,
     {
         match self {
             Type::Var(_) => None,
-            Type::Con(c, _) => Some(*c),
+            Type::Con(c, _) => Some(c.clone()),
             Type::Fun(_, _) => Some(Con::Arrow),
             Type::Tup(ts) => {
                 if ts.is_empty() {
@@ -524,7 +524,7 @@ impl<Id, T> Type<Id, T> {
                 }
             }
             Type::Vec(_) => Some(Con::List),
-            Type::Rec(r) => r.ctor().map(|id| Con::Data(*id)),
+            Type::Rec(r) => r.ctor().map(|id| Con::Data(id.clone())),
         }
     }
 
@@ -648,11 +648,11 @@ impl<Id, T> Type<Id, T> {
     pub fn compatible(&self, other: &Self) -> bool
     where
         T: Copy + PartialEq,
-        Id: Copy + PartialEq,
+        Id: Clone + PartialEq,
     {
         use Con as C;
         use Type as T;
-        fn zips<A: Copy + PartialEq, B: Copy + PartialEq>(
+        fn zips<A: Clone + PartialEq, B: Copy + PartialEq>(
             xs: &Vec<Type<A, B>>,
             ys: &Vec<Type<A, B>>,
         ) -> bool {
@@ -838,7 +838,7 @@ impl<Id, T> Type<Id, T> {
     pub fn map_t_ref<F, U>(&self, f: &mut F) -> Type<Id, U>
     where
         F: FnMut(&T) -> U,
-        Id: Copy,
+        Id: Clone,
     {
         match self {
             Type::Var(t) => Type::Var(f(t)),
@@ -1019,7 +1019,7 @@ where
     }
 }
 
-fn iter_map_t_ref<X: Copy, Y, Z>(
+fn iter_map_t_ref<X: Clone, Y, Z>(
     typs: &[Type<X, Y>],
     f: &mut impl FnMut(&Y) -> Z,
 ) -> Vec<Type<X, Z>> {
@@ -1046,7 +1046,7 @@ fn iter_map_t_ref<X: Copy, Y, Z>(
 /// which return a `Foo` type -- has more than 1 argument.
 pub fn guess_tycon_fun_ty<Id, T>(con: Con<Id, T>, args: Vec<Type<Id, T>>) -> Type<Id, T>
 where
-    Id: Copy,
+    Id: Clone,
     T: Copy,
 {
     args.clone()
@@ -1100,11 +1100,14 @@ impl<Id> Type<Id, Tv> {
     /// instead of as a `Self` type.
     pub fn simplify_ty(&self) -> Ty<Id>
     where
-        Id: Copy,
+        Id: Clone,
     {
         match self {
             Type::Var(v) => Ty::Var(*v),
-            Type::Con(c, args) => Ty::Con(*c, args.into_iter().map(|t| t.simplify_ty()).collect()),
+            Type::Con(c, args) => Ty::Con(
+                c.clone(),
+                args.into_iter().map(|t| t.simplify_ty()).collect(),
+            ),
             Type::Fun(_, _) => todo!(),
             Type::Tup(_) => todo!(),
             Type::Vec(_) => todo!(),
@@ -1259,16 +1262,16 @@ impl Kind {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Record<T, Id = Ident> {
+pub enum Record<Id, T> {
     /// Anonymous records don't have a *constructor* and are hence *extensible*,
     /// but less type-safe
-    Anon(Vec<Field<T, Id>>),
+    Anon(Vec<Field<Id, T>>),
     /// Records associated with a given *constructor* and hence are statially
     /// associated with that constructor's type.
-    Data(Id, Vec<Field<T, Id>>),
+    Data(Id, Vec<Field<Id, T>>),
 }
 
-impl<T, Id> Record<T, Id> {
+impl<Id, T> Record<Id, T> {
     pub const VOID: Self = Self::Anon(vec![]);
     /// Returns `true` if the record contains no fields, *regardless* of
     /// `Record` variant. This is equivalent to calling `Record::len` and
@@ -1288,7 +1291,7 @@ impl<T, Id> Record<T, Id> {
 
     /// Returns a slice of all the `Field`s contained by this `Record`. Note
     /// that this method *makes no distinction* regarding its *constructor*.
-    pub fn fields(&self) -> &[Field<T, Id>] {
+    pub fn fields(&self) -> &[Field<Id, T>] {
         match self {
             Record::Anon(fields) | Record::Data(_, fields) => fields.as_slice(),
         }
@@ -1328,7 +1331,7 @@ impl<T, Id> Record<T, Id> {
         })
     }
 
-    pub fn find(&self, pred: impl FnMut(&&Field<T, Id>) -> bool) -> Option<&Field<T, Id>>
+    pub fn find(&self, pred: impl FnMut(&&Field<Id, T>) -> bool) -> Option<&Field<Id, T>>
     where
         Id: PartialEq,
         T: PartialEq,
@@ -1342,9 +1345,9 @@ impl<T, Id> Record<T, Id> {
     /// component of the tuple returned by the closure contains a `Some` variant
     /// or not. This means that it is possible to map from an `Record::Anon`
     /// variant to a `Record::Data` variant and vice-versa.
-    pub fn map<F, U, V>(self, mut f: F) -> Record<V, U>
+    pub fn map<F, U, V>(self, mut f: F) -> Record<U, V>
     where
-        F: FnMut((Option<Id>, Vec<Field<T, Id>>)) -> (Option<U>, Vec<Field<V, U>>),
+        F: FnMut((Option<Id>, Vec<Field<Id, T>>)) -> (Option<U>, Vec<Field<U, V>>),
     {
         match self {
             Record::Anon(fields) => {
@@ -1364,8 +1367,8 @@ impl<T, Id> Record<T, Id> {
 
     pub fn map_ref<U, V>(
         &self,
-        f: &mut impl FnMut(Option<&Id>, &Vec<Field<T, Id>>) -> (Option<U>, Vec<Field<V, U>>),
-    ) -> Record<V, U> {
+        f: &mut impl FnMut(Option<&Id>, &Vec<Field<Id, T>>) -> (Option<U>, Vec<Field<U, V>>),
+    ) -> Record<U, V> {
         let (k, vs) = match self {
             Record::Anon(fields) => f(None, fields),
             Record::Data(k, v) => f(Some(k), v),
@@ -1377,7 +1380,7 @@ impl<T, Id> Record<T, Id> {
         }
     }
 
-    pub fn map_id<X>(self, mut f: impl FnMut(Id) -> X) -> Record<T, X> {
+    pub fn map_id<X>(self, mut f: impl FnMut(Id) -> X) -> Record<X, T> {
         match self {
             Record::Anon(fs) => {
                 Record::Anon(fs.into_iter().map(|fld| fld.map_id(|id| f(id))).collect())
@@ -1389,7 +1392,7 @@ impl<T, Id> Record<T, Id> {
         }
     }
 
-    pub fn map_id_ref<X>(&self, f: &mut impl FnMut(&Id) -> X) -> Record<T, X>
+    pub fn map_id_ref<X>(&self, f: &mut impl FnMut(&Id) -> X) -> Record<X, T>
     where
         T: Copy,
     {
@@ -1401,7 +1404,7 @@ impl<T, Id> Record<T, Id> {
         }
     }
 
-    pub fn map_t<U>(self, mut f: impl FnMut(T) -> U) -> Record<U, Id> {
+    pub fn map_t<U>(self, mut f: impl FnMut(T) -> U) -> Record<Id, U> {
         let mut entries = vec![];
         if let Record::Anon(es) = self {
             for field in es {
@@ -1426,24 +1429,26 @@ impl<T, Id> Record<T, Id> {
         }
     }
 
-    pub fn map_t_ref<F, U>(&self, mut f: F) -> Record<U, Id>
+    pub fn map_t_ref<F, U>(&self, mut f: F) -> Record<Id, U>
     where
         F: FnMut(&T) -> U,
-        Id: Copy,
+        Id: Clone,
     {
         match self {
             Record::Anon(es) => Record::Anon(iter_map_t_ref_field(&es[..], &mut |t| f(t))),
-            Record::Data(k, v) => Record::Data(*k, iter_map_t_ref_field(&v[..], &mut |t| f(t))),
+            Record::Data(k, v) => {
+                Record::Data(k.clone(), iter_map_t_ref_field(&v[..], &mut |t| f(t)))
+            }
         }
     }
 }
 
 fn iter_map_t_ref_field<X, Y, Z>(
-    fields: &[Field<Y, X>],
+    fields: &[Field<X, Y>],
     mut f: &mut impl FnMut(&Y) -> Z,
-) -> Vec<Field<Z, X>>
+) -> Vec<Field<X, Z>>
 where
-    X: Copy,
+    X: Clone,
 {
     let mut fs = vec![];
     for field in fields {
@@ -1453,7 +1458,7 @@ where
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Field<T, Id = Ident> {
+pub enum Field<Id, T> {
     /// Primarily used in partial records to indicate that a given record's list
     /// of fields is incomplete. Note that it is a syntactic error for this
     /// field to *not* be the last field in record's list of fields.
@@ -1469,7 +1474,7 @@ pub enum Field<T, Id = Ident> {
     Entry(Id, T),
 }
 
-impl<T, Id> Field<T, Id> {
+impl<Id, T> Field<Id, T> {
     pub fn is_rest(&self) -> bool {
         matches!(self, Self::Rest)
     }
@@ -1502,7 +1507,7 @@ impl<T, Id> Field<T, Id> {
         }
     }
 
-    pub fn map<F, U, X>(self, mut f: F) -> Field<X, U>
+    pub fn map<F, U, X>(self, mut f: F) -> Field<U, X>
     where
         F: FnMut((Id, Option<T>)) -> (U, Option<X>),
     {
@@ -1522,7 +1527,7 @@ impl<T, Id> Field<T, Id> {
     pub fn map_ref<U, X>(
         &self,
         f: &mut impl FnMut((&Id, Option<&T>)) -> (U, Option<X>),
-    ) -> Field<X, U> {
+    ) -> Field<U, X> {
         match self {
             Field::Rest => Field::Rest,
             Field::Key(k) => Field::Key(f((k, None)).0),
@@ -1533,7 +1538,7 @@ impl<T, Id> Field<T, Id> {
         }
     }
 
-    pub fn map_id<X>(self, mut f: impl FnMut(Id) -> X) -> Field<T, X> {
+    pub fn map_id<X>(self, mut f: impl FnMut(Id) -> X) -> Field<X, T> {
         match self {
             Field::Rest => Field::Rest,
             Field::Key(k) => Field::Key(f(k)),
@@ -1541,7 +1546,7 @@ impl<T, Id> Field<T, Id> {
         }
     }
 
-    pub fn map_id_ref<X>(&self, f: &mut impl FnMut(&Id) -> X) -> Field<T, X>
+    pub fn map_id_ref<X>(&self, f: &mut impl FnMut(&Id) -> X) -> Field<X, T>
     where
         T: Copy,
     {
@@ -1552,7 +1557,7 @@ impl<T, Id> Field<T, Id> {
         }
     }
 
-    pub fn map_t<F, U>(self, mut f: F) -> Field<U, Id>
+    pub fn map_t<F, U>(self, mut f: F) -> Field<Id, U>
     where
         F: FnMut(T) -> U,
     {
@@ -1563,15 +1568,15 @@ impl<T, Id> Field<T, Id> {
         }
     }
 
-    pub fn map_t_ref<F, U>(&self, mut f: F) -> Field<U, Id>
+    pub fn map_t_ref<F, U>(&self, mut f: F) -> Field<Id, U>
     where
         F: FnMut(&T) -> U,
-        Id: Copy,
+        Id: Clone,
     {
         match self {
             Field::Rest => Field::Rest,
-            Field::Key(k) => Field::Key(*k),
-            Field::Entry(k, v) => Field::Entry(*k, f(v)),
+            Field::Key(k) => Field::Key(k.clone()),
+            Field::Entry(k, v) => Field::Entry(k.clone(), f(v)),
         }
     }
 }
@@ -1642,22 +1647,22 @@ impl<Id, T> Context<Id, T> {
     }
     pub fn map_t_ref<U>(&self, f: &mut impl FnMut(&T) -> U) -> Context<Id, U>
     where
-        Id: Copy,
+        Id: Clone,
     {
         Context {
-            class: self.class,
+            class: self.class.clone(),
             head: f(&self.head),
         }
     }
 
     pub fn unzip(contexts: &[Self]) -> Vec<(Id, T)>
     where
-        Id: Copy,
+        Id: Clone,
         T: Clone,
     {
         contexts
             .into_iter()
-            .map(|ctx| (ctx.class, ctx.head.clone()))
+            .map(|ctx| (ctx.class.clone(), ctx.head.clone()))
             .collect()
     }
 }
@@ -1738,7 +1743,7 @@ impl<Id, T> Signature<Id, T> {
 
     pub fn map_t_ref<U>(&self, f: &mut impl FnMut(&T) -> U) -> Signature<Id, U>
     where
-        Id: Copy,
+        Id: Clone,
     {
         Signature {
             each: self.each_iter().map(|t| f(t)).collect(),
