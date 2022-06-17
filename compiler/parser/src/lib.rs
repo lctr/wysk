@@ -1837,7 +1837,7 @@ impl<'t> ExprParser<'t> {
         self.eat(Keyword::Do)?;
         self.eat(Lexeme::CurlyL)?;
 
-        let mut statements = self.many_while_on(Not(Lexeme::is_brack_r), |p| {
+        let mut statements = self.many_while_on(Not(Lexeme::is_curly_r), |p| {
             let stmt = p.statement()?;
             p.ignore(Lexeme::Semi);
             Ok(stmt)

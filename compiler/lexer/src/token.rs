@@ -160,6 +160,8 @@ wy_common::variant_preds! {
     | is_paren_r => ParenR
     | is_brack_l => BrackL
     | is_brack_r => BrackR
+    | is_curly_l => CurlyL
+    | is_curly_r => CurlyR
     | is_unknown => Unknown (..)
     | is_left_delim => ParenL [ | Self::BrackL | Self::CurlyL ]
     | is_right_delim => ParenR [ | Self::BrackR | Self::CurlyR ]
