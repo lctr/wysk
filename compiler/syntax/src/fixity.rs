@@ -233,7 +233,7 @@ pub type Infix = Ident;
 
 impl<Id> FixityTable<Id>
 where
-    Id: Copy + Eq + std::hash::Hash,
+    Id: Eq + std::hash::Hash,
 {
     pub fn new(mut infixify: impl FnMut(Symbol) -> Id) -> Self {
         let mut map = Map::new();
@@ -267,7 +267,10 @@ where
     pub fn apply<T>(
         &mut self,
         mut expr: Box<Expression<Id, T>>,
-    ) -> Result<Expression<Id, T>, FixityFail<Id>> {
+    ) -> Result<Expression<Id, T>, FixityFail<Id>>
+    where
+        Id: Clone,
+    {
         fn reduce<Op, B>(
             exprs: &mut Vec<Box<Expression<Op, B>>>,
             infixes: &mut Vec<Op>,
@@ -288,7 +291,7 @@ where
                     exprs.push(left);
                     expr = right;
                     loop {
-                        match ops.last().copied() {
+                        match ops.last().cloned() {
                             Some(prev_op) => {
                                 let Fixity {
                                     assoc: this_assoc,
@@ -350,7 +353,10 @@ where
         }
     }
 
-    fn visit_expression(&mut self, expr: &mut Expression<Id>) -> Result<(), FixityFail<Id>> {
+    fn visit_expression(&mut self, expr: &mut Expression<Id>) -> Result<(), FixityFail<Id>>
+    where
+        Id: Clone,
+    {
         // walk_expr_mut(self, expr)
         // use visit::*;
         // Visitor(())
