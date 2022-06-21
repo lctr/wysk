@@ -1,6 +1,6 @@
 use wy_failure::Failure;
 use wy_parser::error::ParseError;
-use wy_sources::Atlas;
+use wy_sources::paths::Atlas;
 use wy_syntax::Ast;
 
 pub fn parse_atlas(atlas: &Atlas) -> Result<Ast, Failure<ParseError>> {
@@ -22,23 +22,17 @@ pub fn parse_prelude() -> Result<Ast, Failure<ParseError>> {
 #[cfg(test)]
 mod test {
 
-    use super::*;
+    // use super::*;
 
-    #[test]
-    fn test_prim_() {
-        match Atlas::walk_path("../../language") {
-            Err(e) => eprintln!("{}", e),
-            Ok(paths) => {
-                let mut atlas = Atlas::new();
-                atlas.add_paths(paths);
-                match parse_atlas(&atlas) {
-                    Err(e) => eprintln!("{}", e),
-                    Ok(tree) => {
-                        println!("Success!");
-                        println!("{:?}", &tree)
-                    }
-                }
-            }
-        }
-    }
+    // #[test]
+    // fn test_prim_() {
+    //     if let Ok(tree) = parse_prelude() {
+    //         tree.programs_iter().map(|p| p.get_imports_iter().map(|imp| {
+    //             use wy_name::{Ident, Chain};
+    //             let m = p.modname();
+    //             let name = &imp.name;
+
+    //         }))
+    //     }
+    // }
 }
