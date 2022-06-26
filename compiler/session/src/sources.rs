@@ -22,17 +22,13 @@ pub fn parse_prelude() -> Result<Ast, Failure<ParseError>> {
 #[cfg(test)]
 mod test {
 
-    // use super::*;
+    use super::*;
 
-    // #[test]
-    // fn test_prim_() {
-    //     if let Ok(tree) = parse_prelude() {
-    //         tree.programs_iter().map(|p| p.get_imports_iter().map(|imp| {
-    //             use wy_name::{Ident, Chain};
-    //             let m = p.modname();
-    //             let name = &imp.name;
-
-    //         }))
-    //     }
-    // }
+    #[test]
+    fn test_prim_() {
+        if let Ok(tree) = parse_prelude() {
+            let data = format!("{:#?}", &tree);
+            let _ = std::fs::write("prelude_ast_debug.txt", data);
+        }
+    }
 }
