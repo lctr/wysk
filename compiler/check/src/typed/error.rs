@@ -23,6 +23,8 @@ pub enum Error {
     Mismatch(Type, Type),
     NotInSignature(Type),
     Ambiguous(Vec<Constraint>),
+    /// Emitted when encountering a type `s` within a list type `[t]`
+    InvalidList(Type, Type),
     Custom(Box<dyn std::fmt::Display>),
 }
 
@@ -61,7 +63,7 @@ impl std::fmt::Display for Error {
                 "occurs check: cannot construct the infinite type `{}` ~ `{}`",
                 a, b
             ),
-            Error::Mismatch(a, b) => write!(f, "type mismatch within\n\t`{}`\nand\n\t`{}`", a, b),
+            Error::Mismatch(a, b) => write!(f, "type mismatch between\n\t`{}`\nand\n\t`{}`", a, b),
             Error::NotInSignature(ty) => write!(f, "the type `{}` is not in the signature", ty),
             Error::Ambiguous(cs) => {
                 write!(f, "ambiguous constraints:\n")?;
@@ -70,6 +72,11 @@ impl std::fmt::Display for Error {
                 }
                 Ok(())
             }
+            Error::InvalidList(a, b) => write!(
+                f,
+                "invalid type `{}` found in homogenous list of type `{}`",
+                a, b
+            ),
             Error::Custom(s) => write!(f, "custom error: {}", s),
         }
     }
