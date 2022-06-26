@@ -1,10 +1,16 @@
-use std::collections::BTreeMap as Map;
 use std::fs;
 use std::hash::Hash;
 use std::path::Path;
+use std::{collections::BTreeMap as Map, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 pub use toml::Value;
+
+pub fn maybe_strings_to_pathbufs<S: AsRef<Path>>(
+    it: Option<&Vec<S>>,
+) -> impl Iterator<Item = PathBuf> + '_ {
+    it.into_iter().flatten().map(|s| s.as_ref().to_path_buf())
+}
 
 type List<S = String> = Vec<S>;
 type MaybeList<S = String> = Option<List<S>>;
@@ -12,14 +18,14 @@ type MaybeList<S = String> = Option<List<S>>;
 /// The entire `manifest.toml` file. Parametrized over a `stringy`
 /// type in order to allow for flexibility with interned symbols.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct Manifest<S = String>
+pub struct Manifest<S = String, P = S>
 where
     S: Ord,
 {
     pub package: Package<S>,
     pub workspace: Option<Workspace<S>>,
     pub dependencies: Dependencies<S>,
-    pub dev_dependencies: Option<DevDependencies<S>>,
+    pub dev_dependencies: Option<DevDependencies<S, S, P>>,
     #[serde(rename = "lib")]
     pub library: Option<Lib>,
     #[serde(rename = "exe")]
@@ -64,18 +70,28 @@ impl Manifest {
             }
         }
     }
+
+    pub fn workspaces(&self) -> impl Iterator<Item = PathBuf> + '_ {
+        self.workspace.as_ref().into_iter().flat_map(|ws| {
+            ws.members
+                .as_ref()
+                .into_iter()
+                .flatten()
+                .map(|s| PathBuf::from(&*s))
+        })
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct Package<S = String> {
+pub struct Package<S = String, P = S> {
     /// Name of the package
     pub name: S,
     /// Version of package
     pub version: S,
     pub license: Option<S>,
     pub license_file: Option<S>,
-    pub assets: Option<S>,
-    pub readme: Option<S>,
+    pub assets: Option<P>,
+    pub readme: Option<P>,
     pub description: Option<S>,
     pub homepage: Option<S>,
     pub repository: Option<S>,
@@ -84,7 +100,7 @@ pub struct Package<S = String> {
     pub categories: MaybeList<S>,
 }
 
-impl<S> Package<S> {
+impl<S, P> Package<S, P> {
     pub fn new(name: S, version: S) -> Self {
         Package {
             name,
@@ -104,9 +120,9 @@ impl<S> Package<S> {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct Documentation<S = String> {
+pub struct Documentation<S = String, P = S> {
     pub webpage: Option<S>,
-    pub index: Option<S>,
+    pub index: Option<P>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -128,18 +144,27 @@ pub struct Workspace<S = String> {
     pub members: Option<Vec<S>>,
 }
 
+impl<S> Workspace<S> {
+    pub fn pathbufs(&self) -> impl Iterator<Item = PathBuf> + '_
+    where
+        S: AsRef<Path>,
+    {
+        maybe_strings_to_pathbufs(self.members.as_ref())
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
-pub struct Dependencies<K = String, V = String>(pub Map<K, Dependency<V>>)
+pub struct Dependencies<K = String, V = String, P = V>(pub Map<K, Dependency<V, P>>)
 where
     K: Ord;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(untagged)]
-pub enum Dependency<S = String> {
+pub enum Dependency<S = String, P = S> {
     /// When only a version number is provided
     Version(S),
     Local {
-        path: S,
+        path: P,
         version: Option<S>,
     },
     Remote {
@@ -153,11 +178,31 @@ pub enum Dependency<S = String> {
     },
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct DevDependencies<K: Ord = String, S = String>(pub Map<K, Dependency<S>>);
+wy_common::variant_preds! { |S, P| Dependency[S, P]
+    | version_only => Version(_)
+    | local_only => Local {..}
+    | remote_only => Remote {..}
+    | git_only => Git {..}
+}
+
+impl<S, P> Dependency<S, P> {
+    pub fn maybe_local_path(&self) -> Option<PathBuf>
+    where
+        P: AsRef<Path>,
+    {
+        if let Self::Local { path, .. } = self {
+            Some(path.as_ref().to_path_buf())
+        } else {
+            None
+        }
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct Artifacts<S = String>(Map<S, S>)
+pub struct DevDependencies<K: Ord = String, S = String, P = S>(pub Map<K, Dependency<S, P>>);
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Artifacts<S = String, P = S>(Map<S, P>)
 where
     S: Ord;
 
