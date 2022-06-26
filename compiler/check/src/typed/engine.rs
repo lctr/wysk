@@ -10,12 +10,38 @@ use super::{
     constraint::{Constraint, Injection, Scheme, Type},
     envr::Environment,
     error::{Error, Inferred},
+    subst::{Subst, Substitutable},
+    unify::Unifier,
 };
 
 pub type Bind = Binding<Ident, Tv>;
 wy_common::newtype! { usize in BindId | Show AsUsize AsRef [Bind] }
 
 type Expr = Expression<Ident, Tv>;
+
+#[allow(unused)]
+pub fn solve(env: &mut Environment, mut constraints: Vec<Constraint>) -> Inferred<Subst> {
+    let mut subst = Subst::new();
+    constraints.reverse();
+    let mut unifier = Unifier::new();
+
+    while let Some(c) = constraints.pop() {
+        match c {
+            Constraint::Join(ta, tb) => {
+                let s2 = unifier.unify(ta, tb)?;
+                let s3 = subst.compose(&s2);
+                constraints = constraints.apply(&s2);
+                subst = s3;
+            }
+            Constraint::Class {
+                class_name,
+                instance,
+            } => {}
+        }
+    }
+
+    Ok(subst)
+}
 
 pub fn infer_expr_scheme(_env: &mut Environment, _expr: &Expr) -> Result<Scheme, Error> {
     todo!()
@@ -79,7 +105,9 @@ pub fn infer_expr(
             cs.dedupe();
             Ok((var(), cs))
         }
-        Expression::Section(_) => todo!(),
+        Expression::Section(_) => {
+            todo!()
+        }
         Expression::Tuple(xs) => infer_tuple_expr(env, xs),
         Expression::Array(xs) => infer_array_expr(env, xs),
         Expression::List(_, _) => todo!(),
@@ -108,39 +136,40 @@ pub fn infer_expr(
             Ok((t2, c1.deduped()))
         }
         Expression::Case(_, _) => todo!(),
-        Expression::Cast(_, _) => todo!(),
+        Expression::Cast(ex, ty) => {
+            let ty = ty.clone();
+            let (t0, mut c0) = infer_expr(env, ex.as_ref())?;
+            let tv = env.fresh();
+            c0.push(Constraint::Join(tv.clone(), t0));
+            c0.push(Constraint::Join(tv.clone(), ty.clone()));
+            Ok((ty, c0))
+        }
         Expression::Do(_, _) => todo!(),
         Expression::Range(_, _) => todo!(),
-        Expression::Group(_) => todo!(),
+        Expression::Group(x) => infer_expr(env, x.as_ref()),
     }
 }
 
 #[inline]
-fn infer_tuple_expr(env: &mut Environment, exprs: &Vec<Expr>) -> Inferred<(Type, Vec<Constraint>)> {
+fn infer_tuple_expr(env: &mut Environment, exprs: &[Expr]) -> Inferred<(Type, Vec<Constraint>)> {
     if exprs.is_empty() {
         return Ok((Type::UNIT, vec![]));
     }
     let init = (vec![], vec![]);
-    let (ts, cs) = exprs
-        .into_iter()
-        .map(|x| {
-            let tv = env.fresh();
-            let (ty, mut cs) = infer_expr(env, x)?;
-            cs.inject(Constraint::Join(ty.clone(), tv));
-            Ok((ty, cs))
-        })
-        .fold(Ok(init), |a, c| {
-            let (tyi, cis) = c?;
-            let (mut tys, mut cts) = a?;
-            tys.push(tyi);
-            cts.extend(cis);
-            Ok((tys, cts.deduped()))
-        })?;
+    let (ts, cs) = exprs.into_iter().fold(Ok(init), |a, c| {
+        let tv = env.fresh();
+        let (mut typs, mut cns) = a?;
+        let (ty, cs) = infer_expr(env, c)?;
+        cns.extend(cs);
+        cns.inject(Constraint::Join(tv, ty.clone()));
+        typs.push(ty);
+        Ok((typs, cns.deduped()))
+    })?;
     Ok((Type::Tup(ts), cs))
 }
 
 #[inline]
-fn infer_array_expr(env: &mut Environment, exprs: &Vec<Expr>) -> Inferred<(Type, Vec<Constraint>)> {
+fn infer_array_expr(env: &mut Environment, exprs: &[Expr]) -> Inferred<(Type, Vec<Constraint>)> {
     match &exprs[..] {
         [] => {
             let tv = env.fresh();
@@ -229,7 +258,7 @@ fn (|>) :: (a -> b) -> a -> b
             Err(e) => eprintln!("{}", e),
             Ok(program) => {
                 let mut envr = Builder::with_program(&program);
-                let src2 = "fst (True, False)) || True";
+                let src2 = "fst (True, False) || True";
                 match wy_parser::parse_expression(src2) {
                     Ok(expr) => {
                         let expr = expr.map_t(&mut |id| Tv::from(id));
@@ -237,6 +266,14 @@ fn (|>) :: (a -> b) -> a -> b
                             Ok((ty, cs)) => {
                                 println!("inferred type: {}", &ty);
                                 println!("constraints:\n\t{}", Many(&cs[..], ",\n\t"));
+                                match solve(&mut envr, cs) {
+                                    Ok(soln) => {
+                                        let soln = dbg!(&soln);
+                                        let apped = dbg!(ty.apply(soln));
+                                        println!("inferred: {}\napplied: {}", &ty, apped)
+                                    }
+                                    Err(e) => eprintln!("Unification solver error: {}", e),
+                                }
                             }
                             Err(e) => eprintln!("Inference failure! {}", e),
                         }
