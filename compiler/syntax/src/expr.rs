@@ -63,6 +63,12 @@ impl<Id, T> Section<Id, T> {
             Section::Suffix { left, suffix } => (suffix, *left),
         }
     }
+    pub fn as_tuple_ref(&self) -> (&Id, &Expression<Id, T>) {
+        match self {
+            Section::Prefix { prefix, right } => (prefix, right.as_ref()),
+            Section::Suffix { left, suffix } => (suffix, left.as_ref()),
+        }
+    }
     pub fn expr(&self) -> &Expression<Id, T> {
         match self {
             Section::Prefix { right: expr, .. } | Section::Suffix { left: expr, .. } => {
