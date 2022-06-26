@@ -44,18 +44,22 @@ impl<Id> Identifier for Option<Id>
 where
     Id: Identifier,
 {
+    #[inline]
     fn is_upper(&self) -> bool {
         matches!(self, Some(id) if id.is_upper())
     }
 
+    #[inline]
     fn is_lower(&self) -> bool {
         matches!(self, Some(id) if id.is_lower())
     }
 
+    #[inline]
     fn is_infix(&self) -> bool {
         matches!(self, Some(id) if id.is_infix())
     }
 
+    #[inline]
     fn is_fresh(&self) -> bool {
         matches!(self, Some(id) if id.is_fresh())
     }
@@ -443,6 +447,16 @@ impl<Id> Chain<Id> {
     }
 }
 
+impl<Id> IntoIterator for Chain<Id> {
+    type Item = Id;
+
+    type IntoIter = std::iter::Chain<std::iter::Once<Id>, <Deque<Id> as IntoIterator>::IntoIter>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        std::iter::once(self.0).chain(self.1)
+    }
+}
+
 impl<Id, const N: usize> From<(Id, [Id; N])> for Chain<Id> {
     fn from((root, ids): (Id, [Id; N])) -> Self {
         let mut deque = deque!();
@@ -486,6 +500,31 @@ where
         write!(f, "{}", &self.0)?;
         for id in &self.1 {
             write!(f, ".{}", id)?;
+        }
+        Ok(())
+    }
+}
+
+pub struct Chained<'id>(&'id Chain<Ident>);
+
+impl<'id> Chained<'id> {
+    #[inline]
+    pub fn each(&self) -> impl Iterator<Item = &'id Ident> + '_ {
+        self.0.iter()
+    }
+}
+
+impl<'id> std::fmt::Display for Chained<'id> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (n, id) in self.each().enumerate() {
+            if n > 0 {
+                write!(f, ".")?;
+            }
+            if id.is_infix() {
+                write!(f, "({})", id)?;
+            } else {
+                write!(f, "{}", id)?;
+            }
         }
         Ok(())
     }
