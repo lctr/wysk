@@ -813,7 +813,18 @@ impl<Id, T> Type<Id, T> {
             Type::Fun(x, y) => Type::Fun(Box::new(x.map_id(f)), Box::new(y.map_id(f))),
             Type::Tup(ts) => Type::Tup(ts.into_iter().map(|t| t.map_id(f)).collect()),
             Type::Vec(t) => Type::Vec(Box::new(t.map_id(f))),
-            Type::Rec(_) => todo!(),
+            Type::Rec(rec) => Type::Rec(rec.map(|(k, v)| {
+                (
+                    k.map(|id| f(id)),
+                    v.into_iter()
+                        .map(|field| match field {
+                            Field::Rest => Field::Rest,
+                            Field::Key(k) => Field::Key(f(k)),
+                            Field::Entry(k, v) => Field::Entry(f(k), v.map_id(f)),
+                        })
+                        .collect(),
+                )
+            })),
         }
     }
 
@@ -831,7 +842,18 @@ impl<Id, T> Type<Id, T> {
             Type::Fun(x, y) => Type::Fun(Box::new(x.map_id_ref(f)), Box::new(y.map_id_ref(f))),
             Type::Tup(ts) => Type::Tup(ts.iter().map(|t| t.map_id_ref(f)).collect()),
             Type::Vec(t) => Type::Vec(Box::new(t.map_id_ref(f))),
-            Type::Rec(_) => todo!(),
+            Type::Rec(rec) => Type::Rec(rec.map_ref(&mut |k, v| {
+                (
+                    k.map(|id| f(id)),
+                    v.into_iter()
+                        .map(|field| match field {
+                            Field::Rest => Field::Rest,
+                            Field::Key(k) => Field::Key(f(k)),
+                            Field::Entry(k, v) => Field::Entry(f(k), v.map_id_ref(f)),
+                        })
+                        .collect(),
+                )
+            })),
         }
     }
 
@@ -879,7 +901,11 @@ impl<Id, T> Type<Id, T> {
             }
             Type::Tup(args) => args.into_iter().for_each(|ty| vars.extend(ty.vars())),
             Type::Vec(t) => vars.extend(t.vars()),
-            Type::Rec(_) => todo!(),
+            Type::Rec(rec) => rec.fields().into_iter().for_each(|fld| {
+                if let Some(v) = fld.get_value() {
+                    vars.extend(v.vars())
+                }
+            }),
         };
         vars
     }
@@ -1108,10 +1134,16 @@ impl<Id> Type<Id, Tv> {
                 c.clone(),
                 args.into_iter().map(|t| t.simplify_ty()).collect(),
             ),
-            Type::Fun(_, _) => todo!(),
-            Type::Tup(_) => todo!(),
-            Type::Vec(_) => todo!(),
-            Type::Rec(_) => todo!(),
+            Type::Fun(x, y) => Ty::Con(Con::Arrow, vec![x.simplify_ty(), y.simplify_ty()]),
+            Type::Tup(ts) => Ty::Con(
+                Con::Tuple(ts.len()),
+                ts.into_iter().map(|ty| ty.simplify_ty()).collect(),
+            ),
+            Type::Vec(ts) => Ty::Con(Con::List, vec![ts.simplify_ty()]),
+            Type::Rec(rec) => match rec {
+                Record::Anon(_) => todo!(),
+                Record::Data(_, _) => todo!(),
+            },
         }
     }
 }
