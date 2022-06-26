@@ -3,6 +3,127 @@ use std::hash::Hash;
 
 use crate::Mappable;
 
+/// An infinite iterator over numeric values. Used to generate fresh values
+/// corresponding to new states. Functionally equivalent to `std::ops::Range`
+/// iterator with no upper-bound.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct Counter(Count);
+type Count = usize;
+impl Counter {
+    pub const fn new() -> Self {
+        Self(0)
+    }
+    pub fn new_from(n: impl Into<Count>) -> Self {
+        Self(n.into())
+    }
+    pub const fn count(&self) -> Count {
+        self.0
+    }
+
+    /// Returns a new `Counter` with the internal count value incremented.
+    pub const fn tick(&self) -> Self {
+        Self(self.0 + 1)
+    }
+
+    /// Returns a new `Counter` with the internal count value incremented by the
+    /// given offset/count value `n`.
+    pub const fn tick_by(&self, n: Count) -> Self {
+        Self(self.0 + n)
+    }
+
+    /// Increments the internal count value, returning the old value prior to
+    /// incrementing. To get the value *after* incrementing, use `incremented`.
+    pub fn increment(&mut self) -> Count {
+        let count = self.0;
+        self.0 += 1;
+        count
+    }
+
+    /// Increments the internal count value by the given offset `n`, returning
+    /// the value held *before* incrementing. To return the value *after*
+    /// incrementing, use `incremented_by`.
+    pub fn increment_by(&mut self, n: Count) -> Count {
+        let count = self.0;
+        self.0 += n;
+        count
+    }
+
+    /// Increments the internal count by 1 and returns the new inner count
+    /// value.
+    #[inline]
+    pub fn incremented(&mut self) -> Count {
+        self.0 += 1;
+        self.0
+    }
+
+    /// Increments the internal count by the given count `n` and returns the new
+    /// inner count value.
+    #[inline]
+    pub fn incremented_by(&mut self, n: Count) -> Count {
+        self.0 += n;
+        self.0
+    }
+
+    pub fn map<Y>(&self, mut f: impl FnMut(Count) -> Y) -> Y {
+        f(self.0)
+    }
+
+    pub fn as_range(self) -> std::ops::RangeFrom<usize> {
+        self.0..
+    }
+}
+
+impl Iterator for Counter {
+    type Item = Count;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0 += 1;
+        Some(self.0)
+    }
+}
+
+impl From<usize> for Counter {
+    fn from(n: usize) -> Self {
+        Self(n)
+    }
+}
+
+impl From<u32> for Counter {
+    fn from(n: u32) -> Self {
+        Self(n as usize)
+    }
+}
+
+impl<N: Into<Counter>> From<std::ops::RangeFrom<N>> for Counter {
+    fn from(r: std::ops::RangeFrom<N>) -> Self {
+        r.start.into()
+    }
+}
+
+impl std::ops::RangeBounds<Count> for Counter {
+    fn start_bound(&self) -> std::ops::Bound<&Count> {
+        std::ops::Bound::Included(&self.0)
+    }
+
+    fn end_bound(&self) -> std::ops::Bound<&Count> {
+        std::ops::Bound::Unbounded
+    }
+}
+
+impl std::ops::Add for Counter {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self(self.0 + rhs.0)
+    }
+}
+
+impl std::ops::AddAssign for Counter {
+    fn add_assign(&mut self, rhs: Self) {
+        self.0 += rhs.0
+    }
+}
+
 #[derive(Clone)]
 pub struct Pair<X>(Box<[X; 2]>);
 
