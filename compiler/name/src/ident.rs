@@ -477,6 +477,16 @@ impl<Id> From<(Id, Id, Id)> for Chain<Id> {
     }
 }
 
+impl<Id> From<Chain<Chain<Id>>> for Chain<Id> {
+    fn from(chain: Chain<Chain<Id>>) -> Self {
+        let Chain(head, tail) = chain;
+        let Chain(head, mut htail) = head;
+        let tails = tail.into_iter().flat_map(|ch| ch).collect::<Deque<_>>();
+        htail.extend(tails);
+        Chain(head, htail)
+    }
+}
+
 impl<Id> PartialEq<Id> for Chain<Id>
 where
     Id: PartialEq,
