@@ -9,7 +9,7 @@ use wy_syntax::{
     },
     stmt::Binding,
     tipo::{poly_vars, Con, Context, Tv},
-    Program, RawProgram,
+    Ast, Program, RawProgram,
 };
 
 use super::{
@@ -841,6 +841,19 @@ impl Builder {
             .with_fundefs(program.get_fundefs())
             .build()
     }
+}
+
+pub fn ast_environment(tree: &Ast) -> Environment {
+    tree.programs_iter()
+        .fold(Builder::new(), |builder, program| {
+            builder
+                .add_data_tys(program.get_datatys())
+                .add_newtypes(program.get_newtyps())
+                .add_classes(program.get_classes())
+                .add_instances(program.get_implems())
+                .add_fundefs(program.get_fundefs())
+        })
+        .build()
 }
 
 #[cfg(test)]
