@@ -207,7 +207,7 @@ fn test_idents() {
 /// The *root* of an identifier path is the first identifier in a
 /// period-delimited chain of identifiers. Additionally, a chain of identifiers
 /// may be *concatenated*.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Chain<Id = Ident>(Id, Deque<Id>);
 
 impl From<Chain<Ident>> for Ident {

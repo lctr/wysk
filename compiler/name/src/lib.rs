@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use module::ModuleId;
+use serde::{Deserialize, Serialize};
 use wy_common::Mappable;
 
 pub mod ident;
@@ -8,7 +9,7 @@ pub mod module;
 
 use ident::{Chain, Ident};
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Unique(usize);
 
 impl Unique {
@@ -46,7 +47,7 @@ impl std::fmt::Display for Unique {
 /// the string `A.B.c` and interning it -- we would have to separate joined the
 /// string into its components and look each up to get the corresponding
 /// symbols.  
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Cache<T>(Vec<Chain<T>>);
 
 impl<T> Cache<T> {
@@ -178,7 +179,7 @@ pub fn intern_many_chains<const N: usize>(chains: [Chain<Ident>; N]) -> [Unique;
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Name {
     modid: ModuleId,
     ident: Ident,
