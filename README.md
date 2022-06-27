@@ -15,6 +15,9 @@ Below are some of the things I'm hoping to implement.
 
 ## [WIP] Examples
 ### Hello world
+The entry point to every program, the function `main` operates within `IO`. The
+actual return type of `main` is generally irrelevant, but *must* be contained
+within the `IO` type.
 ```haskell,rust
 fn main :: IO ()
   = printLine "Hello world!"
@@ -42,6 +45,7 @@ fn factorial n :: Int -> Int
 - [ ] Unify error handling into its own library
 - [x] Prettify error messages
 - [ ] Add suggestions to error messages
+- [ ] Implement optimizer passes, with importance on tail-call optimization(s).
 - [x] Implement static type inference engine (Hindley-Milner+)
 - [ ] Extend Hindley-Milner type inference to include type classes and
   polymorphic records
