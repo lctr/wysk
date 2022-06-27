@@ -930,12 +930,12 @@ impl<Id, T> ClassDecl<Id, T> {
         self.defs.iter().map(|MethodDef { name, .. }| name)
     }
 
-    pub fn map_id<X>(self, mut f: impl FnMut(Id) -> X) -> ClassDecl<X, T> {
+    pub fn map_id<X>(self, f: &mut impl FnMut(Id) -> X) -> ClassDecl<X, T> {
         ClassDecl {
             name: f(self.name),
             poly: self.poly,
             ctxt: self.ctxt.fmap(|ctx| ctx.map_id(|id| f(id))),
-            defs: self.defs.fmap(|defs| defs.map_id(|id| f(id))),
+            defs: self.defs.fmap(|defs| defs.map_id(f)),
         }
     }
 
@@ -1012,23 +1012,16 @@ impl<Id, T> InstDecl<Id, T> {
         self.defs.iter().find(|b| b.name == *id)
     }
 
-    pub fn map_id<F, X>(self, mut f: F) -> InstDecl<X, T>
-    where
-        F: FnMut(Id) -> X,
-    {
+    pub fn map_id<X>(self, f: &mut impl FnMut(Id) -> X) -> InstDecl<X, T> {
         InstDecl {
             name: f(self.name),
-            tipo: self.tipo.map_id(&mut f),
+            tipo: self.tipo.map_id(f),
             ctxt: self
                 .ctxt
                 .into_iter()
                 .map(|ctx| ctx.map_id(|id| f(id)))
                 .collect(),
-            defs: self
-                .defs
-                .into_iter()
-                .map(|bind| bind.map_id(|id| f(id)))
-                .collect(),
+            defs: self.defs.into_iter().map(|bind| bind.map_id(f)).collect(),
         }
     }
 
@@ -1086,15 +1079,11 @@ wy_common::struct_field_iters! {
 }
 
 impl<Id, T> FnDecl<Id, T> {
-    pub fn map_id<U>(self, mut f: impl FnMut(Id) -> U) -> FnDecl<U, T> {
+    pub fn map_id<U>(self, f: &mut impl FnMut(Id) -> U) -> FnDecl<U, T> {
         FnDecl {
             name: f(self.name),
             sign: self.sign.map(|sig| sig.map_id(|id| f(id))),
-            defs: self
-                .defs
-                .into_iter()
-                .map(|m| m.map_id(|id| f(id)))
-                .collect(),
+            defs: self.defs.into_iter().map(|m| m.map_id(f)).collect(),
         }
     }
 
@@ -1192,11 +1181,11 @@ impl<Id, T> MethodDef<Id, T> {
         self.sign.ctxt_iter_mut()
     }
 
-    pub fn map_id<U>(self, mut f: impl FnMut(Id) -> U) -> MethodDef<U, T> {
+    pub fn map_id<U>(self, f: &mut impl FnMut(Id) -> U) -> MethodDef<U, T> {
         MethodDef {
             name: f(self.name),
             sign: self.sign.map_id(|id| f(id)),
-            body: self.body.fmap(|m| m.map_id(|t| f(t))),
+            body: self.body.fmap(|m| m.map_id(f)),
         }
     }
 
@@ -1259,7 +1248,7 @@ impl<Id, T> MethodImpl<Id, T> {
     pub fn into_method(self) -> Method<Id, T> {
         Method::Impl(self.0)
     }
-    pub fn map_id<U>(self, f: impl FnMut(Id) -> U) -> MethodImpl<U, T> {
+    pub fn map_id<U>(self, f: &mut impl FnMut(Id) -> U) -> MethodImpl<U, T> {
         MethodImpl(self.0.map_id(f))
     }
     pub fn map_id_ref<U>(&self, f: &mut impl FnMut(&Id) -> U) -> MethodImpl<U, T>
@@ -1303,13 +1292,10 @@ impl<Id, T> Method<Id, T> {
             Method::Sig(id, _) | Method::Impl(Binding { name: id, .. }) => id,
         }
     }
-    pub fn map_id<F, X>(self, mut f: F) -> Method<X, T>
-    where
-        F: FnMut(Id) -> X,
-    {
+    pub fn map_id<X, F>(self, f: &mut impl FnMut(Id) -> X) -> Method<X, T> {
         match self {
             Method::Sig(id, sig) => Method::Sig(f(id), sig.map_id(|id| f(id))),
-            Method::Impl(binding) => Method::Impl(binding.map_id(|id| f(id))),
+            Method::Impl(binding) => Method::Impl(binding.map_id(f)),
         }
     }
     pub fn map_id_ref<U>(&self, f: &mut impl FnMut(&Id) -> U) -> Method<U, T>
