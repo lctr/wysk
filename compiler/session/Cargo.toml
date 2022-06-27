@@ -11,6 +11,7 @@ toml = "*"
 wy_sources = { path = "../sources" }
 wy_parser = { path = "../parser" }
 wy_syntax = { path = "../syntax" }
+wy_check = { path = "../check" }
 wy_intern = { path = "../intern" }
 wy_name = { path = "../name" }
 wy_span = { path = "../span" }
