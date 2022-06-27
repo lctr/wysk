@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::mem;
 use std::sync::{Arc, Mutex};
 
+use serde::{Deserialize, Serialize};
 use wy_common::Mappable;
 
 /// Key used to reference stored strings. When a string is interened, a
@@ -11,7 +12,7 @@ use wy_common::Mappable;
 ///
 /// NOTE: These CANNOT be directly instantiated, and in fact may only be created
 /// by the global interner as a result of interning strings.
-#[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Hash)]
+#[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Symbol(u32);
 
 impl std::fmt::Display for Symbol {

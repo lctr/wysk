@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use wy_common::{deque, Deque};
 use wy_intern::symbol::{self, reserved, Symbol, Symbolic};
 
@@ -65,7 +66,7 @@ where
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Ident {
     Upper(Symbol),
     Lower(Symbol),
