@@ -38,14 +38,16 @@ fn factorial n :: Int -> Int
 - [x] Implement post-parse pass to reflect user-defined operator precedence and associativity (either from definitions within the same module or from dependencies)
 - [ ] Implement identifier renaming pass to identify name clashes and generate unique names for entities involved
 - [ ] Implement support for (hygienic) macros in lexing and parsing
-- [ ] Improve lexer error reporting to include context
+- [x] Improve lexer error reporting to include context
 - [ ] Unify error handling into its own library
-- [ ] Prettify error messages
+- [x] Prettify error messages
 - [ ] Add suggestions to error messages
-- [ ] Implement static type inference engine (Hindley-Milner+)
+- [x] Implement static type inference engine (Hindley-Milner+)
+- [ ] Extend Hindley-Milner type inference to include type classes and
+  polymorphic records
 - [ ] Implement dependency analysis for global (module-level) and local (entity definition-level) scopes
 - [x] Model entities as a graph and find strongly connected components (SCCs) to identify recursive dependencies
-- [ ] Implement graph reduction scheme
+- [ ] Implement STG graph reduction scheme
 - [ ] Model bytecode (and implement simple stack-based VM?)
 - [ ] Implement REPL as bytecode interpreter 
 - [ ] Implement primitives in Rust/C along with stdlib/prelude
