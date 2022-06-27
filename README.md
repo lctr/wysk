@@ -30,7 +30,7 @@ for fearless recursion (assuming convergent tail recursion). This can be
 exploited along with `case`-like syntax at the function definition level,
 allowing for branches to be predicated upon from a function's top-most scope.
 ```haskell,rust
-fn factorial n :: Int -> Int
+fn factorial :: Int -> Int
   | n if n < 2 = 1
   | n = n * factorial (n - 1)
 ```
