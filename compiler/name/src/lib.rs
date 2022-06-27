@@ -8,7 +8,7 @@ pub mod module;
 
 use ident::{Chain, Ident};
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Unique(usize);
 
 impl Unique {
@@ -18,6 +18,12 @@ impl Unique {
         } else {
             String::new()
         }
+    }
+}
+
+impl std::fmt::Debug for Unique {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Unique({})", &self.0)
     }
 }
 
