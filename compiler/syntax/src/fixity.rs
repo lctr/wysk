@@ -229,6 +229,16 @@ impl std::error::Error for FixityFail {}
 #[derive(Clone, Debug)]
 pub struct FixityTable<Id = Ident>(pub Map<Id, Fixity>);
 
+impl<Id> IntoIterator for FixityTable<Id> {
+    type Item = (Id, Fixity);
+
+    type IntoIter = std::collections::hash_map::IntoIter<Id, Fixity>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
 pub type Infix = Ident;
 
 impl<Id> FixityTable<Id>
@@ -375,9 +385,12 @@ where
     fn visit_module(&mut self, module: &mut Module) {}
 }
 
-impl FromIterator<(Infix, Fixity)> for FixityTable {
-    fn from_iter<T: IntoIterator<Item = (Infix, Fixity)>>(iter: T) -> Self {
-        Self(iter.into_iter().collect::<Map<Infix, Fixity>>())
+impl<Id> FromIterator<(Id, Fixity)> for FixityTable<Id>
+where
+    Id: Eq + std::hash::Hash,
+{
+    fn from_iter<T: IntoIterator<Item = (Id, Fixity)>>(iter: T) -> Self {
+        Self(iter.into_iter().collect::<Map<Id, Fixity>>())
     }
 }
 
