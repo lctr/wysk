@@ -208,7 +208,7 @@ mod test {
     use wy_common::pretty::Many;
 
     #[test]
-    fn test_inference() {
+    fn test_inference_without_prelude() {
         let src = r#"
 data Bool = False | True
 
