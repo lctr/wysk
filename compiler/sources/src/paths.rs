@@ -1,23 +1,87 @@
 use std::{
+    env,
+    ffi::OsStr,
     fs,
     path::{Path, PathBuf},
 };
 
-pub const FILE_EXT: &'static str = "wy";
+use wy_common::iter::Counter;
+
+use crate::manifest::Manifest;
+
+pub const PRELUDE_PATH: &'static str = "../../language";
+
+pub const WY_FILE_EXT: &'static str = "wy";
 
 type IoResult<X> = Result<X, std::io::Error>;
 
 pub fn ext_str(p: &impl AsRef<Path>) -> Option<&str> {
-    p.as_ref().extension().and_then(std::ffi::OsStr::to_str)
+    p.as_ref().extension().and_then(OsStr::to_str)
 }
 
 pub fn is_target_file<P: AsRef<Path>>(p: &P) -> bool {
-    wy_common::case!(Some("wy"), ext_str(p))
+    wy_common::case!(Some(WY_FILE_EXT), ext_str(p))
 }
 
-pub fn is_manifest_file() {}
+pub fn some_target_entry(entry: fs::DirEntry) -> Option<PathBuf> {
+    let path = entry.path();
+    if is_target_file(&path) {
+        Some(path)
+    } else {
+        None
+    }
+}
 
-wy_common::newtype! { usize in FileId | Show (+=) }
+/// Checks whether the given path corresponds to a manifest file. Accepts
+/// files named `manifest.toml` case insensitively.
+pub fn is_manifest_file<P: AsRef<Path>>(p: &P) -> bool {
+    let path = p.as_ref();
+    path.ends_with("Manifest.toml")
+        || path.ends_with("manifest.toml")
+        || path.ends_with("MANIFEST.toml")
+}
+
+wy_common::newtype! {
+    /// Source files are uniquely identified via their enumerated `FileId`s
+    usize in FileId | Show (+=)
+}
+
+impl From<&mut Counter> for FileId {
+    fn from(counter: &mut Counter) -> Self {
+        Self(counter.incremented())
+    }
+}
+
+wy_common::newtype! {
+    /// Manifest files are uniquely identified via their enumerated `MetaId`s.
+    /// While a project has a single manifest file, projects containing other
+    /// projects may contain their own manifest files, hence the need to
+    /// enumerate them.
+    usize in MetaId | Show (+=)
+}
+
+impl From<&mut Counter> for MetaId {
+    fn from(counter: &mut Counter) -> Self {
+        Self(counter.incremented())
+    }
+}
+
+/// Will generate an `Atlas` given a path, but unlike the standard methods in
+/// creating an `Atlas`, this function will *only* look at files contained
+/// within the immediate descendant `src` directory.
+pub fn new_sources(p: impl AsRef<Path>) -> Option<Atlas> {
+    let p = p.as_ref();
+    let path = if p.ends_with("src") {
+        p.to_path_buf()
+    } else {
+        p.join("src")
+    };
+    if p.exists() {
+        Atlas::new_within_dir(path).ok()
+    } else {
+        None
+    }
+}
 
 /// Collection of source file paths which will be visited and
 /// lexically/syntactically processed by the front-end. Note that this only
@@ -35,6 +99,20 @@ wy_common::newtype! { usize in FileId | Show (+=) }
 #[derive(Clone, Debug)]
 pub struct Atlas {
     sources: Vec<Src>,
+}
+
+impl<I: IntoIterator<Item = PathBuf>> From<(&mut Counter, I)> for Atlas {
+    fn from((ct, iter): (&mut Counter, I)) -> Self {
+        Self {
+            sources: ct
+                .zip(iter)
+                .map(|(n, path)| Src {
+                    fid: FileId(n),
+                    path,
+                })
+                .collect(),
+        }
+    }
 }
 
 impl Atlas {
@@ -104,6 +182,15 @@ impl Atlas {
         }
     }
 
+    pub fn add_dir(&mut self, dir: Dir) {
+        self.extend(dir.all_wysk_files())
+    }
+
+    pub fn add_dirs(&mut self, dirs: impl IntoIterator<Item = Dir>) {
+        dirs.into_iter()
+            .for_each(|dir| self.extend(dir.all_wysk_files()))
+    }
+
     pub fn add_sources(&mut self, sources: impl Iterator<Item = Src>) {
         let len = self.len();
         for (n, Src { path, .. }) in sources.enumerate() {
@@ -122,6 +209,10 @@ impl Atlas {
     #[inline]
     pub fn sources_iter_mut(&mut self) -> std::slice::IterMut<'_, Src> {
         self.sources.iter_mut()
+    }
+
+    pub fn walk_dir(dir: Dir) -> Self {
+        Self::walk_path(dir.path()).into_iter().flatten().collect()
     }
 
     /// Returns a vector containing the paths of **all** files ending in `.wy`
@@ -218,6 +309,19 @@ impl FromIterator<PathBuf> for Atlas {
     }
 }
 
+impl FromIterator<Src> for Atlas {
+    fn from_iter<T: IntoIterator<Item = Src>>(iter: T) -> Self {
+        Atlas {
+            sources: iter.into_iter().collect(),
+        }
+    }
+}
+
+/// `Src` describes a filepath ending in the extension `.wy`, and hence cannot
+/// be directly created. Instead, file system traversing helpers -- in `Atlas`
+/// and `Dir` -- are used to generate `Src` instances. This helps prevent
+/// non-wysk source files from inadvertently being included in the `Atlas` file
+/// tree, etc.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Src {
     fid: FileId,
@@ -225,24 +329,19 @@ pub struct Src {
 }
 
 impl Src {
-    pub fn new<P: AsRef<Path>>(fid: FileId, path: P) -> Self {
-        Src {
-            fid,
-            path: path.as_ref().to_path_buf(),
-        }
-    }
-
-    /// Creates a new `Src` instance with the `FileId` generated from the
-    /// iterator provided
-    pub fn new_with<P: AsRef<Path>>(state: &mut impl Iterator<Item = usize>, path: P) -> Self {
-        let n = state.next();
-        assert!(n.is_some());
-        Self::new(FileId(n.unwrap()), path)
-    }
+    pub const MAIN_PATH: &'static str = "main.wy";
+    pub const LIB_PATH: &'static str = "lib.wy";
+    pub const MOD_PATH: &'static str = "mod.wy";
 
     /// Returns the `FileId` generated for this `Src` instance.
     pub fn file_id(&self) -> FileId {
         self.fid
+    }
+
+    pub fn file_name(&self) -> &str {
+        // safe to unwrap since *all* `Src` instances **must** end in the
+        // file-extension `.wy`.
+        self.path().file_name().and_then(|s| s.to_str()).unwrap()
     }
 
     #[inline]
@@ -250,33 +349,38 @@ impl Src {
         self.path.as_ref()
     }
 
-    #[inline]
-    pub fn is_dir(&self) -> bool {
-        self.path.is_dir()
+    /// Returns the name of the parent folder
+    pub fn parent_name(&self) -> Option<&str> {
+        self.path()
+            .parent()
+            .and_then(|p| p.file_name().and_then(|s| s.to_str()))
     }
 
-    #[inline]
-    pub fn is_file(&self) -> bool {
-        self.path.is_file()
+    /// Returns the parent directory.
+    pub fn parent_dir(&self) -> Dir {
+        let p = self
+            .canonicalize()
+            .ok()
+            .and_then(|p| p.parent().map(Path::to_path_buf))
+            .unwrap_or_else(|| PathBuf::from("."));
+        Dir::new(0, p)
     }
 
     /// Converts a given path-like type `P` implementing `AsRef<Path>` into an
     /// `Option<PathBuf>` based on whether the path is a directory.
     #[inline]
-    pub fn some_dir(&self) -> Option<&Path> {
+    fn some_dir_path(&self) -> Option<&Path> {
         match self.path() {
             p if p.is_dir() => Some(p),
             _ => None,
         }
     }
 
-    /// Returns an optional list of paths corresponding to the subdirectories
-    /// contained within the path found in a `Src` instance's `path` field.
-    ///
-    /// Note that this only goes a single level deep, i.e., only directories
-    /// which are immediate descendants are included.  
-    pub fn subdirs(&self) -> Vec<PathBuf> {
-        self.some_dir()
+    /// Returns a list of paths corresponding to all the subdirectories
+    /// recursively found within the `path` field.
+    pub fn siblings(&self) -> Vec<PathBuf> {
+        self.some_dir_path()
+            .and_then(|p| p.parent())
             .into_iter()
             .flat_map(|path| {
                 path.read_dir()
@@ -289,14 +393,20 @@ impl Src {
             .collect()
     }
 
-    pub fn all_subdirs() {}
     /// Transparent wrapper around the `std::fs::read_to_string` method of the
     /// Rust standard library.
     pub fn read_to_string(&self) -> IoResult<String> {
         fs::read_to_string(self.path())
     }
+
+    #[inline]
     pub fn is_main(&self) -> bool {
-        self.path.ends_with("main.wy")
+        self.path.ends_with(Self::MAIN_PATH)
+    }
+
+    #[inline]
+    pub fn is_lib(&self) -> bool {
+        self.path.ends_with(Self::LIB_PATH)
     }
 
     /// Returns the canonical (i.e., absolute) form of the path with all
@@ -337,9 +447,205 @@ impl std::fmt::Display for Src {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Dir {
+    depth: usize,
+    path: PathBuf,
+}
+
+impl AsRef<Path> for Dir {
+    fn as_ref(&self) -> &Path {
+        self.path.as_path()
+    }
+}
+
+impl Dir {
+    pub const SRC_DIR: &'static str = "src";
+
+    pub fn new(depth: usize, path: impl AsRef<Path>) -> Self {
+        let mut dir = Self {
+            depth,
+            path: path.as_ref().to_path_buf(),
+        };
+        dir.normalize();
+        dir
+    }
+
+    /// Transparent wrapper around `std::env::current_dir()` with a depth of
+    /// `0`.
+    #[inline]
+    pub fn current_dir() -> IoResult<Self> {
+        env::current_dir().and_then(|pb| pb.canonicalize().map(|pb| Dir::new(0, pb)))
+    }
+
+    #[inline]
+    pub fn path(&self) -> &Path {
+        self.path.as_path()
+    }
+
+    /// Returns the relative number of directories between this directory and
+    /// the "root" directory, where *root* directory here refers not to that of
+    /// the OS but rather to the oldest `Dir` ancestor from which this `Dir` was
+    /// formed.
+    #[inline]
+    pub fn depth(&self) -> usize {
+        self.depth
+    }
+
+    pub fn is_src_dir(&self) -> bool {
+        self.path.ends_with(Self::SRC_DIR)
+    }
+
+    pub fn has_manifest(&self) -> bool {
+        self.path.join(Manifest::FILENAME).exists()
+    }
+
+    pub fn read_manifest(&self) -> Option<Manifest> {
+        Manifest::from_path(self.path.join(Manifest::FILENAME))
+    }
+
+    pub fn has_src_dir(&self) -> bool {
+        self.path.join(Self::SRC_DIR).exists()
+    }
+
+    /// Returns an iterator of immediate descendant `Src` files.
+    pub fn imm_wysk_files(&self) -> impl Iterator<Item = Src> + '_ {
+        self.path.read_dir().into_iter().flat_map(|rd| {
+            rd.filter_map(|res| {
+                res.ok().map(|de| {
+                    let path = de.path();
+                    if is_target_file(&path) {
+                        Some(path)
+                    } else {
+                        None
+                    }
+                })
+            })
+            .flatten()
+            .enumerate()
+            .map(|(n, path)| Src {
+                fid: FileId(n),
+                path,
+            })
+        })
+    }
+
+    /// Recursively searches all children of this directory and returns an
+    /// iterator containing `Src` instances.
+    pub fn all_wysk_files(&self) -> impl Iterator<Item = Src> + '_ {
+        self.all_sub_dirs()
+            .into_iter()
+            .flat_map(move |dir| dir.imm_wysk_files().collect::<Vec<_>>())
+            .enumerate()
+            .map(|(n, Src { path, .. })| Src {
+                fid: FileId(n),
+                path,
+            })
+    }
+
+    #[inline]
+    /// Returns the canonical (i.e., absolute) form of the path with all
+    /// intermediate components normalized and symbolic links resolved.
+    ///
+    /// To mutably modify the path in place, use `normalize`.
+    pub fn canonicalize(&self) -> IoResult<PathBuf> {
+        self.path.canonicalize()
+    }
+
+    #[inline]
+    /// Attempts to update the `path` field with the `PathBuf` returned from
+    /// calling `canonicalize` and returns the difference in component size from
+    /// canonicalization. If canonicalization failed, then `None` is returned.
+    pub fn normalize(&mut self) -> Option<usize> {
+        let old = self.path.components().count();
+        if let Ok(p) = self.canonicalize() {
+            self.path = p;
+            Some(self.path.components().count() - old)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub fn is_root(&self) -> bool {
+        self.depth == 0
+    }
+
+    #[inline]
+    /// Transparent wrapper over the `components` method from the `std::path`
+    /// module of the Rust standard library.
+    pub fn components(&self) -> std::path::Components {
+        self.path.components()
+    }
+
+    /// Returns an iterator of `Dir`s corresponding to immediate descendant
+    /// directories. Since the directories returned are immediate descendants of
+    /// `Self`, it follows that all returned directories have a `depth` of
+    /// `self.depth + 1`.
+    pub fn imm_sub_dirs(&self) -> impl Iterator<Item = Dir> + '_ {
+        self.path
+            .read_dir()
+            .into_iter()
+            .map(|rd| {
+                rd.filter_map(|de| {
+                    de.ok()
+                        .and_then(|de| {
+                            let p = de.path();
+                            if p.is_dir() {
+                                Some(p)
+                            } else {
+                                None
+                            }
+                        })
+                        .map(|path| Dir::new(self.depth + 1, path))
+                })
+            })
+            .flatten()
+    }
+
+    /// Returns a list of `Dir`s corresponding to all the subdirectories
+    /// recursively found within the `path` field.
+    pub fn all_sub_dirs(&self) -> Vec<Self> {
+        let mut depth = self.depth + 1;
+        let mut dirs = vec![];
+        let mut des = vec![];
+        let mut paths = vec![];
+        let reader = |p: &Path, des: &mut Vec<fs::DirEntry>| {
+            if let Ok(rd) = p.read_dir() {
+                rd.for_each(|res| {
+                    if let Ok(de) = res {
+                        des.push(de);
+                    }
+                })
+            };
+        };
+        reader(self.path.as_path(), &mut des);
+        loop {
+            if des.is_empty() && paths.is_empty() {
+                break;
+            }
+            while let Some(e) = des.pop() {
+                let path = e.path();
+                if path.is_dir() {
+                    paths.push(path);
+                }
+            }
+            depth += 1;
+            while let Some(path) = paths.pop() {
+                reader(path.as_path(), &mut des);
+                dirs.push(Dir::new(depth, path))
+            }
+        }
+        dirs
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn load_dir() {}
 
     #[test]
     fn inspect_directory() {
@@ -356,5 +662,18 @@ mod test {
                 println!("{}", e)
             }
         }
+    }
+
+    #[test]
+    fn test_subdirs() {
+        let root = Dir {
+            depth: 0,
+            path: PathBuf::from("../../language"),
+        };
+        let subdirs = root.all_sub_dirs();
+        println!("subdirectories: {:#?}", &subdirs);
+        assert!(subdirs[2].is_src_dir());
+        println!("{:?}", root.imm_wysk_files().collect::<Vec<_>>());
+        println!("all {:?}", root.all_wysk_files().collect::<Vec<_>>());
     }
 }
