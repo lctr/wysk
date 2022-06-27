@@ -10,6 +10,12 @@ pub enum Failure<E> {
     Err(E),
 }
 
+pub fn normalize_io_err<E>(error: Failure<std::io::Error>) -> Failure<E> {
+    match error {
+        Failure::Io(e) | Failure::Err(e) => Failure::Io(e),
+    }
+}
+
 pub struct It<X>(pub(crate) X);
 impl<X> From<X> for It<X> {
     fn from(x: X) -> Self {
@@ -92,6 +98,15 @@ where
 impl<E> From<std::io::Error> for Failure<E> {
     fn from(ioerr: std::io::Error) -> Self {
         Failure::Io(ioerr)
+    }
+}
+
+impl<E> From<Failure<Failure<E>>> for Failure<E> {
+    fn from(e: Failure<Failure<E>>) -> Self {
+        match e {
+            Failure::Io(e) => Failure::Io(e),
+            Failure::Err(e) => e,
+        }
     }
 }
 
