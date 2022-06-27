@@ -20,3 +20,4 @@ wy_session = { path = "../session" }
 wy_check = { path = "../check" }
 wy_graph = { path = "../graph" }
 wy_simple = { path = "../simple" }
+wy_resolver = { path = "../resolver" }

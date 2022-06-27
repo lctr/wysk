@@ -1,0 +1,13 @@
+[package]
+name = "wy_resolver"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+wy_common = { path = "../common" }
+wy_span = { path = "../span" }
+wy_syntax = { path = "../syntax" }
+wy_intern = { path = "../intern" }
+wy_name = { path = "../name" }
+wy_sources = { path = "../sources" }
+wy_graph = { path = "../graph" }
