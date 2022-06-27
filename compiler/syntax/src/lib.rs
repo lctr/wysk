@@ -1,7 +1,10 @@
 use attr::Attribute;
 use wy_common::{deque, struct_field_iters, Map, Mappable};
 use wy_intern::symbol::{self, Symbol};
-use wy_name::{ident::*, module::ModuleId};
+use wy_name::{
+    ident::{Chain, Ident},
+    module::ModuleId,
+};
 
 pub use wy_lexer::{
     comment::{self, Comment},
@@ -109,13 +112,13 @@ impl<I> SyntaxTree<I> {
             .collect()
     }
 
-    pub fn map_id<X>(self, mut f: impl FnMut(I) -> X) -> SyntaxTree<X>
+    pub fn map_id<X>(self, f: &mut impl FnMut(I) -> X) -> SyntaxTree<X>
     where
         I: std::hash::Hash + Eq,
         X: std::hash::Hash + Eq,
     {
         SyntaxTree {
-            programs: self.programs.fmap(|prog| prog.map_id(|id| f(id))),
+            programs: self.programs.fmap(|prog| prog.map_id(f)),
             packages: self
                 .packages
                 .into_iter()
@@ -139,6 +142,21 @@ impl<I> SyntaxTree<I> {
                 .map(|(mid, chain)| (*mid, chain.map_ref(|id| f(id))))
                 .collect(),
         }
+    }
+}
+
+impl Ast {
+    pub fn qualify_idents(self) -> SyntaxTree<wy_name::Unique> {
+        let SyntaxTree { programs, packages } = self;
+        let programs = programs
+            .into_iter()
+            .map(|program| program.qualify_idents())
+            .collect();
+        let packages = packages
+            .into_iter()
+            .map(|(mid, chs)| (mid, Chain::new(wy_name::intern_chain(chs), deque![])))
+            .collect();
+        SyntaxTree { programs, packages }
     }
 }
 
@@ -260,13 +278,13 @@ impl<Id, U, T> Program<Id, U, T> {
             comments,
         }
     }
-    pub fn map_id<X>(self, mut f: impl FnMut(Id) -> X) -> Program<X, U, T>
+    pub fn map_id<X>(self, f: &mut impl FnMut(Id) -> X) -> Program<X, U, T>
     where
         X: Eq + std::hash::Hash,
         Id: Eq + std::hash::Hash,
     {
         Program {
-            module: self.module.map_id(|id| f(id)),
+            module: self.module.map_id(f),
             fixities: self.fixities.map(f),
             comments: self.comments,
         }
@@ -305,6 +323,27 @@ impl<Id, U, T> Program<Id, U, T> {
             module: self.module.map_t_ref(f),
             fixities: self.fixities.clone(),
             comments: self.comments.clone(),
+        }
+    }
+}
+
+impl Program<Ident, ModuleId, Tv> {
+    pub fn qualify_idents(self) -> Program<wy_name::Unique, ModuleId, Tv> {
+        let Program {
+            module,
+            fixities,
+            comments,
+        } = self;
+        let name = module.modname.clone();
+        let module = qualify_module_idents(module);
+        let fixities = fixities
+            .into_iter()
+            .map(|(id, fix)| (wy_name::intern_chain(name.with_suffix(id)), fix))
+            .collect();
+        Program {
+            module,
+            fixities,
+            comments,
         }
     }
 }
@@ -359,6 +398,9 @@ impl Default for RawModule {
 }
 
 impl<Id, U, T> Module<Id, U, T> {
+    pub fn module_name(&self) -> &Chain<Id> {
+        &self.modname
+    }
     pub fn with_uid<V>(self, uid: V) -> Module<Id, V, T> {
         Module {
             uid,
@@ -375,16 +417,16 @@ impl<Id, U, T> Module<Id, U, T> {
         }
     }
 
-    pub fn map_id<X>(self, mut f: impl FnMut(Id) -> X) -> Module<X, U, T> {
+    pub fn map_id<X>(self, f: &mut impl FnMut(Id) -> X) -> Module<X, U, T> {
         Module {
             uid: self.uid,
             modname: self.modname.map(|id| f(id)),
             imports: self.imports.fmap(|imp| imp.map(|id| f(id))),
             infixes: self.infixes.fmap(|decl| decl.map(|id| f(id))),
             datatys: self.datatys.fmap(|decl| decl.map_id(|id| f(id))),
-            classes: self.classes.fmap(|decl| decl.map_id(|id| f(id))),
-            implems: self.implems.fmap(|decl| decl.map_id(|id| f(id))),
-            fundefs: self.fundefs.fmap(|decl| decl.map_id(|id| f(id))),
+            classes: self.classes.fmap(|decl| decl.map_id(f)),
+            implems: self.implems.fmap(|decl| decl.map_id(f)),
+            fundefs: self.fundefs.fmap(|decl| decl.map_id(f)),
             aliases: self.aliases.fmap(|decl| decl.map_id(|id| f(id))),
             newtyps: self.newtyps.fmap(|decl| decl.map_id(|id| f(id))),
             pragmas: self.pragmas.fmap(|decl| decl.map_id(|id| f(id))),
@@ -494,6 +536,15 @@ impl<Id, U, T> Module<Id, U, T> {
                 .collect(),
         }
     }
+}
+
+/// Replaces every identifier in a module with a chain consisting of the module
+/// name prefixed to the identifier.
+pub fn qualify_module_idents(
+    mdl: Module<Ident, ModuleId, Tv>,
+) -> Module<wy_name::Unique, ModuleId, Tv> {
+    let root_name = mdl.modname.clone();
+    mdl.map_id_ref(&mut |id| wy_name::intern_chain(root_name.with_suffix(*id)))
 }
 
 /// Describe the declared dependencies on other modules within a given module.
@@ -637,21 +688,13 @@ impl<Id> Import<Id> {
         }
     }
 
-    pub fn idents(&self) -> Vec<Id>
-    where
-        Id: Copy,
-    {
+    pub fn idents<'i>(&'i self) -> impl Iterator<Item = &'i Id> + '_ {
         match self {
             Import::Operator(id)
             | Import::Function(id)
             | Import::Abstract(id)
-            | Import::Total(id) => vec![*id],
-            Import::Partial(head, ids) => {
-                let mut h = Vec::with_capacity(ids.len() + 1);
-                h.push(*head);
-                h.extend(ids.iter().copied());
-                h
-            }
+            | Import::Total(id) => std::iter::once(id).chain(&[]),
+            Import::Partial(head, ids) => std::iter::once(head).chain(ids),
         }
     }
 }
