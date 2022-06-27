@@ -6,6 +6,7 @@ use std::{
 };
 
 use wy_common::iter::Counter;
+use wy_failure::{Failure, Outcome};
 
 use crate::manifest::Manifest;
 
@@ -13,7 +14,7 @@ pub const PRELUDE_PATH: &'static str = "../../language";
 
 pub const WY_FILE_EXT: &'static str = "wy";
 
-type IoResult<X> = Result<X, std::io::Error>;
+type IoResult<X> = Outcome<X, std::io::Error>;
 
 pub fn ext_str(p: &impl AsRef<Path>) -> Option<&str> {
     p.as_ref().extension().and_then(OsStr::to_str)
@@ -120,6 +121,10 @@ impl Atlas {
         Self { sources: vec![] }
     }
 
+    pub fn with_prelude() -> IoResult<Self> {
+        Self::new_within_dir(PRELUDE_PATH)
+    }
+
     /// Shortcut for calling `Atlas::walk_dir` and building an `Atlas` from the
     /// results.
     pub fn try_with_path<P: AsRef<Path>>(p: P) -> IoResult<Self> {
@@ -159,7 +164,7 @@ impl Atlas {
         self.sources_iter().find(f)
     }
 
-    pub fn new_within_dir(dir: impl AsRef<Path>) -> Result<Self, std::io::Error> {
+    pub fn new_within_dir(dir: impl AsRef<Path>) -> IoResult<Self> {
         let mut atlas = Self::new();
         let paths = Self::walk_path(dir.as_ref())?;
         atlas.add_paths(paths);
@@ -247,13 +252,15 @@ impl Atlas {
     /// capturing source files within the given directory and excluding
     /// subdirectories. Returns an error if the given path is invalid.
     pub fn walk_one_level<P: AsRef<Path>>(p: P) -> IoResult<Vec<PathBuf>> {
-        fs::read_dir(p.as_ref()).map(|dir| {
-            dir.filter_map(|entry| match entry.as_ref().map(fs::DirEntry::path) {
-                Ok(e) if e.is_file() && is_target_file(&e) => Some(e),
-                _ => None,
+        fs::read_dir(p.as_ref())
+            .map(|dir| {
+                dir.filter_map(|entry| match entry.as_ref().map(fs::DirEntry::path) {
+                    Ok(e) if e.is_file() && is_target_file(&e) => Some(e),
+                    _ => None,
+                })
+                .collect()
             })
-            .collect()
-        })
+            .map_err(|e| Failure::Io(e))
     }
 
     /// Traverses only the `src` subdirectory contained within the given path.
@@ -267,13 +274,15 @@ impl Atlas {
         p: P,
         mut predicate: impl FnMut(&PathBuf) -> bool,
     ) -> IoResult<Vec<PathBuf>> {
-        fs::read_dir(p.as_ref()).map(|dir| {
-            dir.filter_map(|entry| match entry.as_ref().map(fs::DirEntry::path) {
-                Ok(path) if predicate(&path) => Some(path),
-                _ => None,
+        fs::read_dir(p.as_ref())
+            .map(|dir| {
+                dir.filter_map(|entry| match entry.as_ref().map(fs::DirEntry::path) {
+                    Ok(path) if predicate(&path) => Some(path),
+                    _ => None,
+                })
+                .collect()
             })
-            .collect()
-        })
+            .map_err(|e| Failure::Io(e))
     }
 }
 
@@ -396,7 +405,7 @@ impl Src {
     /// Transparent wrapper around the `std::fs::read_to_string` method of the
     /// Rust standard library.
     pub fn read_to_string(&self) -> IoResult<String> {
-        fs::read_to_string(self.path())
+        fs::read_to_string(self.path()).map_err(|e| Failure::Io(e))
     }
 
     #[inline]
@@ -414,7 +423,7 @@ impl Src {
     ///
     /// To mutably modify the path in place, use `normalize`.
     pub fn canonicalize(&self) -> IoResult<PathBuf> {
-        self.path.canonicalize()
+        self.path.canonicalize().map_err(|e| Failure::Io(e))
     }
 
     /// Attempts to update the `path` field with the `PathBuf` returned from
@@ -475,7 +484,9 @@ impl Dir {
     /// `0`.
     #[inline]
     pub fn current_dir() -> IoResult<Self> {
-        env::current_dir().and_then(|pb| pb.canonicalize().map(|pb| Dir::new(0, pb)))
+        env::current_dir()
+            .and_then(|pb| pb.canonicalize().map(|pb| Dir::new(0, pb)))
+            .map_err(|e| Failure::Io(e))
     }
 
     #[inline]
@@ -549,7 +560,7 @@ impl Dir {
     ///
     /// To mutably modify the path in place, use `normalize`.
     pub fn canonicalize(&self) -> IoResult<PathBuf> {
-        self.path.canonicalize()
+        self.path.canonicalize().map_err(|e| Failure::Io(e))
     }
 
     #[inline]
