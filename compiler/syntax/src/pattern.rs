@@ -152,40 +152,27 @@ impl<Id, T> Pattern<Id, T> {
         }
     }
 
-    pub fn map_id<F, X>(self, mut f: F) -> Pattern<X, T>
-    where
-        F: FnMut(Id) -> X,
-    {
+    pub fn map_id<X>(self, f: &mut impl FnMut(Id) -> X) -> Pattern<X, T> {
         match self {
             Pattern::Wild => Pattern::Wild,
             Pattern::Var(id) => Pattern::Var(f(id)),
             Pattern::Lit(k) => Pattern::Lit(k),
-            Pattern::Dat(id, tail) => Pattern::Dat(
-                f(id),
-                tail.into_iter().map(|p| p.map_id(|id| f(id))).collect(),
-            ),
-            Pattern::Tup(ts) => {
-                Pattern::Tup(ts.into_iter().map(|p| p.map_id(|id| f(id))).collect())
+            Pattern::Dat(id, tail) => {
+                Pattern::Dat(f(id), tail.into_iter().map(|p| p.map_id(f)).collect())
             }
-            Pattern::Vec(ts) => {
-                Pattern::Vec(ts.into_iter().map(|p| p.map_id(|id| f(id))).collect())
+            Pattern::Tup(ts) => Pattern::Tup(ts.into_iter().map(|p| p.map_id(f)).collect()),
+            Pattern::Vec(ts) => Pattern::Vec(ts.into_iter().map(|p| p.map_id(f)).collect()),
+            Pattern::Lnk(x, y) => Pattern::Lnk(Box::new(x.map_id(f)), Box::new(y.map_id(f))),
+            Pattern::At(id, p) => Pattern::At(f(id), Box::new(p.map_id(f))),
+            Pattern::Or(ps) => Pattern::Or(ps.into_iter().map(|p| p.map_id(f)).collect()),
+            Pattern::Rec(rec) => Pattern::Rec(rec.map_id(|id| f(id)).map_t(|pat| pat.map_id(f))),
+            Pattern::Cast(pat, ty) => Pattern::Cast(Box::new(pat.map_id(f)), ty.map_id(f)),
+            Pattern::Rng(a, None) => Pattern::Rng(Box::new(a.map_id(f)), None),
+            Pattern::Rng(a, Some(b)) => {
+                let x = a.map_id(f);
+                let y = b.map_id(f);
+                Pattern::Rng(Box::new(x), Some(Box::new(y)))
             }
-            Pattern::Lnk(x, y) => Pattern::Lnk(
-                Box::new(x.map_id(|id| f(id))),
-                Box::new(y.map_id(|id| f(id))),
-            ),
-            Pattern::At(id, p) => Pattern::At(f(id), Box::new(p.map_id(|id| f(id)))),
-            Pattern::Or(ps) => Pattern::Or(ps.into_iter().map(|p| p.map_id(|id| f(id))).collect()),
-            Pattern::Rec(rec) => {
-                Pattern::Rec(rec.map_id(|id| f(id)).map_t(|pat| pat.map_id(|id| f(id))))
-            }
-            Pattern::Cast(pat, ty) => {
-                Pattern::Cast(Box::new(pat.map_id(|id| f(id))), ty.map_id(&mut f))
-            }
-            Pattern::Rng(a, b) => Pattern::Rng(
-                a.fmap(|pat| pat.map_id(|id| f(id))),
-                b.fmap(|p| p.fmap(|p| p.map_id(|id| f(id)))),
-            ),
         }
     }
     pub fn map_id_ref<U>(&self, f: &mut impl FnMut(&Id) -> U) -> Pattern<U, T>
@@ -424,5 +411,19 @@ impl<Id, T> Pattern<Id, T> {
             }
             Pattern::Rng(_, _) => todo!(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wy_name::ident::*;
+
+    #[test]
+    fn test_map_id() {
+        let [a, b, c] = wy_intern::intern_many_with(["a", "b", "c"], wy_name::ident::Ident::Lower);
+        let pat: Pattern<Ident, ()> = Pattern::Rng(Box::new(Pattern::Var(a)), None);
+        let pat2 = pat.map_id(&mut |id| Chain::from((b, [c, id])));
+        println!("{:?}", pat2)
     }
 }

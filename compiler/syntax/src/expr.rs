@@ -98,11 +98,11 @@ impl<Id, T> Section<Id, T> {
         match self {
             Section::Prefix { prefix, right } => Section::Prefix {
                 prefix: f(prefix),
-                right: Box::new(right.map_id(|id| f(id))),
+                right: Box::new(right.map_id(&mut f)),
             },
             Section::Suffix { left, suffix } => Section::Suffix {
                 suffix: f(suffix),
-                left: Box::new(left.map_id(|id| f(id))),
+                left: Box::new(left.map_id(&mut f)),
             },
         }
     }
@@ -579,68 +579,60 @@ impl<Id, T> Expression<Id, T> {
         })
     }
 
-    pub fn map_id<X>(self, mut f: impl FnMut(Id) -> X) -> Expression<X, T> {
+    pub fn map_id<X>(self, f: &mut impl FnMut(Id) -> X) -> Expression<X, T> {
         match self {
             Expression::Ident(id) => Expression::Ident(f(id)),
             Expression::Path(p, rs) => {
                 Expression::Path(f(p), rs.into_iter().map(|id| f(id)).collect())
             }
             Expression::Lit(l) => Expression::Lit(l),
-            Expression::Neg(x) => Expression::Neg(Box::new(x.map_id(|id| f(id)))),
+            Expression::Neg(x) => Expression::Neg(Box::new(x.map_id(f))),
             Expression::Infix { infix, left, right } => Expression::Infix {
                 infix: f(infix),
-                left: Box::new(left.map_id(|id| f(id))),
-                right: Box::new(right.map_id(|id| f(id))),
+                left: Box::new(left.map_id(f)),
+                right: Box::new(right.map_id(f)),
             },
             Expression::Section(sec) => Expression::Section(sec.map_id(f)),
             Expression::Tuple(ts) => {
-                Expression::Tuple(ts.into_iter().map(|x| x.map_id(|id| f(id))).collect())
+                Expression::Tuple(ts.into_iter().map(|x| x.map_id(f)).collect())
             }
             Expression::Array(ts) => {
-                Expression::Array(ts.into_iter().map(|x| x.map_id(|id| f(id))).collect())
+                Expression::Array(ts.into_iter().map(|x| x.map_id(f)).collect())
             }
             Expression::List(x, stms) => Expression::List(
-                Box::new(x.map_id(|id| f(id))),
-                stms.into_iter().map(|s| s.map_id(|id| f(id))).collect(),
+                Box::new(x.map_id(f)),
+                stms.into_iter()
+                    .map(|s| s.map_id(&mut |id| f(id)))
+                    .collect(),
             ),
-            Expression::Dict(rec) => {
-                Expression::Dict(rec.map_t(|x| x.map_id(|id| f(id))).map_id(|id| f(id)))
-            }
+            Expression::Dict(rec) => Expression::Dict(rec.map_t(|x| x.map_id(f)).map_id(f)),
             Expression::Lambda(p, x) => {
-                Expression::Lambda(p.map_id(|id| f(id)), Box::new(x.map_id(|id| f(id))))
+                Expression::Lambda(p.map_id(&mut |id| f(id)), Box::new(x.map_id(f)))
             }
             Expression::Let(bs, x) => Expression::Let(
-                bs.into_iter().map(|b| b.map_id(|id| f(id))).collect(),
-                Box::new(x.map_id(|id| f(id))),
+                bs.into_iter().map(|b| b.map_id(&mut |id| f(id))).collect(),
+                Box::new(x.map_id(f)),
             ),
-            Expression::App(x, y) => Expression::App(
-                Box::new(x.map_id(|id| f(id))),
-                Box::new(y.map_id(|id| f(id))),
-            ),
+            Expression::App(x, y) => Expression::App(Box::new(x.map_id(f)), Box::new(y.map_id(f))),
             Expression::Cond(xyz) => {
                 let [x, y, z] = *xyz;
-                Expression::Cond(Box::new([
-                    x.map_id(|id| f(id)),
-                    y.map_id(|id| f(id)),
-                    z.map_id(|id| f(id)),
-                ]))
+                Expression::Cond(Box::new([x.map_id(f), y.map_id(f), z.map_id(f)]))
             }
             Expression::Case(scrut, arms) => Expression::Case(
-                Box::new(scrut.map_id(|id| f(id))),
-                arms.into_iter().map(|a| a.map_id(|id| f(id))).collect(),
+                Box::new(scrut.map_id(f)),
+                arms.into_iter()
+                    .map(|a| a.map_id(&mut |id| f(id)))
+                    .collect(),
             ),
-            Expression::Cast(x, ty) => {
-                Expression::Cast(Box::new(x.map_id(|id| f(id))), ty.map_id(&mut f))
-            }
+            Expression::Cast(x, ty) => Expression::Cast(Box::new(x.map_id(f)), ty.map_id(f)),
             Expression::Do(sts, x) => Expression::Do(
-                sts.into_iter().map(|s| s.map_id(|id| f(id))).collect(),
-                Box::new(x.map_id(|id| f(id))),
+                sts.into_iter().map(|s| s.map_id(&mut |id| f(id))).collect(),
+                Box::new(x.map_id(f)),
             ),
-            Expression::Range(a, b) => Expression::Range(
-                Box::new(a.map_id(|id| f(id))),
-                b.map(|x| Box::new(x.map_id(|id| f(id)))),
-            ),
-            Expression::Group(ex) => Expression::Group(Box::new(ex.map_id(|id| f(id)))),
+            Expression::Range(a, b) => {
+                Expression::Range(Box::new(a.map_id(f)), b.map(|x| Box::new(x.map_id(f))))
+            }
+            Expression::Group(ex) => Expression::Group(Box::new(ex.map_id(f))),
         }
     }
 

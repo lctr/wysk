@@ -75,12 +75,12 @@ impl<Id, T> Match<Id, T> {
         });
         vars
     }
-    pub fn map_id<X>(self, mut f: impl FnMut(Id) -> X) -> Match<X, T> {
+    pub fn map_id<X>(self, f: &mut impl FnMut(Id) -> X) -> Match<X, T> {
         Match {
-            args: self.args.fmap(|pat| pat.map_id(|id| f(id))),
-            pred: self.pred.map(|ex| ex.map_id(|id| f(id))),
-            body: self.body.map_id(|id| f(id)),
-            wher: self.wher.fmap(|bnd| bnd.map_id(|id| f(id))),
+            args: self.args.fmap(|pat| pat.map_id(f)),
+            pred: self.pred.map(|ex| ex.map_id(f)),
+            body: self.body.map_id(f),
+            wher: self.wher.fmap(|bnd| bnd.map_id(f)),
         }
     }
 
@@ -255,10 +255,7 @@ impl<Id, T> Alternative<Id, T> {
         });
         vars
     }
-    pub fn map_id<F, X>(self, mut f: F) -> Alternative<X, T>
-    where
-        F: FnMut(Id) -> X,
-    {
+    pub fn map_id<X>(self, f: &mut impl FnMut(Id) -> X) -> Alternative<X, T> {
         let Alternative {
             pat,
             pred,
@@ -266,10 +263,10 @@ impl<Id, T> Alternative<Id, T> {
             wher,
         } = self;
         Alternative {
-            pat: pat.map_id(|id| f(id)),
-            pred: pred.map(|x| x.map_id(|id| f(id))),
-            body: body.map_id(|id| f(id)),
-            wher: wher.into_iter().map(|b| b.map_id(|id| f(id))).collect(),
+            pat: pat.map_id(f),
+            pred: pred.map(|x| x.map_id(f)),
+            body: body.map_id(f),
+            wher: wher.into_iter().map(|b| b.map_id(f)).collect(),
         }
     }
 
@@ -398,11 +395,11 @@ impl<Id, T> Binding<Id, T> {
         vars.remove(&self.name);
         vars
     }
-    pub fn map_id<X>(self, mut f: impl FnMut(Id) -> X) -> Binding<X, T> {
+    pub fn map_id<X>(self, f: &mut impl FnMut(Id) -> X) -> Binding<X, T> {
         let Binding { name, arms, tipo } = self;
         Binding {
             name: f(name),
-            arms: arms.into_iter().map(|m| m.map_id(|id| f(id))).collect(),
+            arms: arms.into_iter().map(|m| m.map_id(f)).collect(),
             tipo: tipo.map(|sig| sig.map_id(|id| f(id))),
         }
     }
@@ -469,17 +466,12 @@ pub enum Statement<Id, T> {
 pub type RawStatement = Statement<Ident, Ident>;
 
 impl<Id, T> Statement<Id, T> {
-    pub fn map_id<F, X>(self, mut f: F) -> Statement<X, T>
-    where
-        F: FnMut(Id) -> X,
-    {
+    pub fn map_id<X>(self, f: &mut impl FnMut(Id) -> X) -> Statement<X, T> {
         match self {
-            Statement::Generator(p, x) => {
-                Statement::Generator(p.map_id(|id| f(id)), x.map_id(|id| f(id)))
-            }
-            Statement::Predicate(x) => Statement::Predicate(x.map_id(|id| f(id))),
+            Statement::Generator(p, x) => Statement::Generator(p.map_id(f), x.map_id(f)),
+            Statement::Predicate(x) => Statement::Predicate(x.map_id(f)),
             Statement::JustLet(bns) => {
-                Statement::JustLet(bns.into_iter().map(|b| b.map_id(|id| f(id))).collect())
+                Statement::JustLet(bns.into_iter().map(|b| b.map_id(f)).collect())
             }
         }
     }
