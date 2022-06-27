@@ -24,6 +24,11 @@ fn main :: IO ()
 ```
 
 ### Factorial
+*Wysk* does not have traditional loops; instead it relies on recursion to
+achieve the same effect. With tail-call optimization, this *generally* allows
+for fearless recursion (assuming convergent tail recursion). This can be
+exploited along with `case`-like syntax at the function definition level,
+allowing for branches to be predicated upon from a function's top-most scope.
 ```haskell,rust
 fn factorial n :: Int -> Int
   | n if n < 2 = 1
