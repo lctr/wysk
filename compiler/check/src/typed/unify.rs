@@ -6,31 +6,31 @@ use super::{
     subst::{Subst, Substitutable},
 };
 
-pub trait Unify {
-    fn unifier(&self) -> &Unifier;
+// pub trait Unify {
+//     fn unifier(&self) -> &Unifier;
 
-    fn unifier_mut(&mut self) -> &mut Unifier;
+//     fn unifier_mut(&mut self) -> &mut Unifier;
 
-    fn unify(&mut self, t1: Type, t2: Type) -> Result<Subst, Error> {
-        self.unifier_mut().unify(t1, t2)
-    }
+//     fn unify(&mut self, t1: Type, t2: Type) -> Result<Subst, Error> {
+//         self.unifier_mut().unify(t1, t2)
+//     }
 
-    fn unify_zipped(&mut self, xys: impl Iterator<Item = (Type, Type)>) -> Result<Subst, Error> {
-        self.unifier_mut().unify_zipped(xys)
-    }
+//     fn unify_zipped(&mut self, xys: impl Iterator<Item = (Type, Type)>) -> Result<Subst, Error> {
+//         self.unifier_mut().unify_zipped(xys)
+//     }
 
-    fn unify_many(
-        &mut self,
-        t1s: impl IntoIterator<Item = Type>,
-        t2s: impl IntoIterator<Item = Type>,
-    ) -> Result<Subst, Error> {
-        self.unifier_mut().unify_many(t1s, t2s)
-    }
+//     fn unify_many(
+//         &mut self,
+//         t1s: impl IntoIterator<Item = Type>,
+//         t2s: impl IntoIterator<Item = Type>,
+//     ) -> Result<Subst, Error> {
+//         self.unifier_mut().unify_many(t1s, t2s)
+//     }
 
-    fn bind(&mut self, var: Tv, tipo: Type) -> Result<Subst, Error> {
-        self.unifier_mut().bind(var, tipo)
-    }
-}
+//     fn bind(&mut self, var: Tv, tipo: Type) -> Result<Subst, Error> {
+//         self.unifier_mut().bind(var, tipo)
+//     }
+// }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Bound {
