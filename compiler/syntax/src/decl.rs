@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use wy_common::{Map, Mappable};
 use wy_name::ident::{Ident, Identifier};
 
@@ -96,7 +97,7 @@ impl<Id: Copy + Eq + std::hash::Hash> From<&[FixityDecl<Id>]> for FixityTable<Id
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Constructor<Id, T> {
     pub parent: Id,
     pub name: Id,
@@ -189,7 +190,7 @@ impl<Id, T> Constructor<Id, T> {
 ///     with (B, C, D);
 /// ~~       ^^^^^^^^
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DataDecl<Id = Ident, T = Ident> {
     pub name: Id,
     pub poly: Vec<T>,
@@ -436,7 +437,7 @@ impl DataDecl {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Variant<Id = Ident, T = Ident> {
     pub name: Id,
     pub args: Vec<Type<Id, T>>,
@@ -578,7 +579,7 @@ impl<Id, T> Variant<Id, T> {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Tag(pub u32);
 
 impl Default for Tag {
@@ -599,7 +600,7 @@ impl std::fmt::Display for Tag {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Arity(pub usize);
 
 impl std::fmt::Debug for Arity {
@@ -671,7 +672,7 @@ wy_common::newtype!(Arity | usize | PartialEq);
 wy_common::newtype!(Arity | usize | PartialOrd);
 wy_common::newtype!(Arity | usize | (+= usize |rhs| rhs) );
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AliasDecl<Id = Ident, T = Ident> {
     pub name: Id,
     pub poly: Vec<T>,
@@ -789,7 +790,7 @@ impl<Id, T> AliasDecl<Id, T> {
 /// data constructor with (arbitrarily many) arguments, while a `Record` variant
 /// corresponds to a single constructor *associated with* a selector function,
 /// whose signature is included in the variant.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NewtypeArg<Id = Ident, T = Ident> {
     /// Used when the newtype constructor is *not* a record and instead takes
     /// multiple type arguments, such as `newtype Foo a = Bar a`
@@ -850,7 +851,7 @@ impl<Id, T> NewtypeArg<Id, T> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NewtypeDecl<Id = Ident, T = Ident> {
     pub name: Id,
     pub poly: Vec<T>,
@@ -910,7 +911,7 @@ impl<Id, T> NewtypeDecl<Id, T> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClassDecl<Id = Ident, T = Ident> {
     pub name: Id,
     pub poly: Vec<T>,
@@ -980,7 +981,7 @@ impl<Id, T> ClassDecl<Id, T> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InstDecl<Id = Ident, T = Ident> {
     pub name: Id,
     pub tipo: Type<Id, T>,
@@ -1066,7 +1067,7 @@ impl<Id, T> InstDecl<Id, T> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FnDecl<Id = Ident, T = Ident> {
     pub name: Id,
     pub sign: Option<Signature<Id, T>>,
@@ -1135,7 +1136,7 @@ impl<Id, T> FnDecl<Id, T> {
 
 /// Equivalent to a subset of a `MethodDef` instance, flattening all data
 /// structures, i.e., moving fields from `Signature` directly to `Interface`
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Interface<Id = Ident, T = Id> {
     pub name: Id,
     pub each: Vec<T>,
@@ -1163,7 +1164,7 @@ impl<Id, T> From<MethodDef<Id, T>> for (Interface<Id, T>, Vec<Match<Id, T>>) {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MethodDef<Id = Ident, T = Ident> {
     pub name: Id,
     pub sign: Signature<Id, T>,
@@ -1224,7 +1225,7 @@ impl<Id, T> MethodDef<Id, T> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MethodImpl<Id = Ident, T = Ident>(pub Binding<Id, T>);
 impl<Id, T> MethodImpl<Id, T> {
     pub fn new(binding: Binding<Id, T>) -> Self {
@@ -1268,7 +1269,7 @@ impl<Id, T> MethodImpl<Id, T> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Method<Id = Ident, T = Ident> {
     Sig(Id, Signature<Id, T>),
     Impl(Binding<Id, T>),

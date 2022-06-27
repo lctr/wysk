@@ -1,5 +1,6 @@
 #![allow(unused)]
 use super::*;
+use serde::{Deserialize, Serialize};
 use visit::{Visit, VisitError, VisitMut};
 use wy_intern::symbol;
 
@@ -15,7 +16,7 @@ use wy_lexer::{
 /// written 9 -- is actually *10*. This is to give us the freedom to define
 /// a precedence lower than defineable externally without having to rely on
 /// negative numbers.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Prec(pub u8);
 
 impl Prec {
@@ -51,7 +52,7 @@ impl From<Digit> for Prec {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Assoc {
     Left,
     Right,
@@ -111,7 +112,7 @@ impl From<Associativity> for Assoc {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Fixity {
     pub prec: Prec,
     pub assoc: Assoc,
@@ -226,6 +227,89 @@ impl<Id: std::fmt::Display> std::fmt::Display for FixityFail<Id> {
 
 impl std::error::Error for FixityFail {}
 
+/// Non-hashmap container for declared fixities.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Fixities<Id>(Vec<(Id, Fixity)>);
+impl Default for Fixities<Ident> {
+    fn default() -> Self {
+        Self(vec![(Ident::COLON, Fixity::CONS)])
+    }
+}
+
+impl<Id> Fixities<Id> {
+    #[inline]
+    pub fn contains_infix(&self, id: &Id) -> bool
+    where
+        Id: PartialEq,
+    {
+        self.iter().any(|(i, _)| i == id)
+    }
+
+    #[inline]
+    pub fn contains_fixity(&self, id: &Id, fixity: &Fixity) -> bool
+    where
+        Id: PartialEq,
+    {
+        self.iter().any(|(i, fx)| i == id && fx == fixity)
+    }
+
+    #[inline]
+    pub fn map<U>(self, mut f: impl FnMut(Id) -> U) -> Fixities<U> {
+        self.0
+            .into_iter()
+            .map(|(id, fixity)| (f(id), fixity))
+            .collect()
+    }
+
+    #[inline]
+    pub fn into_table(self) -> FixityTable<Id>
+    where
+        Id: Eq + std::hash::Hash,
+    {
+        self.0.into_iter().collect()
+    }
+
+    #[inline]
+    pub fn iter(&self) -> std::slice::Iter<'_, (Id, Fixity)> {
+        self.0.iter()
+    }
+
+    #[inline]
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, (Id, Fixity)> {
+        self.0.iter_mut()
+    }
+}
+
+impl<Id> IntoIterator for Fixities<Id> {
+    type Item = (Id, Fixity);
+
+    type IntoIter = std::vec::IntoIter<(Id, Fixity)>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<Id> FromIterator<(Id, Fixity)> for Fixities<Id> {
+    fn from_iter<T: IntoIterator<Item = (Id, Fixity)>>(iter: T) -> Self {
+        Fixities(iter.into_iter().collect::<Vec<_>>())
+    }
+}
+
+impl<Id> From<FixityTable<Id>> for Fixities<Id> {
+    fn from(table: FixityTable<Id>) -> Self {
+        Self(table.into_iter().collect::<Vec<_>>())
+    }
+}
+
+impl<Id> std::ops::Deref for Fixities<Id> {
+    type Target = Vec<(Id, Fixity)>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct FixityTable<Id = Ident>(pub Map<Id, Fixity>);
 
@@ -241,6 +325,17 @@ impl<Id> IntoIterator for FixityTable<Id> {
 
 pub type Infix = Ident;
 
+impl<Id: Eq + std::hash::Hash> std::ops::Index<Id> for FixityTable<Id> {
+    type Output = Fixity;
+
+    fn index(&self, index: Id) -> &Self::Output {
+        self.0.get(&index).unwrap_or_else(|| &Fixity {
+            assoc: Assoc::Left,
+            prec: Prec(9),
+        })
+    }
+}
+
 impl<Id> FixityTable<Id>
 where
     Id: Eq + std::hash::Hash,
@@ -250,6 +345,13 @@ where
         map.insert(infixify(symbol::COLON), Fixity::CONS);
         Self(map)
     }
+
+    /// Converts the `FixityTable` into an instance of `Fixities`, containing
+    /// the same data but backed by a vector instead of a hashmap.
+    pub fn as_fixities(self) -> Fixities<Id> {
+        self.0.into_iter().collect()
+    }
+
     /// Returns default fixity (left, 9) if not found.
     pub fn get_fixity(&self, id: &Id) -> Fixity {
         self.0.get(id).copied().unwrap_or_default()
@@ -264,12 +366,9 @@ where
         )
     }
 
+    #[inline]
     pub fn iter(&self) -> std::collections::hash_map::Iter<'_, Id, Fixity> {
         self.0.iter()
-    }
-
-    pub fn iter_mut(&mut self) -> std::collections::hash_map::IterMut<'_, Id, Fixity> {
-        self.0.iter_mut()
     }
 
     /// Apply this fixity table's fixities to an expression, rearranging an

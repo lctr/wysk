@@ -1,5 +1,6 @@
 use std::num::{ParseFloatError, ParseIntError};
 
+use serde::{Deserialize, Serialize};
 use wy_common::strenum;
 use wy_intern::symbol::{self, Symbol};
 
@@ -110,7 +111,7 @@ impl NumSuffix {
 /// represent negative integers with `Literal`s, as all integers are initially
 /// parsed as nonnegatives -- a negative number is represented by the AST as a
 /// "negation" node containing a numeric literal.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Literal {
     Byte(u8),
     Int(u32),

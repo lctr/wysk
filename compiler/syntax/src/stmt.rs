@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use wy_common::{Mappable, Set};
 use wy_name::ident::Ident;
 
@@ -18,7 +19,7 @@ use crate::{decl::Arity, expr::Expression, pattern::Pattern, tipo::Signature};
 /// ~~:   ^^^   ^^^^^^^^^^ ^^^^^^^^^^^^^^^^^^^
 /// ~~: `args`    `body`         `wher[0]`
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Match<Id, T> {
     pub args: Vec<Pattern<Id, T>>,
     pub pred: Option<Expression<Id, T>>,
@@ -224,7 +225,7 @@ impl MatchArms {
 ///               u = False;
 /// ~~:           ^^^^^^^^^ `wher[1]`
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Alternative<Id, T> {
     pub pat: Pattern<Id, T>,
     pub pred: Option<Expression<Id, T>>,
@@ -331,7 +332,7 @@ impl<Id, T> Alternative<Id, T> {
 ///     | x y = (x, y);
 /// ~~: ^^^^^^^^^^^^^^ `arms[0]`
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Binding<Id, T> {
     pub name: Id,
     pub arms: Vec<Match<Id, T>>,
@@ -452,7 +453,7 @@ impl<Id, T> Binding<Id, T> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Statement<Id, T> {
     // <PAT> <- <EXPR>
     Generator(Pattern<Id, T>, Expression<Id, T>),

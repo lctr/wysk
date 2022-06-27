@@ -1,4 +1,5 @@
 use crate::tipo::{Con, Field, Record, Type};
+use serde::{Deserialize, Serialize};
 use wy_common::{variant_preds, Mappable, Set};
 use wy_lexer::literal::Literal;
 use wy_name::ident::Ident;
@@ -15,7 +16,7 @@ variant_preds! { |Id, T| Pattern[Id, T]
 
 pub type RawPattern = Pattern<Ident, Ident>;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Pattern<Id, T> {
     /// Describes the wildcard pattern and is written `_`. Since it is a
     /// wildcard pattern, it matches against *any* pattern.

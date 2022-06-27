@@ -1,5 +1,6 @@
 use std::{fmt::Write, hash::Hash};
 
+use serde::{Deserialize, Serialize};
 use wy_common::{either::Either, push_if_absent, Map, Mappable};
 use wy_intern::{Symbol, Symbolic};
 use wy_name::ident::Ident;
@@ -11,7 +12,7 @@ use crate::decl::Arity;
 /// TODO: (for display/printing aesthetics) reserve `Tv(6)` and `Tv(13)` for `f`
 /// and `m`, respectively for type variables in constructor position??? Or put
 /// off into a separate type in a later phase.
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
 pub struct Tv(pub u32);
 
 impl Tv {
@@ -93,7 +94,7 @@ impl From<Tv> for Ident {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Var<Id>(pub Id, pub Tv);
 impl<Id> Var<Id> {
     pub fn new(id: Id) -> Var<Id> {
@@ -221,7 +222,7 @@ impl<T> Extend<Var<T>> for Vec<(T, Tv)> {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Con<Id = Ident, T = Id> {
     /// List constructor `[]`; arity = 1
     List,
@@ -398,7 +399,7 @@ impl<Id: std::fmt::Display, T: std::fmt::Display> std::fmt::Display for Con<Id, 
 /// * `a -> b` desugars into `(->) a b`
 /// * `[a]` desugars into `(:) a` The above desugared forms correspond to the
 /// `Con` variant. Note: this does not hold for record types!
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Type<Id = Ident, T = Id> {
     /// Type variables. These use their own special inner type `Tv`, which is a
     /// newtype wrapper around a `u32`.
@@ -1148,7 +1149,7 @@ impl<Id> Type<Id, Tv> {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Ty<Id = Ident> {
     Var(Tv),
     Con(Con<Id, Tv>, Vec<Ty<Id>>),
@@ -1219,7 +1220,7 @@ impl<Id> Ty<Id> {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Kind {
     Star,
     Arrow(Box<Kind>, Box<Kind>),
@@ -1293,7 +1294,7 @@ impl Kind {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Record<Id, T> {
     /// Anonymous records don't have a *constructor* and are hence *extensible*,
     /// but less type-safe
@@ -1489,7 +1490,7 @@ where
     fs
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Field<Id, T> {
     /// Primarily used in partial records to indicate that a given record's list
     /// of fields is incomplete. Note that it is a syntactic error for this
@@ -1630,7 +1631,7 @@ impl<Id, T> Field<Id, T> {
 /// ~~: ^--------^
 /// ~~: Context 1 and Context 2, surrounded by `|` and followed by `=>`
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Context<Id = Ident, T = Ident> {
     /// The name of the type class for which this holds
     pub class: Id,
@@ -1699,7 +1700,7 @@ impl<Id, T> Context<Id, T> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Signature<Id = Ident, T = Ident> {
     /// quantified type variables -- should this be here or a separate struct or
     /// type variant?

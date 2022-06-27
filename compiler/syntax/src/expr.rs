@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use wy_common::{deque, variant_preds, Deque, Mappable, Set};
 use wy_lexer::Literal;
 use wy_name::ident::{Ident, Identifier};
@@ -11,7 +12,7 @@ use crate::{
 
 use super::{Pattern, Statement};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Section<Id = Ident, T = Id> {
     Prefix {
         prefix: Id,
@@ -155,7 +156,7 @@ impl<Id, T> Section<Id, T> {
 pub type RawExpression = Expression<Ident, Ident>;
 pub type Expr<T> = Expression<Ident, T>;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Expression<Id, T> {
     /// Identifier expressions; these can contain either *lowercase*-initial
     /// identifiers (corresponding to values), *uppercase*-initial identifiers
