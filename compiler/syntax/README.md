@@ -118,6 +118,30 @@ NewtypeDecl := "newtype" Upper {Lower} "=" (RecordNewtype | StackedNewtype);
 RecordNewtype := Upper "{" Lower "::" Type "}";
 StackedNewtype := Upper {Type});
 
+Pat := WildPat
+     | VarPat
+     | Literal
+     | TuplePat
+     | ArrayPat
+     | LinkPat
+     | AtPat
+     | OrPat
+     | RecordPat
+     | RangePat
+     | CastPat
+     ;
+WildPat := "_";
+VarPat := Lower;
+TuplePat := "()" | "(" Pat {"," Pat} ")";
+ArrayPat := "[]" | "[" Pat {"," Pat} "]";
+LinkPat := "(" Pat ":" Pat ")";
+AtPat := Lower "@" Pat;
+OrPat := Pat {"|" Pat};
+RecordPat := Upper "{}" | Upper "{" FieldPat {"," FieldPat} "}";
+FieldPat := Lower ["=" Pat];
+RangePat := "[" RangePatBound ".." [RangePatBound] "]";
+RangePatBound := IntLiteral | CharLiteral;
+
 Expr := LetExpr 
       | CaseExpr 
       | CondExpr 
@@ -140,6 +164,7 @@ AtomExpr := Upper
           | TupleExpr 
           | ArrayExpr 
           | ListExpr 
+          | RangeExpr
           | RecordExpr 
           | FieldAccess 
           | Literal
@@ -149,6 +174,8 @@ AtomExpr := Upper
 TupleExpr := "(" Expr {"," Expr} [","] ")";
 ArrayExpr := "[" Expr {"," Expr} [","] "]";
 ListExpr := "[" Expr "|" Stmts "]";
+RangeExpr := "[" RangeBound ".." [RangeBound] "]";
+RangeBound := (Upper | Lower | IntLiteral | CharLiteral)
 Stmts := {Stmt ","};
 Stmt := Pat "<-" Expr | Expr | "let" Binding;
 RecordExpr := (Upper | Lower) "{" FieldExpr {"," FieldExpr} "}";
