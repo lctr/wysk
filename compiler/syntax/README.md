@@ -10,7 +10,7 @@ need to be ironed out before resorting to implicit layout in the same vein as
 *Haskell*'s).
 
 Some key differences:
-* top level function definitions are preceded by the `fn` keyword
+* top level function definitions are preceded by the `fn` keyword.
 * function signatures, if included, must follow the declared function name and
   *precede* the function definition body. This may be changed in future
   versions.
