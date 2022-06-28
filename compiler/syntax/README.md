@@ -21,21 +21,22 @@ Some key differences:
   Thus while `|` indicates a pattern guard in Haskell, it is simply treated as a
   delimiter for function definition binding groups. 
 * semicolons are generally expected to terminate a declaration, with the
-  exception of top level function definitions and data declarations, where we
-  are able to determine boundaries upon encountering the aforementioned vertical
-  pipe `|`. In general, either a keyword, semicolon, or pipe must separate
-  distinct declarations. 
+  exception of import statements, top level function definitions and data
+  declarations, where we are able to determine boundaries upon encountering the
+  aforementioned vertical pipe `|`. In general, either a keyword, semicolon, or
+  pipe must separate distinct declarations. 
 * function definition argument patterns may be *guarded* by boolean predicates
   in a manner most similar to that of match arm predicates in *Rust*.
 * the keyword `impl` is used for class instances over the `instance` keyword
-  found in *Haskell*, weakly alluding to the `impl` blocks found in *Rust*. 
+  found in *Haskell*, weakly alluding to the `impl` blocks found in *Rust*. This
+  has no special meaning and was entirely chosen for brevity.
 * curly braces are required in `class` and `impl` declarations, with semi-colons
   strictly necessary within these two syntactic contexts.
 * class contexts are found in the same position in type signatures as their
   *Haskell* counterparts, but are wrapped in vertical pipes instead of relying
   on the implication arrow `=>`. This makes parsing a bit easier. Additionally,
-  syntax sugar is planned to shorten long and repetitive constraints such as
-  `|Class a, Class b, Class c, Class d, ... |`. 
+  plans for syntax sugar to shorten long and repetitive constraints such as
+  `|Class a, Class b, Class c, Class d, ... |` is currently under consideration. 
 
 ## Grammar
 Below is the EBNF grammar for *Wysk*, with concatenative commas omitted for brevity.
