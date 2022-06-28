@@ -33,7 +33,7 @@ Some key differences:
   strictly necessary within these two syntactic contexts.
 * class contexts are found in the same position in type signatures as their
   *Haskell* counterparts, but are wrapped in vertical pipes instead of relying
-  on the implication arrow `:=>`. This makes parsing a bit easier. Additionally,
+  on the implication arrow `=>`. This makes parsing a bit easier. Additionally,
   syntax sugar is planned to shorten long and repetitive constraints such as
   `|Class a, Class b, Class c, Class d, ... |`. 
 
