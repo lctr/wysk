@@ -70,12 +70,17 @@ Decl := FixityDecl
       | NewtypeDecl
       ;
 
-FixityDecl := FixityKeyword FixityPrec Infix {Infix};
-FixityKeyword := "infix" | "infixl" | "infixr";
-FixityPrec := "0" | "1" | "2" | "3" | "4" 
-            | "5" | "6" | "7" | "8" | "9";
+FixityDecl := Assoc Prec Infix {Infix};
+Assoc := "infix" 
+       | "infixl" 
+       | "infixr"
+      ;
+Prec := "0" | "1" | "2" | "3" | "4" 
+      | "5" | "6" | "7" | "8" | "9"
+      ;
 
-DataDecl := "data" [Context] Upper {Lower} "=" Variants ["with" Derives];
+DataDecl := "data" DataHead "=" Variants ["with" Derives];
+DataHead := [Context] Upper {Lower};
 Context := "|" Upper Lower {"," Upper Lower} "|";
 Variants := Variant {"|" Variant};
 Variant := Upper "{" FieldSigs "}" | Upper {Type};
@@ -116,7 +121,7 @@ MethodImpls := {Binding ";"};
 
 NewtypeDecl := "newtype" Upper {Lower} "=" (RecordNewtype | StackedNewtype);
 RecordNewtype := Upper "{" Lower "::" Type "}";
-StackedNewtype := Upper {Type});
+StackedNewtype := Upper {Type};
 
 Pat := WildPat
      | VarPat
