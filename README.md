@@ -1,17 +1,33 @@
 # Wysk
+A statically typed, functional language inspired by Haskell, ML, and Rust. This
+language is effectively a rewrite and redesign of all the prior languages I've
+(incompletely) implemented, but with an emphasis on modular (and ideally
+non-monolithic) code. 
 
-A statically typed, functional language inspired by Haskell, ML, and Rust. This language is effectively a rewrite and redesign of all the prior languages I've (incompletely) implemented, but with an emphasis on modular (and ideally non-monolithic) code.
+The *Wysk* language aims to eventually branch away from its admittedly
+Haskell-heavy influence, and currently touts the following features (either
+complete or as goals):
+* algebraic data types
+* static type inference via Hindley-Milner
+* systematic overloading and polymorphism via type classes
+* a flexible module system
+* fearless concurrency afforded by lazy semantics and a run-time system written
+  purely in Rust
+* leveraging the low-level power of Rust with the high-level semantics of Haskell
 
-I am still fairly inexperienced when it comes to compiler development, so it follows that this project -- and its documentation -- is *very* much a work in progress. 
+I am still fairly inexperienced when it comes to compiler development, so it
+follows that this project -- and its documentation -- is *very* much a work in
+progress. 
 
-## Goals
-Below are some of the things I'm hoping to implement. 
-* Algebraic data types
-* Typeclasses/systematic overloading 
-* Hindley-Milner type inference
-* Extensible records
-* Interactive bytecode interpreter
-* LLVM JIT compilation
+Additionally, this compiler aims to use *as little dependencies as
+possible*. The common exceptions to this are the `lazy_static`, `serde` and
+`toml` crates; aside from these two, the lack of external dependencies allows
+for a greater amount of flexibility and control over specific functions and
+implementations used within the compiler, as well as proving to be a wonderful
+exercise in learning how to truly appreciate what the *Rust* standard library
+has to offer. With that being said, additional dependencies will likely be added
+on an as-needed basis as the compiler itself matures -- but that'll have to wait
+until I get tired of handrolling my own Rust :).
 
 ## [WIP] Examples
 ### Hello world
