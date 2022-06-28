@@ -147,7 +147,7 @@ AtomExpr := Upper
           ;
 TupleExpr := "(" Expr {"," Expr} [","] ")";
 ArrayExpr := "[" Expr {"," Expr} [","] "]";
-ListExpr := "[" Expr | Stmts "]";
+ListExpr := "[" Expr "|" Stmts "]";
 Stmts := {Stmt ","};
 Stmt := Pat "<-" Expr | Expr | "let" Binding;
 RecordExpr := (Upper | Lower) "{" FieldExpr {"," FieldExpr} "}";
