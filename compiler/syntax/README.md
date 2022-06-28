@@ -47,14 +47,18 @@ Program := "module" ModName "where" Imports Decls;
 ModName := Upper {".", Upper};
 
 Imports := {Import};
-Import := "import" ["qualified"] ModName [ImportRename] ["hiding"] ["{" ImportList "}"];
-ImportRename := "@" Upper;
+Import := "import" ImportSpec ["{" ImportList "}"];
+ImportSpec := ["qualified"] ModName [Rename] ["hiding"];
+Rename := "@" Upper;
 ImportList := ImportItem ["," ImportList];
-ImportItem := AbstractImport | ValueImport | DataImport;
+ImportItem := AbstractImport 
+            | ValueImport 
+            | DataImport;
 AbstractImport := Upper ;
 ValueImport := Lower | "(" Infix ")";
 DataImport := Upper "(" ConstructorList ")" | Upper;
-ConstructorList := ".." | Upper {"," Upper};
+ConstructorList := Upper {"," Upper}
+                 | "..";
 
 Decls := {Decl};
 Decl := FixityDecl 
@@ -68,7 +72,8 @@ Decl := FixityDecl
 
 FixityDecl := FixityKeyword FixityPrec Infix {Infix};
 FixityKeyword := "infix" | "infixl" | "infixr";
-FixityPrec := "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9";
+FixityPrec := "0" | "1" | "2" | "3" | "4" 
+            | "5" | "6" | "7" | "8" | "9";
 
 DataDecl := "data" [Context] Upper {Lower} "=" Variants ["with" Derives];
 Context := "|" Upper Lower {"," Upper Lower} "|";
@@ -112,16 +117,34 @@ NewtypeDecl := "newtype" Upper {Lower} "=" (RecordNewtype | StackedNewtype);
 RecordNewtype := Upper "{" Lower "::" Type "}";
 StackedNewtype := Upper {Type});
 
-Expr := LetExpr | CaseExpr | CondExpr | LambdaExpr | AppExpr | CastExpr | AtomExpr;
+Expr := LetExpr 
+      | CaseExpr 
+      | CondExpr 
+      | LambdaExpr 
+      | AppExpr 
+      | CastExpr 
+      | AtomExpr
+      ;
 LetExpr := "let" Binding "in" Expr;
 CaseExpr := "case" Expr "of" "{" CaseArms "}";
 CaseArms := {"|" CaseArm};
 CaseArm := Pat [Pred] "->" FnRhs;
 CondExpr := "if" Expr "then" Expr "else" Expr;
 LambdaExpr := "\\" Pat {Pat} "->" Expr;
-AppExpr := (Upper | Lower) {Expr};
+AppExpr := (Upper | Lower) {Expr} 
+         | RecordExpr;
 CastExpr := "(" Expr "::" Type ")";
-AtomExpr := Upper | Lower | "()" | TupleExpr | "[]" | ArrayExpr | ListExpr | RecordExpr | FieldAccess | Literal;
+AtomExpr := Upper 
+          | Lower 
+          | TupleExpr 
+          | ArrayExpr 
+          | ListExpr 
+          | RecordExpr 
+          | FieldAccess 
+          | Literal
+          | "()" 
+          | "[]"
+          ;
 TupleExpr := "(" Expr {"," Expr} [","] ")";
 ArrayExpr := "[" Expr {"," Expr} [","] "]";
 ListExpr := "[" Expr | Stmts "]";
@@ -130,7 +153,11 @@ Stmt := Pat "<-" Expr | Expr | "let" Binding;
 RecordExpr := (Upper | Lower) "{" FieldExpr {"," FieldExpr} "}";
 FieldExpr := (Lower | Label) ["=" Expr];
 FieldAccess := Lower {"." (Lower | Label)};
-Literal := IntLiteral | CharLiteral | StringLiteral;
+Literal := IntLiteral 
+         | CharLiteral 
+         | StringLiteral
+         | ByteLiteral
+         ;
 
 ```
 
