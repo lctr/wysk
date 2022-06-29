@@ -9,7 +9,10 @@ variant_preds! { |Id, T| Pattern[Id, T]
     | is_var => Var (_)
     | is_unit => Tup (vs) [if vs.is_empty()]
     | is_nil => Vec (vs) [if vs.is_empty()]
+    | is_data => Dat (..)
+    | is_nullary_data => Dat (_, vs) [if vs.is_empty()]
     | is_void => Rec (Record::Anon(entries)) [if entries.is_empty()]
+    | is_partial_record => Rec (rec) [if rec.has_rest()]
     | is_lit => Lit (_)
 
 }
@@ -79,6 +82,106 @@ impl<Id, T> Pattern<Id, T> {
         }
     }
 
+    /// Checks whether all variable binders introduced by a pattern (and its
+    /// subpatterns) are NOT repeated; note that the only variant for which
+    /// repeated binders are valid is for `or` patterns, where all alternatives
+    /// *must* contain the same variable binders, unlike the other variants.
+    pub fn has_repeated_binders(&self) -> bool
+    where
+        Id: Eq + std::hash::Hash,
+    {
+        let mut set = Set::new();
+        let mut dupe = false;
+        fn check<'a, A: Eq + std::hash::Hash, B>(
+            set: &mut Set<&'a A>,
+            p: &'a Pattern<A, B>,
+            dupe: &mut bool,
+        ) {
+            for a in p.binders() {
+                if *dupe {
+                    break;
+                } else {
+                    *dupe = !set.insert(a);
+                }
+            }
+        }
+        match self {
+            Pattern::Wild | Pattern::Var(_) | Pattern::Lit(_) => (),
+            Pattern::Dat(k, ps) => {
+                if set.contains(k) {
+                    dupe = true
+                } else {
+                    for p in ps {
+                        if dupe {
+                            break;
+                        } else {
+                            check(&mut set, p, &mut dupe)
+                        }
+                    }
+                }
+            }
+            Pattern::Tup(ps) | Pattern::Vec(ps) => {
+                for p in ps {
+                    if dupe {
+                        break;
+                    } else {
+                        check(&mut set, p, &mut dupe)
+                    }
+                }
+            }
+            Pattern::Lnk(pa, pb) => {
+                check(&mut set, pa.as_ref(), &mut dupe);
+                if !dupe {
+                    check(&mut set, pb.as_ref(), &mut dupe)
+                }
+            }
+            Pattern::At(id, p) => {
+                if set.contains(id) {
+                    dupe = true
+                } else {
+                    check(&mut set, p.as_ref(), &mut dupe)
+                }
+            }
+            Pattern::Or(ps) => dupe = ps.into_iter().any(Self::has_repeated_binders),
+            Pattern::Rec(rec) => {
+                if let Some(k) = rec.ctor() {
+                    if set.contains(k) {
+                        dupe = true;
+                    } else {
+                        set.insert(k);
+                    }
+                }
+                for fld in rec.fields() {
+                    if dupe {
+                        break;
+                    } else {
+                        if let Some(k) = fld.get_key() {
+                            if set.contains(k) {
+                                dupe = true;
+                                break;
+                            } else {
+                                set.insert(k);
+                            }
+                        }
+                        if let Some(p) = fld.get_value() {
+                            check(&mut set, p, &mut dupe)
+                        }
+                    }
+                }
+            }
+            Pattern::Cast(p, _) => check(&mut set, p.as_ref(), &mut dupe),
+            Pattern::Rng(pa, pb) => {
+                check(&mut set, pa.as_ref(), &mut dupe);
+                if !dupe {
+                    if let Some(p) = pb {
+                        check(&mut set, p.as_ref(), &mut dupe)
+                    }
+                }
+            }
+        };
+        dupe
+    }
+
     /// Recursively checks whether all the sub-patterns in an `or` pattern bind
     /// the same identifiers. If a given pattern is not an `or` pattern, then
     /// this checks any subpatterns for `or` patterns to which this method will
@@ -121,17 +224,21 @@ impl<Id, T> Pattern<Id, T> {
         matches!(self, Self::Rec(Record::Anon(fs)|Record::Data(_, fs)) if fs.is_empty() )
     }
 
+    /// Returns a hashset containing all variable identifiers bound within a
+    /// pattern. Since this method returns a hashset, it is not suitable for
+    /// checking for duplicates or variable identifier order: use the `binders`
+    /// method instead, which returns a vector of variable identifiers
+    /// potentially containing duplicates.
     pub fn vars(&self) -> Set<Id>
     where
         Id: Copy + Eq + std::hash::Hash,
     {
         let mut vars = Set::new();
         match self {
-            Pattern::Wild => todo!(),
+            Pattern::Wild | Pattern::Lit(_) => (),
             Pattern::Var(id) => {
                 vars.insert(*id);
             }
-            Pattern::Lit(_) => todo!(),
             Pattern::Dat(_, ps) | Pattern::Tup(ps) | Pattern::Vec(ps) | Pattern::Or(ps) => {
                 for p in ps {
                     vars.extend(p.vars())
@@ -160,6 +267,52 @@ impl<Id, T> Pattern<Id, T> {
                 vars.extend(a.vars());
                 if let Some(c) = b {
                     vars.extend(c.vars())
+                }
+            }
+        };
+        vars
+    }
+
+    /// Returns a list of references to all the variable binders introduced by a
+    /// pattern, including duplicates.
+    pub fn binders(&self) -> Vec<&Id>
+    where
+        Id: PartialEq,
+    {
+        let mut vars = Vec::new();
+        match self {
+            Pattern::Wild | Pattern::Lit(_) => (),
+            Pattern::Var(id) => {
+                vars.push(id);
+            }
+            Pattern::Dat(_, ps) | Pattern::Tup(ps) | Pattern::Vec(ps) | Pattern::Or(ps) => {
+                for p in ps {
+                    vars.extend(p.binders())
+                }
+            }
+            Pattern::Lnk(x, y) => {
+                vars.extend(x.binders());
+                vars.extend(y.binders());
+            }
+            Pattern::At(x, y) => {
+                vars.push(x);
+                vars.extend(y.binders());
+            }
+            Pattern::Rec(rec) => rec.fields().into_iter().for_each(|field| {
+                if let Some(key) = field.get_key() {
+                    vars.push(key);
+                }
+                if let Some(val) = field.get_value() {
+                    vars.extend(val.binders())
+                }
+            }),
+            Pattern::Cast(p, _) => {
+                vars.extend(p.binders());
+            }
+            Pattern::Rng(a, b) => {
+                vars.extend(a.binders());
+                if let Some(c) = b {
+                    vars.extend(c.binders())
                 }
             }
         };
@@ -462,5 +615,60 @@ mod tests {
         let pat: Pattern<Ident, ()> = Pattern::Rng(Box::new(Pattern::Var(a)), None);
         let pat2 = pat.map_id(&mut |id| Chain::from((b, [c, id])));
         println!("{:?}", pat2)
+    }
+
+    #[test]
+    fn test_pat_dupe_binders() {
+        use crate::Tv;
+        use crate::Type;
+        use wy_name::ident::Ident::{self, Lower};
+        use Pattern::*;
+        let [a, b, c, d, e, f, g] =
+            wy_intern::intern_many_with(["a", "b", "c", "d", "e", "f", "g"], Lower);
+        let pat_with_dupe_vars = Tup(vec![
+            Var(a),
+            Var(b),
+            Tup(vec![
+                Var(c),
+                Lnk(
+                    Box::new(Var(d)),
+                    Box::new(Vec(vec![
+                        Var(e),
+                        Var(f),
+                        Wild,
+                        Rng(Box::new(Var(f)), Some(Box::new(Var(a)))),
+                    ])),
+                ),
+            ]),
+            Cast(Box::new(Var(c)), Type::Var(Tv(0))),
+        ]);
+        let pat_without_dupe_vars = Tup(vec![
+            Var(a),
+            Var(b),
+            Tup(vec![
+                Var(c),
+                Lnk(
+                    Box::new(Var(d)),
+                    Box::new(Tup(vec![
+                        Var(e),
+                        Var(f),
+                        Wild,
+                        Vec(vec![Var(g), Cast(Box::new(Wild), Type::Var(Tv(0)))]),
+                    ])),
+                ),
+            ]),
+        ]);
+        let p_w_dupes = pat_with_dupe_vars.has_repeated_binders();
+        let p_wo_dupes = pat_without_dupe_vars.has_repeated_binders();
+        println!(
+            "\
+            unit has dupes: {}\n\
+            pat_with_dupe_vars has dupes: {}\n\
+            pat_without_dupe_vars has dupes: {}\n\
+            ",
+            Pattern::<Ident, Tv>::UNIT.has_repeated_binders(),
+            p_w_dupes,
+            p_wo_dupes
+        );
     }
 }
