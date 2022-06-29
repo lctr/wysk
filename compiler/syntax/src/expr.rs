@@ -31,6 +31,32 @@ variant_preds! {
 }
 
 impl<Id, T> Section<Id, T> {
+    /// Given a prefix, returns a closure expecting an Expression with which it
+    /// will construct a `Section::Prefix` variant.
+    #[inline]
+    pub fn with_prefix(prefix: Id) -> impl FnMut(Expression<Id, T>) -> Self
+    where
+        Id: Copy,
+    {
+        move |right| Self::Prefix {
+            prefix,
+            right: Box::new(right),
+        }
+    }
+
+    /// Given a suffix, returns a closure expecting an Expression with which it
+    /// will construct a `Section::Suffix` variant.
+    #[inline]
+    pub fn with_suffix(suffix: Id) -> impl FnMut(Expression<Id, T>) -> Self
+    where
+        Id: Copy,
+    {
+        move |left| Self::Suffix {
+            left: Box::new(left),
+            suffix,
+        }
+    }
+
     pub fn as_lambda(self, fresh_var: Id) -> (Pattern<Id, T>, Expression<Id, T>)
     where
         Id: Copy,
@@ -69,6 +95,10 @@ impl<Id, T> Section<Id, T> {
             Section::Prefix { prefix, right } => (prefix, right.as_ref()),
             Section::Suffix { left, suffix } => (suffix, left.as_ref()),
         }
+    }
+    #[inline]
+    pub fn into_expression(self) -> Expression<Id, T> {
+        Expression::Section(self)
     }
     pub fn expr(&self) -> &Expression<Id, T> {
         match self {
@@ -425,6 +455,10 @@ impl<Id, T> Expression<Id, T> {
     #[inline]
     pub fn is_closed_range(&self) -> bool {
         matches!(self, Self::Range(_, Some(_)))
+    }
+
+    pub fn mk_group(expr: Self) -> Self {
+        Self::Group(Box::new(expr))
     }
 
     pub fn mk_app(head: Self, tail: Self) -> Self {
