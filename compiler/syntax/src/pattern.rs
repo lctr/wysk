@@ -53,6 +53,36 @@ impl<Id, T> Pattern<Id, T> {
     pub const UNIT: Self = Self::Tup(vec![]);
     pub const NULL: Self = Self::Vec(vec![]);
 
+    /// Checks whether a pattern is a valid lambda argument pattern. A valid
+    /// lambda pattern is an irrefutable pattern, i.e., a pattern that is
+    /// guaranteed to match the scrutinee.
+    ///
+    /// Rejected patterns include `or` patterns, `literal` patterns, constructor
+    /// patterns (since this particular method doesn't have access to the list
+    /// of all constructors of a data type), list-like patterns, range patterns
+    /// (since they are syntactic sugar for list-like patterns) and record
+    /// patterns.
+    ///
+    /// This check exists since lambdas *may not* be partial functions.
+    pub fn is_valid_lambda_pat(&self) -> bool {
+        match self {
+            Pattern::Wild | Pattern::Var(_) => true,
+            Pattern::Tup(ps) => ps.into_iter().all(Self::is_valid_lambda_pat),
+            Pattern::At(_, p) | Pattern::Cast(p, _) => p.is_valid_lambda_pat(),
+            Pattern::Lit(_)
+            | Pattern::Dat(_, _)
+            | Pattern::Vec(_)
+            | Pattern::Lnk(_, _)
+            | Pattern::Or(_)
+            | Pattern::Rec(_)
+            | Pattern::Rng(_, _) => false,
+        }
+    }
+
+    /// Recursively checks whether all the sub-patterns in an `or` pattern bind
+    /// the same identifiers. If a given pattern is not an `or` pattern, then
+    /// this checks any subpatterns for `or` patterns to which this method will
+    /// be applied.
     pub fn uniformly_bound_ors(&self) -> bool
     where
         Id: Eq + Copy + std::hash::Hash,
