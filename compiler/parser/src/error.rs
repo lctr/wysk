@@ -11,35 +11,49 @@ pub trait Report {
     fn get_srcloc(&mut self) -> SrcLoc;
     fn get_source(&self) -> String;
     fn next_token(&mut self) -> Token;
+
+    #[inline(always)]
+    fn snapshot(&mut self) -> (SrcLoc, Token, String) {
+        (self.get_srcloc(), self.next_token(), self.get_source())
+    }
     fn expected(&mut self, lexes: LexKind) -> ParseError {
-        ParseError::Expected(
-            self.get_srcloc(),
-            lexes,
-            self.next_token(),
-            self.get_source(),
-        )
+        let (srcloc, tok, src) = self.snapshot();
+        ParseError::Expected(srcloc, lexes, tok, src)
+    }
+    fn unexpected_eof(&mut self) -> ParseError {
+        ParseError::UnexpectedEof(self.get_srcloc(), self.get_source())
     }
     fn unknown_lexeme(&mut self) -> ParseError {
-        ParseError::InvalidLexeme(self.get_srcloc(), self.next_token(), self.get_source())
+        let (srcloc, tok, src) = self.snapshot();
+        ParseError::InvalidLexeme(srcloc, tok, src)
     }
-    fn pattern_error(&mut self) -> ParseError {
-        ParseError::InvalidPattern(self.get_srcloc(), self.next_token(), self.get_source())
+    fn invalid_pattern(&mut self) -> ParseError {
+        let (srcloc, tok, src) = self.snapshot();
+        ParseError::InvalidPattern(srcloc, tok, src)
+    }
+    fn invalid_expr(&mut self) -> ParseError {
+        let (srcloc, tok, src) = self.snapshot();
+        ParseError::InvalidExpression(srcloc, tok, src)
+    }
+    fn invalid_type(&mut self) -> ParseError {
+        let (srcloc, tok, src) = self.snapshot();
+        ParseError::InvalidType(srcloc, tok, src)
+    }
+    fn invalid_fn_ident(&mut self) -> ParseError {
+        self.custom_error("is not a valid function name: expected a lowercase-initial identifier or an infix wrapped in parentheses")
     }
     fn custom_error(&mut self, message: &'static str) -> ParseError {
-        ParseError::Custom(
-            self.get_srcloc(),
-            self.next_token(),
-            message,
-            self.get_source(),
-        )
+        let (srcloc, tok, src) = self.snapshot();
+        ParseError::Custom(srcloc, tok, message, src)
     }
 
     fn unbalanced(&mut self, delim: Lexeme) -> ParseError {
+        let (srcloc, found, source) = self.snapshot();
         ParseError::Unbalanced {
-            srcloc: self.get_srcloc(),
-            found: self.next_token(),
+            srcloc,
+            found,
             delim,
-            source: self.get_source(),
+            source,
         }
     }
     fn unbalanced_paren(&mut self) -> ParseError {
@@ -76,6 +90,8 @@ pub enum ParseError {
     InvalidLexeme(SrcLoc, Token, String),
     InvalidPrec(SrcLoc, Token, String),
     InvalidPattern(SrcLoc, Token, String),
+    InvalidExpression(SrcLoc, Token, String),
+    InvalidType(SrcLoc, Token, String),
     FixityExists(SrcLoc, Ident, Span, String),
     BadContext(SrcLoc, Ident, Span, String),
     Custom(SrcLoc, Token, &'static str, String),
@@ -92,6 +108,10 @@ impl std::error::Error for ParseError {}
 wy_failure::fails!(impl for ParseError);
 
 impl ParseError {
+    #[inline]
+    pub fn err<X>(self) -> Result<X, Self> {
+        Err(self)
+    }
     pub fn srcloc(&self) -> &SrcLoc {
         match self {
             ParseError::UnexpectedEof(srcloc, ..)
@@ -99,11 +119,19 @@ impl ParseError {
             | ParseError::InvalidLexeme(srcloc, ..)
             | ParseError::InvalidPrec(srcloc, ..)
             | ParseError::InvalidPattern(srcloc, ..)
+            | ParseError::InvalidExpression(srcloc, ..)
+            | ParseError::InvalidType(srcloc, ..)
             | ParseError::FixityExists(srcloc, ..)
             | ParseError::BadContext(srcloc, ..)
             | ParseError::Custom(srcloc, ..)
             | ParseError::Unbalanced { srcloc, .. } => srcloc,
         }
+    }
+}
+
+impl<X> From<ParseError> for Result<X, ParseError> {
+    fn from(e: ParseError) -> Self {
+        e.err()
     }
 }
 
@@ -136,6 +164,18 @@ impl std::fmt::Display for ParseError {
             ParseError::InvalidPattern(_, tok, src) => write!(
                 f,
                 "expected a pattern, but found `{}` which does not begin a valid pattern",
+                tok
+            )
+            .map(|_| src),
+            ParseError::InvalidExpression(_, tok, src) => write!(
+                f,
+                "expected an expression, but found `{}` which does not begin a valid expression",
+                tok
+            )
+            .map(|_| src),
+            ParseError::InvalidType(_, tok, src) => write!(
+                f,
+                "expected a type, but found `{}` which does not begin a valid type",
                 tok
             )
             .map(|_| src),
@@ -192,3 +232,11 @@ impl std::fmt::Display for ParseError {
         Ok(())
     }
 }
+
+pub trait Expects {
+    fn expects(reporter: &mut impl Report, lexes: LexKind) -> ParseError {
+        reporter.expected(lexes)
+    }
+}
+
+impl Expects for ParseError {}

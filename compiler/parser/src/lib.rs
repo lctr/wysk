@@ -165,6 +165,12 @@ impl<'t> Parser<'t> {
         array
     }
 
+    /// Consumes an initial lexeme `start` and repeatedly alternates applying
+    /// the given closure `f` and consuming the separator lexeme `mid`,
+    /// terminating upon encountering (and consuming) the ending lexeme `end`.
+    ///
+    /// This method is ideal for parsing collections of delimited nodes, as in
+    /// tuples and arrays.
     pub fn delimited<F, X>(&mut self, [start, mid, end]: [Lexeme; 3], mut f: F) -> Parsed<Vec<X>>
     where
         F: FnMut(&mut Self) -> Parsed<X>,
@@ -188,18 +194,6 @@ impl<'t> Parser<'t> {
         }
         self.eat(end)?;
         Ok(nodes)
-    }
-
-    pub fn many_while<F, G, X>(&mut self, mut pred: G, mut f: F) -> Parsed<Vec<X>>
-    where
-        G: FnMut(&mut Self) -> bool,
-        F: FnMut(&mut Self) -> Parsed<X>,
-    {
-        let mut xs = vec![];
-        while pred(self) {
-            xs.push(f(self)?);
-        }
-        Ok(xs)
     }
 }
 
@@ -233,7 +227,7 @@ impl<'t> Streaming for Parser<'t> {
 
     fn is_done(&mut self) -> bool {
         match self.peek() {
-            Some(t) if t.lexeme.is_eof() => true,
+            Some(t) if t.is_eof() => true,
             None => true,
             _ => false,
         }
@@ -928,7 +922,7 @@ impl<'t> TypeParser<'t> {
             lexpat!(~[brackL]) => self.brack_ty(),
             // lexpat!(~[curlyL]) => self.curly_ty(),
             lexpat!(~[parenL]) => self.paren_ty(),
-            _ => Err(self.custom_error("does not begin a type")),
+            _ => self.invalid_type().err(),
         }
     }
 
@@ -1390,7 +1384,7 @@ impl<'t> ExprParser<'t> {
 
     fn atom(&mut self) -> Parsed<RawExpression> {
         match self.peek() {
-            Some(t) if t.lexeme.is_minus_sign() => self.negation(),
+            Some(t) if t.is_minus_sign() => self.negation(),
             lexpat!(~[parenL]) => self.paren_expr(),
             lexpat!(~[brackL]) => self.brack_expr(),
             lexpat!(~[let]) => self.let_expr(),
@@ -1400,9 +1394,9 @@ impl<'t> ExprParser<'t> {
             lexpat!(~[lam]) => self.lambda(),
             lexpat!(~[lit]) => self.literal(),
             lexpat!(~[var][Var]) => self.identifier(),
-            _ => {
-                Err(self.custom_error("does not correspond to a lexeme that begins an expression"))
-            }
+            _ => self
+                .custom_error("does not correspond to a lexeme that begins an expression")
+                .err(),
         }
     }
 
@@ -1414,12 +1408,7 @@ impl<'t> ExprParser<'t> {
         let ident = match self.peek() {
             lexpat!(~[var]) => self.expect_lower(),
             lexpat!(~[Var]) => self.expect_upper(),
-            _ => Err(ParseError::Expected(
-                self.srcloc(),
-                LexKind::Identifier,
-                self.bump(),
-                self.text(),
-            )),
+            _ => self.expected(LexKind::Identifier).err(),
         }?;
         match self.peek() {
             lexpat!(~[.]) => {
@@ -1438,12 +1427,7 @@ impl<'t> ExprParser<'t> {
                 Some(t) if t.is_lower() => p.expect_lower(),
                 Some(t) if t.is_upper() => p.expect_upper(),
                 Some(t) if t.is_infix() => p.expect_infix(),
-                _ => Err(ParseError::Expected(
-                    p.srcloc(),
-                    LexKind::Identifier,
-                    p.bump(),
-                    p.text(),
-                )),
+                _ => p.expected(LexKind::Identifier).err(),
             },
         )
     }
@@ -1461,10 +1445,10 @@ impl<'t> ExprParser<'t> {
         } else {
             let section = self
                 .expression()
-                .map(Box::new)
-                .map(|right| Section::Prefix { prefix, right })?;
+                .map(Section::with_prefix(prefix))?
+                .into_expression();
             self.eat(ParenR)?;
-            RawExpression::Section(section)
+            section
         })
     }
 
@@ -1476,7 +1460,7 @@ impl<'t> ExprParser<'t> {
             return Ok(RawExpression::Section(Section::Prefix { prefix, right }));
         }
         self.eat(Lexeme::ParenR)?;
-        Ok(RawExpression::Group(Box::new(RawExpression::Ident(prefix))))
+        Ok(RawExpression::mk_group(RawExpression::Ident(prefix)))
     }
 
     fn suffix_section(&mut self, left: RawExpression) -> Parsed<RawExpression> {
@@ -1566,12 +1550,7 @@ impl<'t> ExprParser<'t> {
                 .map(|xs| std::iter::once(first).chain(xs).collect::<Vec<_>>())
                 .map(RawExpression::Array),
 
-            _ => Err(ParseError::Unbalanced {
-                srcloc: self.srcloc(),
-                found: self.bump(),
-                delim: BrackR,
-                source: self.text(),
-            }),
+            _ => self.unbalanced_brack().err(),
         }
     }
 
@@ -1617,12 +1596,11 @@ impl<'t> ExprParser<'t> {
             if self.bump_on(BrackR) {
                 break Ok(RawExpression::List(Box::new(head), stmts));
             }
-            let srcloc = self.srcloc();
 
             stmts.push(self.statement()?);
             self.ignore(Comma);
             if self.is_done() {
-                break Err(ParseError::UnexpectedEof(srcloc, self.text()));
+                break self.unbalanced_brack().err();
             }
         }
     }
@@ -1648,7 +1626,7 @@ impl<'t> ExprParser<'t> {
         } else if lexpat!(self on [var]) {
             self.expect_lower()
         } else {
-            Err(self.custom_error("is not a valid binding name: expected a lowercase-initial identifier or an infix wrapped in parentheses"))
+            self.invalid_fn_ident().err()
         }
     }
 
@@ -1662,7 +1640,7 @@ impl<'t> ExprParser<'t> {
         } else if self.bump_on(If) {
             Ok((args, Some(self.expression()?)))
         } else {
-            Err(self.custom_error("is not a valid binding argument pattern"))
+            self.invalid_pattern().err()
         }
     }
 
@@ -1681,12 +1659,10 @@ impl<'t> ExprParser<'t> {
     }
 
     fn binding(&mut self) -> Parsed<RawBinding> {
-        use Lexeme::Pipe;
-
         let name = self.binder_name()?;
 
         match self.peek() {
-            lexpat!(~[|]) => Ok(RawBinding {
+            Some(t) if t.begins_pat() || t.is_pipe() => Ok(RawBinding {
                 name,
                 tipo: None,
                 arms: self.match_arms()?,
@@ -1695,8 +1671,7 @@ impl<'t> ExprParser<'t> {
                 self.bump();
                 let tipo = self.total_signature().map(Some)?;
                 self.ignore(Lexeme::Comma);
-                if lexpat!(self on [=]|[=>]) {
-                    self.bump();
+                if self.bump_on([Lexeme::Equal, Lexeme::FatArrow]) {
                     self.caf_binding(name, tipo)
                 } else {
                     self.match_arms()
@@ -1709,29 +1684,17 @@ impl<'t> ExprParser<'t> {
             }
             lexpat!(~[=]) => {
                 self.bump();
-                self.binding_rhs().and_then(|(body, wher)| {
-                    self.match_arms().map(|arms| RawBinding {
-                        name,
-                        tipo: None,
-                        arms: iter::once(RawMatch::caf(body, wher)).chain(arms).collect(),
-                    })
-                })
-            }
-            Some(t) if t.begins_pat() || t.lexeme == Pipe => {
-                self.match_arms().map(|arms| RawBinding {
+                let (body, wher) = self.binding_rhs()?;
+                let arms = iter::once(RawMatch::caf(body, wher))
+                    .chain(self.match_arms()?)
+                    .collect();
+                Ok(RawBinding {
                     name,
                     tipo: None,
                     arms,
                 })
             }
-            // this shouldn't semantically be ok, BUT i need to check that this
-            // method isn't iterated over (instead of match arms)
-            lexpat!(~[;]) => Ok(RawBinding {
-                name,
-                arms: vec![],
-                tipo: None,
-            }),
-            _ => Err(self.custom_error("unable to parse binding")),
+            _ => self.custom_error("after binder name").err(),
         }
     }
 
@@ -1800,7 +1763,7 @@ impl<'t> ExprParser<'t> {
         } else {
             let col = self.get_col();
             self.many_while(
-                |p| (p.get_col() == col) && (p.bump_on(Pipe) || p.peek_on(Lexeme::begins_pat)),
+                |p| (p.get_col() == col) && p.bump_or_peek_on(Pipe, Lexeme::begins_pat),
                 Self::case_alt,
             )?
         };
@@ -1840,9 +1803,7 @@ impl<'t> ExprParser<'t> {
         self.eat(Lexeme::CurlyL)?;
 
         let mut statements = self.many_while_on(Not(Lexeme::is_curly_r), |p| {
-            let stmt = p.statement()?;
-            p.ignore(Lexeme::Semi);
-            Ok(stmt)
+            p.trailing(Lexeme::Semi, Self::statement)
         })?;
 
         self.eat(Lexeme::CurlyR)?;
