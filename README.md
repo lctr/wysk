@@ -85,6 +85,7 @@ fn factorial :: Int -> Int
 The following may not necessarily be directly involved within the development of
 this compiler, but have proven nonetheless to be valuable sources of
 information. 
+* [[1987] Simon Peton Jones. *The Implementation of Functional Programming Languages*](https://www.microsoft.com/en-us/research/uploads/prod/1987/01/slpj-book-1987.pdf)
 * [[1992] Simon Peyton Jones. *Implementing lazy functional languages on stock
   hardware: the Spineless Tagless
   G-machine*](https://www.microsoft.com/en-us/research/wp-content/uploads/1992/04/spineless-tagless-gmachine.pdf)
