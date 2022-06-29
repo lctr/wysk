@@ -1,7 +1,7 @@
 use std::{fmt::Write, hash::Hash};
 
 use serde::{Deserialize, Serialize};
-use wy_common::{either::Either, push_if_absent, Map, Mappable};
+use wy_common::{either::Either, push_if_absent, Map, Mappable, Set};
 use wy_intern::{Symbol, Symbolic};
 use wy_name::ident::Ident;
 
@@ -1313,6 +1313,18 @@ impl<Id, T> Record<Id, T> {
         match self {
             Record::Anon(fields) | Record::Data(_, fields) => fields.is_empty(),
         }
+    }
+
+    pub fn has_rest(&self) -> bool {
+        self.fields().into_iter().any(|fld| fld.is_rest())
+    }
+
+    pub fn has_repeated_keys(&self) -> bool
+    where
+        Id: Eq + std::hash::Hash,
+    {
+        let set: Set<&Id> = self.keys().collect();
+        self.len() == set.len()
     }
 
     #[inline]
