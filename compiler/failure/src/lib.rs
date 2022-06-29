@@ -191,6 +191,26 @@ impl<P: AsRef<Path>> std::fmt::Display for SrcPath<P> {
     }
 }
 
+pub struct WithSrcLoc<X>(X, SrcLoc, String);
+impl<X> WithSrcLoc<X> {
+    pub fn new(x: X, srcloc: SrcLoc, text: String) -> Self {
+        Self(x, srcloc, text)
+    }
+    pub fn srcloc(&self) -> &SrcLoc {
+        &self.1
+    }
+    pub fn item(&self) -> &X {
+        &self.0
+    }
+    pub fn text(&self) -> &String {
+        &self.2
+    }
+    pub fn parts(self) -> (X, SrcLoc, String) {
+        let WithSrcLoc(x, srcloc, text) = self;
+        (x, srcloc, text)
+    }
+}
+
 pub struct Dialogue {
     path: SrcPath,
     gutter: RowGutter,
