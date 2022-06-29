@@ -105,9 +105,15 @@ impl<Id, T> Pattern<Id, T> {
                 pats.into_iter().all(|pat| pat.uniformly_bound_ors())
             }
             Self::Cast(pat, _) => pat.uniformly_bound_ors(),
-            _ => {
-                todo!()
-            }
+            Self::Lnk(a, b) => a.uniformly_bound_ors() && b.uniformly_bound_ors(),
+            Self::Rec(rec) => rec.fields().into_iter().all(|field| {
+                field
+                    .get_value()
+                    .map_or_else(|| true, Self::uniformly_bound_ors)
+            }),
+            Self::Rng(a, None) => a.uniformly_bound_ors(),
+            Self::Rng(a, Some(b)) => a.uniformly_bound_ors() && b.uniformly_bound_ors(),
+            Self::Wild | Self::Var(_) | Self::Lit(_) => true,
         }
     }
 
