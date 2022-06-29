@@ -150,6 +150,10 @@ wy_common::variant_preds! {
     /// ASCII symbols).
     | is_ident => Upper (_) [ | Self::Lower(_) | Self::Infix(_)]
     | is_meta => Meta (_)
+    | is_eq_sign => Equal
+    | is_fat_arrow => FatArrow
+    | is_colon => Colon
+    | is_colon2 => Colon2
     | is_pipe => Pipe
     | is_semi => Semi
     | is_comma => Comma
