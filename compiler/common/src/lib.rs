@@ -6,6 +6,7 @@ pub use std::collections::{HashMap as Map, HashSet as Set, VecDeque as Deque};
 
 pub use serde;
 
+pub mod data;
 pub mod either;
 pub mod functor;
 pub mod integral;
