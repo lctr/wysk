@@ -197,6 +197,19 @@ impl<'t> Source<'t> {
 pub trait Character {
     fn cmp_char(&self, c: char) -> bool;
     fn cmp_str(&self, s: &str) -> bool;
+    fn cmp_byte(&self, b: u8) -> bool {
+        self.cmp_char(b as char)
+    }
+    fn cmp_scalar(&self, cp: u32) -> bool {
+        std::char::from_u32(cp)
+            .map(|c| self.cmp_char(c))
+            .unwrap_or_else(|| false)
+    }
+    fn cmp_utf8(&self, bs: [u8; 4]) -> bool {
+        std::str::from_utf8(&bs[..])
+            .map(|s| self.cmp_str(s))
+            .unwrap_or_else(|_| false)
+    }
 }
 
 impl Character for char {
@@ -266,6 +279,29 @@ impl Character for Option<&char> {
 
     fn cmp_str(&self, s: &str) -> bool {
         matches!(self, Some(c) if c.cmp_str(s))
+    }
+}
+
+impl Character for &[u8] {
+    fn cmp_char(&self, c: char) -> bool {
+        for b in *self {
+            return c as u8 == *b;
+        }
+        false
+    }
+
+    fn cmp_str(&self, s: &str) -> bool {
+        matches!(std::str::from_utf8(self), Ok(t) if s == t)
+    }
+}
+
+impl Character for &str {
+    fn cmp_char(&self, c: char) -> bool {
+        matches!(self.chars().next(), Some(cc) if cc == c)
+    }
+
+    fn cmp_str(&self, s: &str) -> bool {
+        *self == s
     }
 }
 
