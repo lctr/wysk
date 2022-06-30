@@ -531,7 +531,7 @@ impl<L> Token<L> {
 
 impl std::fmt::Display for Token {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "({} {})", &self.lexeme, &self.span)
+        write!(f, "Token({})[{}]", &self.lexeme, &self.span)
     }
 }
 
