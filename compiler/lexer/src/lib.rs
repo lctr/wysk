@@ -848,46 +848,6 @@ pub fn is_infix_char(c: char) -> bool {
     )
 }
 
-/// Helper enum used to describe the sign of the exponent of a number in the
-/// process of being lexed. Defaults to `Plus`
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
-pub enum Sign {
-    Plus,
-    Minus,
-}
-
-// pub struct NumBuilder {
-//     /// The base of a number. Defaults to Base::Dec, and may change based on
-//     /// whether integer prefixes are found.
-//     base: Base,
-//     /// Flag marking whether to continue reading for the same token
-//     ready: bool,
-//     /// Whether an 'e' or 'E' was encountered, indicating an exponential number
-//     has_exp: bool,
-//     /// Whether a decimal has been encountered, indicating a floating point
-//     /// numeric literal
-//     has_decimal: bool,
-//     /// Byte position that the number began on. For numbers prefixed with
-//     /// `0b/0o/0x`, this starting position must be incremented by the bytelength
-//     /// of the prefix to exclude the prefix when parsing into a Rust value.
-//     start_pos: BytePos,
-//     /// Stores the sign of a number's exponent. `None` is interpreted as
-//     /// `Sign::Plus` if a number has an exponent, i.e., if the value in the
-//     /// field `has_exp` is `true`.
-//     exp_sign: Option<Sign>,
-//     /// Flags whether the number being lexed has a prefix, and if so, which
-//     prefix: Option<IntPrefix>,
-//     /// Flags whether the number being lexed has a suffix, and if so, which
-//     suffix: Option<NumSuffix>,
-//     /// Stores the error message returned to the lexer upon failure
-//     error: Option<LexError>,
-//     /// In the event of inevitable lookahead, this field stores any *other*
-//     /// tokens the lexer should know about that were produced while lexing a
-//     /// number
-//     queue: Deque<Token>,
-// }
-
-
 #[cfg(test)]
 mod test {
     use wy_intern::{intern_many, symbol};
@@ -1034,5 +994,11 @@ fn (&&) :: Bool -> Bool -> Bool | False _ = False | True x = x
         for (n, token) in Lexer::new(src).enumerate() {
             println!("{}\t{:?}", n, token)
         }
+    }
+
+    #[test]
+    fn print_each_in_coordstream() {
+        let cs = Lexer::new(r#"foo' <> bar | 3e-5"#).into_coord_stream();
+        for c in cs { println!("{}", c) }
     }
 }

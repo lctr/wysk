@@ -1,6 +1,6 @@
 use std::{iter::Peekable, str::Chars};
 
-use wy_span::{BytePos, Coord, Location, Position, Span, WithLoc, WithSpan};
+use wy_span::{BytePos, Coord, Located, Location, Position, Span, WithLoc, WithSpan};
 
 use crate::comment::Comment;
 use crate::meta::Placement;
@@ -543,6 +543,57 @@ impl<'t> Lexer<'t> {
     pub fn reset_mode(&mut self) -> &mut Self {
         self.mode = Mode::default();
         self
+    }
+
+    /// Reads the next token, wrapping the resulting `Token` in a `Located`
+    /// struct recording the location before and after calling `next`.
+    pub fn located(&mut self) -> Located<Token> {
+        let start = self.get_coord();
+        let token = self.next().unwrap_or_else(|| {
+            let end = BytePos::strlen(self.source.src);
+            Token {
+                span: Span(end, end),
+                lexeme: Lexeme::Eof,
+            }
+        });
+        let end = self.get_coord();
+        Located(token, Location { start, end })
+    }
+
+    pub fn into_coord_stream(self) -> CoordStream<'t> {
+        CoordStream::new(self)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct CoordStream<'t>(Lexer<'t>);
+impl<'t> CoordStream<'t> {
+    pub fn new(lexer: Lexer<'t>) -> Self {
+        Self(lexer)
+    }
+    pub fn from_str(src: &'t str) -> Self {
+        Self(Lexer::new(src))
+    }
+    pub fn lexer(&mut self) -> &mut Lexer<'t> {
+        &mut self.0
+    }
+    pub fn take_lexer(self) -> Lexer<'t> {
+        self.0
+    }
+    pub fn peek(&mut self) -> Option<Located<&Token>> {
+        let loc = self.peekable().peek().map(|tk| tk.location());
+        loc.and_then(|loc| self.0.peek().map(|t| Located(t, loc)))
+    }
+}
+
+impl Iterator for CoordStream<'_> {
+    type Item = Located<Token>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let start = self.0.get_coord();
+        let token = self.0.next();
+        let end = self.0.get_coord();
+        token.map(|t| Located(t, Location { start, end }))
     }
 }
 
