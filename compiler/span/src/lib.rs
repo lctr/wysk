@@ -204,12 +204,18 @@ impl Dummy for Col {
     }
 }
 
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Span(pub BytePos, pub BytePos);
 
 impl std::fmt::Display for Span {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}:{}", self.0, self.1)
+    }
+}
+
+impl std::fmt::Debug for Span {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Span({}, {})", self.0, self.1)
     }
 }
 
@@ -686,6 +692,12 @@ pub struct Location {
     pub end: Coord,
 }
 
+impl std::fmt::Display for Location {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Location({}, {})", &self.start, &self.end)
+    }
+}
+
 impl Location {
     /// Given another `Location`, will return a new `Location` such that the
     /// starting `Loc` contains the minimum `row` and `col` values, and the
@@ -790,6 +802,21 @@ impl std::ops::Index<Location> for String {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Located<T>(pub T, pub Location);
+
+impl<T> std::fmt::Display for Located<T>
+where
+    T: std::fmt::Display,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Located({}, {} - {})",
+            &self.0,
+            self.location().start,
+            self.location().end
+        )
+    }
+}
 
 impl<T> Located<T> {
     pub fn new(item: T, location: Location) -> Self {
@@ -1005,7 +1032,11 @@ impl Dummy for Position {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct Positioned<X>(X, Position);
+
+impl<X> Copy for Positioned<X> where X: Copy {}
+
 impl<X> Positioned<X> {
     pub fn new(item: X, position: Position) -> Self {
         Positioned(item, position)
