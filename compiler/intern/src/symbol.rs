@@ -46,12 +46,13 @@ impl Symbol {
         f(self)
     }
 
+    #[inline]
     pub fn display(self) -> String {
         lookup(self)
     }
 
     pub fn write_str(&self, buf: &mut String) {
-        buf.push_str(self.display().as_str())
+        buf.push_str(self.as_str())
     }
 
     pub fn from_char(c: char) -> Symbol {
@@ -62,6 +63,7 @@ impl Symbol {
         }
     }
 
+    #[inline]
     pub fn from_str(s: &str) -> Symbol {
         intern_once(s)
     }
@@ -70,28 +72,57 @@ impl Symbol {
         &*lookup(*self) == &*s
     }
 
+    #[inline]
     pub fn intern<S: AsRef<str>>(s: S) -> Symbol {
         intern_once(s.as_ref())
     }
 
-    pub fn unsafe_lookup_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         let guard = INTERNER.lock().unwrap();
         // Safety: we are extending the lifetime of the string, however since it
         // is interned with a `'static` lifetime, the data pointed to should
         // always be valid. CONFIRM!
         unsafe { std::mem::transmute::<_, &str>(guard.lookup(*self)) }
     }
-}
 
-impl<S: AsRef<str>> From<S> for Symbol {
-    fn from(s: S) -> Self {
-        intern_once(s.as_ref())
+    #[inline]
+    pub fn from_str_deref<S: std::ops::Deref<Target = str>>(s: S) -> Self {
+        intern_once(&*s)
+    }
+
+    pub fn from_utf8(bytes: &[u8]) -> Result<Self, std::str::Utf8Error> {
+        std::str::from_utf8(bytes).map(Self::from_str)
+    }
+
+    pub unsafe fn from_utf8_unchecked(bytes: &[u8]) -> Self {
+        Self::from_str(std::str::from_utf8_unchecked(bytes))
     }
 }
 
-impl PartialEq<&str> for Symbol {
-    fn eq(&self, other: &&str) -> bool {
-        self.cmp_str(*other)
+impl AsRef<str> for Symbol {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl std::ops::Deref for Symbol {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
+impl From<&str> for Symbol {
+    #[inline]
+    fn from(s: &str) -> Self {
+        Self::from_str(s)
+    }
+}
+
+impl PartialEq<str> for Symbol {
+    fn eq(&self, other: &str) -> bool {
+        self.cmp_str(other)
     }
 }
 
@@ -577,7 +608,7 @@ mod test {
         }
 
         let hello = Symbol::intern("hello");
-        let hello_ = hello.unsafe_lookup_str();
+        let hello_ = hello.as_str();
         assert_eq!(hello_, "hello")
     }
 }

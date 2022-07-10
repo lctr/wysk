@@ -547,7 +547,7 @@ impl<'t> Lexer<'t> {
                     let end = self.source.get_pos();
                     has_dot = true;
                     self.source.next();
-                    if self.source.bump_on(',') {
+                    if self.source.bump_on('.') {
                         self.stack.push(Token {
                             lexeme: Lexeme::Dot2,
                             span: self.span_from(start),
@@ -998,7 +998,7 @@ fn (&&) :: Bool -> Bool -> Bool | False _ = False | True x = x
 
     #[test]
     fn print_each_in_coordstream() {
-        let cs = Lexer::new(r#"foo' <> bar | 3e-5"#).into_coord_stream();
+        let cs = Lexer::new(r#"foo' <> bar | 3e-5 1..5 a..b"#).into_coord_stream();
         for c in cs { println!("{}", c) }
     }
 }
