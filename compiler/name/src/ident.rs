@@ -6,6 +6,7 @@ pub trait Identifier: Eq {
     fn is_upper(&self) -> bool;
     fn is_lower(&self) -> bool;
     fn is_infix(&self) -> bool;
+    fn is_label(&self) -> bool;
     fn is_fresh(&self) -> bool;
     fn pure(&self) -> fn(Symbol) -> Ident {
         if self.is_upper() {
@@ -14,6 +15,8 @@ pub trait Identifier: Eq {
             Ident::Lower
         } else if self.is_infix() {
             Ident::Infix
+        } else if self.is_label() {
+            Ident::Label
         } else {
             Ident::Fresh
         }
@@ -28,16 +31,19 @@ pub trait Identifier: Eq {
 
 impl Identifier for Ident {
     fn is_upper(&self) -> bool {
-        Ident::is_upper(&self)
+        Ident::is_upper(self)
     }
     fn is_lower(&self) -> bool {
-        Ident::is_lower(&self)
-    }
-    fn is_fresh(&self) -> bool {
-        Ident::is_fresh(&self)
+        Ident::is_lower(self)
     }
     fn is_infix(&self) -> bool {
-        Ident::is_infix(&self)
+        Ident::is_infix(self)
+    }
+    fn is_label(&self) -> bool {
+        Ident::is_label(self)
+    }
+    fn is_fresh(&self) -> bool {
+        Ident::is_fresh(self)
     }
 }
 
@@ -61,6 +67,11 @@ where
     }
 
     #[inline]
+    fn is_label(&self) -> bool {
+        matches!(self, Some(id) if id.is_label())
+    }
+
+    #[inline]
     fn is_fresh(&self) -> bool {
         matches!(self, Some(id) if id.is_fresh())
     }
@@ -71,6 +82,7 @@ pub enum Ident {
     Upper(Symbol),
     Lower(Symbol),
     Infix(Symbol),
+    Label(Symbol),
     /// Represent internally generated variables distinguishable from `Lower`
     /// variants, either for type variables or for parser/compiler generated
     /// variables.
@@ -83,6 +95,7 @@ impl std::fmt::Debug for Ident {
             Self::Upper(arg0) => write!(f, "Upper({})", arg0),
             Self::Lower(arg0) => write!(f, "Lower({})", arg0),
             Self::Infix(arg0) => write!(f, "Infix({})", arg0),
+            Self::Label(arg0) => write!(f, "Label({})", arg0),
             Self::Fresh(arg0) => write!(f, "Fresh({})", arg0),
         }
     }
@@ -105,7 +118,7 @@ impl Symbolic for Ident {
     }
 }
 
-wy_common::variants!(#((Symbol) Ident :Upper :Lower :Infix :Fresh));
+wy_common::variants!(#((Symbol) Ident :Upper :Lower :Infix :Label :Fresh));
 
 impl Ident {
     pub const MAIN_MOD: Self = Ident::Upper(reserved::MAIN_MOD.symbol);
@@ -116,6 +129,8 @@ impl Ident {
     pub const TRUE: Self = Ident::Upper(reserved::TRUE.symbol);
     pub const FALSE: Self = Ident::Lower(reserved::FALSE.symbol);
     pub const WILD: Self = Ident::Fresh(reserved::WILD.symbol);
+
+    pub const NAMES: [fn(Symbol) -> Self; 4] = [Self::Upper, Self::Lower, Self::Infix, Self::Label];
 
     pub fn symbol(&self) -> Symbol {
         *self.get_inner()
@@ -129,6 +144,9 @@ impl Ident {
     pub fn is_infix(&self) -> bool {
         matches!(self, Self::Infix(..))
     }
+    pub fn is_label(&self) -> bool {
+        matches!(self, Self::Label(..))
+    }
     pub fn is_fresh(&self) -> bool {
         matches!(self, Self::Fresh(..))
     }
@@ -137,12 +155,17 @@ impl Ident {
         self.get_inner().as_u32()
     }
 
+    pub fn from_u32(n: u32) -> Self {
+        Self::Fresh(Symbol::intern(wy_common::text::display_var(n)))
+    }
+
     /// Returns the constructor for the given `Ident` variant
-    pub fn pure(&self) -> fn(Symbol) -> Self {
+    pub fn constructor(&self) -> fn(Symbol) -> Self {
         match self {
             Ident::Upper(_) => Ident::Upper,
             Ident::Lower(_) => Ident::Lower,
             Ident::Infix(_) => Ident::Infix,
+            Ident::Label(_) => Ident::Label,
             Ident::Fresh(_) => Ident::Fresh,
         }
     }
@@ -212,13 +235,13 @@ pub struct Chain<Id = Ident>(Id, Deque<Id>);
 
 impl From<Chain<Ident>> for Ident {
     fn from(chain: Chain<Ident>) -> Self {
-        chain.root().pure()(chain.flattened_symbol())
+        chain.root().constructor()(chain.flattened_symbol())
     }
 }
 
 impl From<&Chain<Ident>> for Ident {
     fn from(chain: &Chain<Ident>) -> Self {
-        chain.root().pure()(chain.flattened_symbol())
+        chain.root().constructor()(chain.flattened_symbol())
     }
 }
 
@@ -555,6 +578,10 @@ impl<Id: Identifier> Identifier for Chain<Id> {
 
     fn is_infix(&self) -> bool {
         self.last().is_infix()
+    }
+
+    fn is_label(&self) -> bool {
+        self.last().is_label()
     }
 
     fn is_fresh(&self) -> bool {
