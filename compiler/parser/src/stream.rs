@@ -1,9 +1,28 @@
-use wy_lexer::token::Lexlike;
+use wy_common::Deque;
+use wy_failure::SrcLoc;
+use wy_lexer::{
+    meta::{Placement, Pragma},
+    token::{LexKind, Lexlike},
+    Lexeme, Lexer, Token,
+};
+use wy_name::ident::Ident;
+use wy_span::{BytePos, Coord, Dummy, Span, WithLoc, WithSpan};
+use wy_syntax::fixity::FixityTable;
+
+use crate::error::{ParseError, Parsed, Report};
 
 pub trait Streaming {
     type Peeked: Lexlike;
     type Lexeme: Lexlike;
     type Err;
+
+    /// Returns whether the underlying token stream is complete. A token stream
+    /// is considered 'done' if the current token is the `EOF` lexeme. Note that
+    /// there may be subtle differences between calling the token stream's
+    /// `is_done` method and matching the peeked current token with `Eof`, as
+    /// the underlying token stream may have non-EOF tokens queued.
+    fn is_done(&mut self) -> bool;
+
     fn peek(&mut self) -> Option<&Self::Peeked>;
 
     /// Peeks at the current `Peeked` item and calls the `Lexlike::cmp_tok`
@@ -19,6 +38,10 @@ pub trait Streaming {
         }
     }
 
+    fn eat<T>(&mut self, item: T) -> Parsed<Self::Peeked>
+    where
+        T: AsRef<Self::Lexeme>;
+
     /// Advance the underlying stream of tokens. If the stream
     /// is not over, then the *current* token is returned; otherwise the token
     /// corresponding to the `EOF` lexeme is returned.
@@ -27,6 +50,14 @@ pub trait Streaming {
     /// calling the lexer. If the buffer is non-empty, it simply pops the next
     /// element from the front of the qeueue.
     fn bump(&mut self) -> Self::Peeked;
+
+    /// Calls `bump` and ignores its return value, instead returning the given
+    /// item `t`.
+    #[inline]
+    fn bumped<T>(&mut self, t: T) -> T {
+        self.bump();
+        t
+    }
 
     /// Conditionally advances the token stream based on the given argument
     /// matching -- via the `Lexlike::cmp_tok` method -- the inner token
@@ -102,12 +133,21 @@ pub trait Streaming {
         Ok(it)
     }
 
-    /// Returns whether the underlying token stream is complete. A token stream
-    /// is considered 'done' if the current token is the `EOF` lexeme. Note that
-    /// there may be subtle differences between calling the token stream's
-    /// `is_done` method and matching the peeked current token with `Eof`, as
-    /// the underlying token stream may have non-EOF tokens queued.
-    fn is_done(&mut self) -> bool;
+    /// Consumes a starting token, applies a closure consumes and ending token,
+    /// then returns the result from the applied closure. Returns an error if
+    /// neither starting nor ending token could be consumed in order, or if the
+    /// closure returns an error.
+    #[inline]
+    fn wrapped<A: AsRef<Self::Lexeme>, X, B: AsRef<Self::Lexeme>>(
+        &mut self,
+        (start, end): (A, B),
+        mut f: impl FnMut(&mut Self) -> Parsed<X>,
+    ) -> Parsed<X> {
+        self.eat(start)?;
+        let x = f(self)?;
+        self.eat(end)?;
+        Ok(x)
+    }
 
     /// Given a predicate `pred` and a parser, applies the given parser `parse`
     /// repeatedly as long as the predicate returns `true` and returning the
@@ -142,5 +182,210 @@ pub trait Streaming {
             xs.push(f(self)?)
         }
         Ok(xs)
+    }
+}
+
+pub type FilePath = std::path::PathBuf;
+
+#[derive(Debug)]
+pub struct Parser<'t> {
+    pub(crate) lexer: Lexer<'t>,
+    pub(crate) queue: Deque<Token>,
+    pub fixities: FixityTable,
+    pub filepath: Option<FilePath>,
+    pub pragmas: Vec<(Pragma, Placement)>,
+}
+
+impl<'t> WithSpan for Parser<'t> {
+    fn get_pos(&self) -> BytePos {
+        self.lexer.get_pos()
+    }
+}
+
+impl<'t> WithLoc for Parser<'t> {
+    fn get_coord(&self) -> Coord {
+        self.lexer.get_coord()
+    }
+}
+
+impl<'t> Report for Parser<'t> {
+    fn get_srcloc(&mut self) -> SrcLoc {
+        Parser::srcloc(self)
+    }
+
+    fn get_source(&self) -> String {
+        Parser::text(self)
+    }
+
+    fn next_token(&mut self) -> Token {
+        *self.peek_ahead()
+    }
+}
+
+impl<'t> Streaming for Parser<'t> {
+    type Peeked = Token;
+    type Lexeme = Lexeme;
+    type Err = ParseError;
+
+    fn peek(&mut self) -> Option<&Self::Peeked> {
+        if let Some(t) = self.queue.front() {
+            Some(t)
+        } else {
+            self.lexer.peek()
+        }
+    }
+
+    fn eat<T>(&mut self, item: T) -> Parsed<Self::Peeked>
+    where
+        T: AsRef<Self::Lexeme>,
+    {
+        Parser::eat(self, item)
+    }
+
+    /// Advance the underlying stream of tokens, retuning the unwrapped result
+    /// of `Lexer::next`. If `Lexer::next` returns `None`, then the token
+    /// corresponding to the `EOF` lexeme is returned.
+    ///
+    /// Note that this method first checks the internal token queue before
+    /// calling the lexer. If the buffer is non-empty, it simply pops the next
+    /// element from the front of the qeueue.
+    fn bump(&mut self) -> Token {
+        if let Some(token) = self.queue.pop_front() {
+            token
+        } else {
+            self.lexer.bump()
+        }
+    }
+
+    fn is_done(&mut self) -> bool {
+        match self.peek() {
+            Some(t) if t.is_eof() => true,
+            None => true,
+            _ => false,
+        }
+    }
+}
+
+impl<'t> Parser<'t> {
+    pub fn new(src: &'t str, filepath: Option<FilePath>) -> Self {
+        Self {
+            lexer: Lexer::new(src),
+            filepath,
+            queue: Deque::new(),
+            fixities: FixityTable::new(Ident::Infix),
+            pragmas: Vec::new(),
+        }
+    }
+
+    pub fn from_str(src: &'t str) -> Self {
+        Self {
+            lexer: Lexer::new(src),
+            filepath: None,
+            queue: Deque::new(),
+            fixities: FixityTable::new(Ident::Infix),
+            pragmas: Vec::new(),
+        }
+    }
+
+    /// Advance the underlying stream of tokens, retuning the unwrapped result
+    /// of `Lexer::next`. If `Lexer::next` returns `None`, then the token
+    /// corresponding to the `EOF` lexeme is returned.
+    ///
+    /// Note that this method first checks the internal lexeme queue before
+    /// calling the lexer. If the buffer is non-empty, it simply pops the next
+    /// element from the front of the qeueue.
+    pub fn bump(&mut self) -> Token {
+        if let Some(token) = self.queue.pop_front() {
+            token
+        } else {
+            self.lexer.bump()
+        }
+    }
+
+    pub fn srcloc(&mut self) -> SrcLoc {
+        let pathstr = self
+            .filepath
+            .as_ref()
+            .and_then(|p| p.to_str())
+            .map(String::from);
+        let coord = self.lexer.get_coord();
+        SrcLoc { pathstr, coord }
+    }
+
+    pub fn eat<T>(&mut self, item: T) -> Parsed<Token>
+    where
+        T: AsRef<Lexeme>,
+    {
+        let item: &Lexeme = item.as_ref();
+        match self.peek() {
+            None
+            | Some(Token {
+                lexeme: Lexeme::Eof,
+                ..
+            }) => Err(self.unexpected_eof()),
+
+            t if t.cmp_lex(item) => Ok(self.bump()),
+
+            Some(_) => match *item {
+                delim if delim.is_right_delim() => Err(self.unbalanced(delim)),
+                found => self.expected(LexKind::Specified(found)).err(),
+            },
+        }
+    }
+
+    pub fn text(&self) -> String {
+        let mut buf = String::new();
+        self.lexer.write_to_string(&mut buf);
+        buf
+    }
+
+    pub fn peek_ahead(&mut self) -> &Token {
+        let tok = self.bump();
+        self.queue.push_front(tok);
+        &self.queue[0]
+    }
+
+    pub fn lookahead<const N: usize>(&mut self) -> [Token; N] {
+        let mut array = [Token {
+            lexeme: Lexeme::Eof,
+            span: Span::DUMMY,
+        }; N];
+        for arr in &mut array {
+            let token = self.bump();
+            *arr = token;
+            self.queue.push_back(token);
+        }
+        array
+    }
+
+    /// Consumes an initial lexeme `start` and repeatedly alternates applying
+    /// the given closure `f` and consuming the separator lexeme `mid`,
+    /// terminating upon encountering (and consuming) the ending lexeme `end`.
+    ///
+    /// This method is ideal for parsing collections of delimited nodes, as in
+    /// tuples and arrays.
+    pub fn delimited<F, X>(&mut self, [start, mid, end]: [Lexeme; 3], mut f: F) -> Parsed<Vec<X>>
+    where
+        F: FnMut(&mut Self) -> Parsed<X>,
+    {
+        let mut nodes = vec![];
+        let mut first = true;
+        self.eat(start)?;
+        while !self.is_done() {
+            if self.peek_on(end) {
+                break;
+            }
+            if first {
+                first = false;
+            } else {
+                self.eat(mid)?;
+            }
+            if self.peek_on(end) {
+                break;
+            }
+            nodes.push(f(self)?);
+        }
+        self.eat(end)?;
+        Ok(nodes)
     }
 }

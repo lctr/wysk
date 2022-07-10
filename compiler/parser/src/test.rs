@@ -4,6 +4,7 @@ use wy_lexer::Literal;
 use wy_syntax::{expr::Expression, pattern::Pattern, stmt::Alternative};
 
 use super::*;
+use expr::ExprParser;
 
 macro_rules! with_vars {
     (|$($ids:ident $(,)?)+| { $($rest:tt)* }) => {{
@@ -96,51 +97,7 @@ fn let_expr() {
     in bar (foo 1) (foo 2)
 "#;
     let result = Parser::from_str(src).expression();
-    println!("{:#?}", &result)
-}
-
-#[test]
-fn case_expr() {
-    let src = r#"
-case f x of {
-A c -> c;
-B d if c d -> h;
-y -> y;
-}
-"#;
-    let [a, b, c, d, h, f, x, y] = wy_intern::intern_many(["A", "B", "c", "d", "h", "f", "x", "y"]);
-    let expr = Parser::from_str(src).case_expr();
-    println!("{:#?}", &expr);
-    let expected = Expression::Case(
-        Box::new(Expression::App(
-            Box::new(Expression::Ident(Ident::Lower(f))),
-            Box::new(Expression::Ident(Ident::Lower(x))),
-        )),
-        vec![
-            Alternative {
-                pat: Pattern::Dat(Ident::Upper(a), vec![Pattern::Var(Ident::Lower(c))]),
-                pred: None,
-                body: Expression::Ident(Ident::Lower(c)),
-                wher: vec![],
-            },
-            Alternative {
-                pat: Pattern::Dat(Ident::Upper(b), vec![Pattern::Var(Ident::Lower(d))]),
-                pred: Some(Expression::App(
-                    Box::new(Expression::Ident(Ident::Lower(c))),
-                    Box::new(Expression::Ident(Ident::Lower(d))),
-                )),
-                body: Expression::Ident(Ident::Lower(h)),
-                wher: vec![],
-            },
-            Alternative {
-                pat: Pattern::Var(Ident::Lower(y)),
-                pred: None,
-                body: Expression::Ident(Ident::Lower(y)),
-                wher: vec![],
-            },
-        ],
-    );
-    assert_eq!(expr, Ok(expected))
+    println!("showing let: {:#?}", &result)
 }
 
 const fn var<T>(s: Symbol) -> Pattern<Ident, T> {
@@ -152,12 +109,10 @@ fn test_pattern() {
     let int = |n| Pattern::Lit(Literal::Int(n));
     let [a, b, c, d] = wy_intern::intern_many(["a", "b", "c", "d"]);
     let id = |s| Pattern::Var(Ident::Lower(s));
+    let lnk = |px, py| Pattern::Lnk(Box::new(px), Box::new(py));
     let pairs = [
         ("(a, b)", Pattern::Tup(vec![id(a), id(b)])),
-        (
-            "(a:b:(c:d))",
-            Pattern::Vec(vec![id(a), id(b), Pattern::Vec(vec![id(c), id(d)])]),
-        ),
+        ("(a:b:(c:d))", lnk(id(a), lnk(id(b), lnk(id(c), id(d))))),
         (
             "a @ [1, 2, 3]",
             Pattern::At(
@@ -167,9 +122,9 @@ fn test_pattern() {
         ),
         (
             "(a:b:[c, d])",
-            Pattern::Vec(vec![id(a), id(b), id(c), id(d)]),
+            lnk(id(a), lnk(id(b), Pattern::Vec(vec![id(c), id(d)]))),
         ),
-        ("(a:[])", Pattern::Vec(vec![id(a)])),
+        ("(a:[])", lnk(id(a), Pattern::Vec(vec![]))),
     ];
 
     for (s, x) in pairs {
@@ -199,7 +154,7 @@ fn test_type_app() {
     let src = "Foo x y z -> Bar (z, y) x";
     let result = Parser::from_str(src).ty_node().unwrap();
     println!("{}", &result);
-    let var = Ident::Fresh;
+    let var = Ident::Lower;
     assert_eq!(
         result,
         with_vars! { |Foo x y z Bar| {
@@ -261,7 +216,7 @@ impl |Eq a| Eq [a] {
 }
 "#;
     let program = Parser::from_str(src).inst_decl();
-    println!("{:#?}", program);
+    println!("showing inst decl: {:#?}", program);
 }
 
 #[test]
@@ -312,7 +267,7 @@ fn parse_prim_module() {
     // let dcons = result.as_ref().map(|prog| prog.module.data_ctors());
     match result {
         Ok(program) => {
-            println!("{:?}", program.module)
+            println!("showing prim.wy: {:?}", program.module)
         }
         Err(err) => {
             println!("{}", err)
@@ -357,7 +312,7 @@ fn test_ty_sigs() {
             ),
         )
     }});
-    println!("{:#?}\n{}", &sig, &sig.tipo);
+    println!("showing ty sigs: {:#?}\n{}", &sig, &sig.tipo);
     assert_eq!(expected, sig)
 }
 
@@ -425,9 +380,9 @@ fn test_do_expr() {
 
 #[test]
 fn test_section_expr() {
+    use wy_syntax::expr::Section::*;
     use Expression as E;
     use Literal::*;
-    use Section::*;
     let src = "map (+5) [1, 2, 3]";
     let [map, plus] = symbol::intern_many(["map", "+"]);
     let map = Ident::Lower(map);
@@ -551,4 +506,9 @@ fn test_data_record() {
     let d = it.parse();
     println!("{:?}", d);
     assert!(d.is_ok())
+}
+
+#[test]
+fn inspect_expr() {
+    dbg!(parse_expression("do { let x = 5; x <- [a..b]; x <- [1..b]; return x }"));
 }
