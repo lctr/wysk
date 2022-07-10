@@ -207,6 +207,12 @@ impl Symbolic for (&str, char, [&str]) {
     }
 }
 
+impl From<Symbol> for u32 {
+    fn from(Symbol(i): Symbol) -> Self {
+        i
+    }
+}
+
 impl From<Symbol> for usize {
     fn from(Symbol(i): Symbol) -> Self {
         i as usize
