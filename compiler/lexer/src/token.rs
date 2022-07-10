@@ -1,6 +1,6 @@
 use wy_common::pretty::Many;
 // use serde::{Deserialize, Serialize};
-use wy_common::strenum;
+use wy_common::ref_lifting_strenum;
 use wy_intern::symbol::{self, Symbol};
 use wy_span::Dummy;
 pub use wy_span::{BytePos, Col, Coord, Located, Location, Row, Span, Spanned, WithLoc, WithSpan};
@@ -8,7 +8,7 @@ pub use wy_span::{BytePos, Col, Coord, Located, Location, Row, Span, Spanned, Wi
 use crate::literal::*;
 use crate::meta::*;
 
-strenum! { Keyword is_keyword ::
+ref_lifting_strenum! { Keyword is_keyword => Lexeme Kw ::
     Let "let"
     In "in"
     If "if"
@@ -187,30 +187,75 @@ impl Lexeme {
             | Self::Infix(s)
             | Self::Label(s)
             | Self::Lit(Literal::Str(s)) => Some(*s),
+            Self::Colon => Some(symbol::COLON),
             _ => None,
         }
     }
 
     #[inline]
     pub fn ident_symbol(&self) -> Option<Symbol> {
-        if let Self::Lower(s) | Self::Upper(s) | Self::Infix(s) | Self::Label(s) = self {
+        match self {
+            Self::Lower(s) | Self::Upper(s) | Self::Infix(s) | Self::Label(s) => Some(*s),
+            Self::Colon => Some(symbol::COLON),
+            _ => None,
+        }
+    }
+
+    pub fn upper_symbol(&self) -> Option<Symbol> {
+        if let Self::Upper(s) = self {
+            Some(*s)
+        } else {
+            None
+        }
+    }
+    pub fn lower_symbol(&self) -> Option<Symbol> {
+        if let Self::Lower(s) = self {
+            Some(*s)
+        } else {
+            None
+        }
+    }
+    pub fn infix_symbol(&self) -> Option<Symbol> {
+        match self {
+            Self::Colon => Some(symbol::COLON),
+            Self::Infix(s) => Some(*s),
+            _ => None,
+        }
+    }
+    pub fn label_symbol(&self) -> Option<Symbol> {
+        if let Self::Upper(s) = self {
             Some(*s)
         } else {
             None
         }
     }
 
-    /// Unlike `ident`, this method returns the symbol corresponding to a lexeme
-    /// that doesn't *naturally* hold a symbol, such as `:` and `<-` which are
-    /// hardcoded, fieldless `Lexeme` variants.
+    /// If the lexeme is an `Upper`, `Lower`, `Infix`, or `Label` variant, then
+    /// applies the inner symbol to the identifier constructor function
+    /// corresponding to *one* of the given an array of identifier constructor
+    /// functions.
+    ///
+    /// Since the `token` module doesn't depend on the `wy_name` crate, and to
+    /// allow for flexibility, this method does *not* constrain the return type
+    /// of the above-mentioned constructor functions.
     #[inline]
-    pub fn special_ident(&self) -> Option<Symbol> {
+    pub fn map_id<Id>(&self, [upper, lower, infix, label]: [fn(Symbol) -> Id; 4]) -> Option<Id> {
         match self {
-            Self::Colon => Some(symbol::COLON),
-            Self::ArrowL => Some(symbol::ARROW),
-            // should underscore/wildcard be included?
+            Self::Upper(s) => Some(upper(*s)),
+            Self::Lower(s) => Some(lower(*s)),
+            Self::Infix(s) => Some(infix(*s)),
+            Self::Label(s) => Some(label(*s)),
             _ => None,
         }
+    }
+
+    /// Flipped and curried version of `map_identifier`, i.e., given an array of
+    /// functions constructing the same generic `Id` type, returns another
+    /// function taking a lexeme as input and returning as output the optional
+    /// identifier from applying that lexeme's `map_identifier` method.
+    #[inline]
+    pub fn mk_id<Id>(constructors: [fn(Symbol) -> Id; 4]) -> impl Fn(&Lexeme) -> Option<Id> {
+        move |this| Self::map_id(this, constructors)
     }
 
     #[inline]
@@ -365,6 +410,12 @@ impl std::fmt::Display for Lexeme {
     }
 }
 
+impl AsRef<Lexeme> for Lexeme {
+    fn as_ref(&self) -> &Lexeme {
+        self
+    }
+}
+
 /// Enumeration used by error reporting within the parser to specify expected
 /// lexeme kinds without relying on the data held by specific instances of
 /// lexemes. This isn't to be used on its own within error reporting, but as a
@@ -418,14 +469,12 @@ pub enum LexKind {
     Attribute,
 }
 
-impl From<Keyword> for LexKind {
-    fn from(_: Keyword) -> Self {
+impl LexKind {
+    pub fn from_keyword(_: Keyword) -> Self {
         LexKind::Keyword
     }
-}
 
-impl From<Literal> for LexKind {
-    fn from(lit: Literal) -> Self {
+    pub fn from_literal(lit: Literal) -> Self {
         match lit {
             Literal::Byte(_)
             | Literal::Int(_)
@@ -436,10 +485,8 @@ impl From<Literal> for LexKind {
             Literal::Str(_) | Literal::EmptyStr => Self::Literal,
         }
     }
-}
 
-impl From<Lexeme> for LexKind {
-    fn from(lexeme: Lexeme) -> Self {
+    pub fn from_lexeme(lexeme: Lexeme) -> Self {
         match lexeme {
             Lexeme::Underline
             | Lexeme::Tilde
@@ -468,6 +515,17 @@ impl From<Lexeme> for LexKind {
             Lexeme::Unknown(..) | Lexeme::Eof => Self::Specified(lexeme),
             Lexeme::Meta(..) => Self::Attribute,
         }
+    }
+}
+
+impl<T> From<T> for LexKind
+where
+    T: PartialEq<Token>,
+    Token: PartialEq<T>,
+    Lexeme: From<T>,
+{
+    fn from(t: T) -> Self {
+        Self::from_lexeme(t.into())
     }
 }
 
@@ -515,17 +573,32 @@ pub struct Token<L = Lexeme> {
 }
 
 impl<L> Token<L> {
-    pub fn map<M>(self, mut f: impl FnMut(L) -> M) -> Token<M> {
-        Token {
-            lexeme: f(self.lexeme),
-            span: self.span,
-        }
+    pub fn spanned(self) -> Spanned<L> {
+        Spanned(self.lexeme, self.span)
     }
-    pub fn map_ref<R>(&self, mut f: impl FnMut(&L) -> R) -> Token<R> {
-        Token {
-            lexeme: f(&self.lexeme),
-            span: self.span,
-        }
+}
+
+impl<L> From<Token<L>> for Spanned<L> {
+    fn from(token: Token<L>) -> Self {
+        token.spanned()
+    }
+}
+
+impl Token<Lexeme> {
+    /// Utility method allowing for point-free closure application of `Lexeme`
+    /// methods. This is helpful when wanting to transform an
+    /// `Option<&Token<Lexeme>>` using a method on a `Lexeme` reference that
+    /// *only* the
+    /// lexeme receiver by reference as a parameter.
+    ///
+    /// # Example
+    /// ```
+    /// let maybe_tok = Some(&Token { lexeme: Lexeme::Dot, span: Span::DUMMY });
+    ///
+    /// assert!(maybe_tok)
+    /// ```
+    pub fn lift<X>(f: impl Fn(&Lexeme) -> X) -> impl Fn(&Token) -> X {
+        move |this| f(&this.lexeme)
     }
 }
 
