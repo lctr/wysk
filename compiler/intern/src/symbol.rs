@@ -586,6 +586,7 @@ with_reserved! {
     | 50 SEMIGROUP "Semigroup"
     | 51 MONOID "Monoid"
     | 52 MONAD "Monad"
+    | 53 FRACTIONAL "Fractional"
 
 }
 
