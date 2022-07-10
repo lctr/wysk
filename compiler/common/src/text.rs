@@ -173,6 +173,9 @@ macro_rules! strenum {
         impl $opk {
             pub const STRINGS: [&'static str; $crate::strenum!(# $($lit)+)] = [$($lit,)+];
 
+            pub const KINDS: [Self; $crate::strenum!(# $($name)+)]
+                = [$($opk::$name,)+];
+
             pub fn from_str(s: &str) -> Option<Self> {
                 match s {
                     $($lit => {Some($opk::$name)})+
@@ -216,7 +219,7 @@ macro_rules! strenum {
     (#) => { 0 };
     (
         $opk:ident
-        $is_kind:tt :: $(
+        $is_kind:tt $([&$parent:ident $variant:ident(self)])? :: $(
             $name:ident
             $lit:literal $(| $alt:literal)*
         )+) => {
@@ -287,6 +290,37 @@ macro_rules! strenum {
                         &[$($alt,)*]
                     })+
                     // _ => &[]
+                }
+            }
+        }
+    };
+}
+
+/// Allows generating code for `AsRef` and `Deref` for a type that's a simple
+/// wrapper without having to re-specify all of the constructors, e.g.,
+/// `AsRef<A>::as_ref(&C) -> &A::B(C)`
+#[macro_export]
+macro_rules! ref_lifting_strenum {
+    (
+        $name:ident $pred:ident => $parent:ident $variant:ident ::
+        $($kind:ident $lit:literal)+
+    ) => {
+        $crate::strenum! { $name $pred :: $($kind $lit)+ }
+
+        impl AsRef<$parent> for $name {
+            fn as_ref(&self) -> &$parent {
+                match self {
+                    $($name::$kind => { &$parent::$variant($name::$kind) })+
+                }
+            }
+        }
+
+        impl std::ops::Deref for $name {
+            type Target = $parent;
+
+            fn deref(&self) -> &Self::Target {
+                match self {
+                    $($name::$kind => { &$parent::$variant($name::$kind) })+
                 }
             }
         }
