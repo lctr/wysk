@@ -1,7 +1,7 @@
 use std::collections::hash_map;
 use wy_common::{iter::Envr, push_if_absent, Deque, Set};
 use wy_name::ident::Ident;
-use wy_syntax::tipo::{Con, Signature, Tv, Ty, Type};
+use wy_syntax::tipo::{Con, Signature, Tv, Type};
 
 pub trait Substitutable {
     fn ftv(&self) -> Set<Tv>;
@@ -138,61 +138,6 @@ impl Substitutable for Type<Ident, Tv> {
             Type::Tup(ts) => Type::Tup(ts.apply_once(subst)),
             Type::Vec(t) => Type::Vec(t.apply_once(subst)),
             Type::Rec(rec) => Type::Rec(rec.map_t_ref(|t| t.apply_once(subst))),
-        }
-    }
-}
-
-impl Substitutable for Ty<Ident> {
-    fn ftv(&self) -> Set<Tv> {
-        match self {
-            Ty::Var(tv) => Set::from([*tv]),
-            Ty::Con(con, args) => con
-                .get_var()
-                .copied()
-                .into_iter()
-                .chain(args.ftv())
-                .collect(),
-            Ty::App(xy) => {
-                let [x, y] = xy.as_ref();
-                x.ftv().into_iter().chain(y.ftv()).collect()
-            }
-        }
-    }
-
-    fn tv(&self) -> Vec<Tv> {
-        match self {
-            Ty::Var(tv) => vec![*tv],
-            Ty::Con(con, args) => args
-                .into_iter()
-                .cloned()
-                .flat_map(|ty| ty.tv())
-                .fold(con.tv(), push_if_absent),
-            Ty::App(xy) => {
-                let [x, y] = xy.as_ref();
-                y.tv().into_iter().fold(x.tv(), |mut acc, c| {
-                    if !acc.contains(&c) {
-                        acc.push(c);
-                    }
-                    acc
-                })
-            }
-        }
-    }
-
-    fn apply_once(&self, subst: &Subst) -> Self
-    where
-        Self: Sized,
-    {
-        match self {
-            Ty::Var(v) => match subst.get(v) {
-                Some(ty) => ty.simplify_ty(),
-                None => Ty::Var(*v),
-            },
-            Ty::Con(con, args) => Ty::Con(con.apply_once(subst), args.apply_once(subst)),
-            Ty::App(xy) => {
-                let [x, y] = xy.as_ref();
-                Ty::App(Box::new([x.apply_once(subst), y.apply_once(subst)]))
-            }
         }
     }
 }
