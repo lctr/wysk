@@ -1,4 +1,5 @@
-use crate::tipo::{Con, Field, Record, Type};
+use super::tipo::{Con, Type};
+use crate::record::{Field, Record};
 use serde::{Deserialize, Serialize};
 use wy_common::{variant_preds, Mappable, Set};
 use wy_lexer::literal::Literal;

@@ -1,10 +1,6 @@
+use wy_common::Mappable;
 use wy_name::ident::Ident;
-use wy_syntax::{
-    expr::Expression,
-    stmt::Binding,
-    tipo::{Con, Tv},
-    Literal,
-};
+use wy_syntax::{expr::Expression, record::Record, stmt::Binding, tipo::Tv, Literal};
 
 use super::{
     constraint::{Constraint, Injection, Scheme, Type},
@@ -57,19 +53,30 @@ pub fn infer_bound_exprs(env: &mut Environment, bound_exprs: &[(Ident, Expr)]) -
 }
 
 pub fn infer_literal(
-    _env: &mut Environment,
+    env: &mut Environment,
     lit: &Literal,
 ) -> Result<(Type, Vec<Constraint>), Error> {
-    let con = match lit {
-        Literal::Byte(_) => Con::BYTE,
-        Literal::Int(_) => Con::INT,
-        Literal::Nat(_) => Con::NAT,
-        Literal::Float(_) => Con::FLOAT,
-        Literal::Double(_) => Con::DOUBLE,
-        Literal::Char(_) => Con::CHAR,
-        Literal::Str(_) | Literal::EmptyStr => Con::STR,
+    let mut preds = vec![];
+    let ty;
+    match lit {
+        Literal::Byte(_) | Literal::Int(_) | Literal::Nat(_) => {
+            ty = env.fresh();
+            preds.push(Constraint::Class {
+                class_name: Ident::Upper(wy_intern::NUM),
+                instance: ty.clone(),
+            });
+        }
+        Literal::Float(_) | Literal::Double(_) => {
+            ty = env.fresh();
+            preds.push(Constraint::Class {
+                class_name: Ident::Upper(wy_intern::FRACTIONAL),
+                instance: ty.clone(),
+            });
+        }
+        Literal::Char(_) => ty = Type::CHAR,
+        Literal::Str(_) | Literal::EmptyStr => ty = Type::STR,
     };
-    Ok((Type::mk_nullary(con), vec![]))
+    Ok((ty, preds))
 }
 
 pub fn infer_expr(
@@ -111,6 +118,37 @@ pub fn infer_expr(
         Expression::Tuple(xs) => infer_tuple_expr(env, xs),
         Expression::Array(xs) => infer_array_expr(env, xs),
         Expression::List(_, _) => todo!(),
+        Expression::Dict(Record::Data(con, flds)) => {
+            let err = Error::Unbound;
+            let sc = if con.is_upper() {
+                env.lookup_ctor(con)
+            } else {
+                env.lookup_local(con)
+            }
+            .map(|s| {
+                (
+                    s.tipo.clone(),
+                    s.poly_contexts()
+                        .fmap(|(class_name, tv)| Constraint::Class {
+                            class_name,
+                            instance: tv.as_type(),
+                        }),
+                )
+            })
+            .ok_or(err(*con));
+
+            flds.into_iter()
+                .filter_map(|fld| fld.as_pair())
+                .fold(sc, |a, (k, e)| {
+                    let (te, ce) = infer_expr(env, e)?;
+                    let k_sc = env.lookup_global(k).ok_or_else(|| err(*k))?;
+                    a.map(|(ty, mut cs)| {
+                        cs.push(Constraint::Join(te, k_sc.tipo.clone()));
+                        cs.extend(ce);
+                        (ty, cs)
+                    })
+                })
+        }
         Expression::Dict(_) => todo!(),
         Expression::Lambda(_, _) => todo!(),
         Expression::Let(_, _) => todo!(),

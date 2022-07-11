@@ -16,8 +16,9 @@ use wy_syntax::{
     expr::RawExpression,
     fixity::{Assoc, Fixity, Prec},
     pattern::RawPattern,
+    record::{Field, Record},
     stmt::RawBinding,
-    tipo::{Con, Context, Field, Record, Signature, Tv, Type},
+    tipo::{Con, Context, Signature, Tv, Type},
     Ast, Import, ImportSpec, Module, Program, RawModule, RawProgram, SyntaxTree,
 };
 

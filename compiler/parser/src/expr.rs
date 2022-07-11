@@ -6,8 +6,9 @@ use wy_name::ident::Ident;
 use wy_span::WithLoc;
 use wy_syntax::expr::{RawExpression, Section};
 use wy_syntax::pattern::RawPattern;
+use wy_syntax::record::{Field, Record};
 use wy_syntax::stmt::{RawAlternative, RawBinding, RawMatch, RawStatement};
-use wy_syntax::tipo::{Field, Record, Signature};
+use wy_syntax::tipo::Signature;
 
 use crate::error::*;
 use crate::stream::*;

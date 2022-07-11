@@ -3,12 +3,7 @@ use wy_common::{deque, variant_preds, Deque, Mappable, Set};
 use wy_lexer::Literal;
 use wy_name::ident::{Ident, Identifier};
 
-use crate::{
-    decl::Arity,
-    stmt::Alternative,
-    tipo::{Record, Type},
-    Binding,
-};
+use crate::{decl::Arity, record::Record, stmt::Alternative, tipo::Type, Binding};
 
 use super::{Pattern, Statement};
 

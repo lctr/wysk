@@ -17,6 +17,7 @@ pub mod expr;
 pub mod fixity;
 pub mod pattern;
 pub mod pretty;
+pub mod record;
 pub mod stmt;
 pub mod tipo;
 pub mod visit;
@@ -27,6 +28,7 @@ use fixity::*;
 use pattern::*;
 use stmt::*;
 use tipo::*;
+use record::*;
 
 #[derive(Clone, Debug)]
 pub struct SyntaxTree<I> {
