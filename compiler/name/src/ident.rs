@@ -21,9 +21,10 @@ pub trait Identifier: Eq {
             Ident::Fresh
         }
     }
-    fn map_symbol<X>(self, f: impl Fn(Symbol) -> X) -> X
+
+    fn map_symbol<X>(&self, f: impl Fn(Symbol) -> X) -> X
     where
-        Self: Sized + Symbolic,
+        Self: Symbolic,
     {
         self.get_symbol().pure(f)
     }
@@ -230,7 +231,7 @@ fn test_idents() {
 /// The *root* of an identifier path is the first identifier in a
 /// period-delimited chain of identifiers. Additionally, a chain of identifiers
 /// may be *concatenated*.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Chain<Id = Ident>(Id, Deque<Id>);
 
 impl From<Chain<Ident>> for Ident {
@@ -523,6 +524,17 @@ where
 impl<Id> Extend<Id> for Chain<Id> {
     fn extend<T: IntoIterator<Item = Id>>(&mut self, iter: T) {
         self.1.extend(iter)
+    }
+}
+
+impl<Id> std::fmt::Debug for Chain<Id>
+where
+    Id: std::fmt::Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Chain(")
+            .and(f.debug_list().entry(&self.0).entries(&self.1).finish())
+            .and(f.write_str(")"))
     }
 }
 
