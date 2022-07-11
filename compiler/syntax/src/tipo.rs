@@ -1,11 +1,12 @@
 use std::{fmt::Write, hash::Hash};
 
 use serde::{Deserialize, Serialize};
-use wy_common::{either::Either, push_if_absent, Map, Mappable, Set};
+use wy_common::{either::Either, push_if_absent, Map, Mappable};
 use wy_intern::{Symbol, Symbolic};
-use wy_name::ident::Ident;
+use wy_name::ident::{Ident, Identifier};
 
 use crate::decl::Arity;
+use crate::record::{Field, Record};
 
 /// Represents a type variable.
 ///
@@ -26,6 +27,10 @@ impl Tv {
 
     pub fn from_symbol(sym: Symbol) -> Self {
         Tv(sym.as_u32())
+    }
+
+    pub fn symbol(&self) -> Symbol {
+        Symbol::intern(self.display())
     }
 
     /// Lossfully coerces an identifier into a type variable.
@@ -222,7 +227,7 @@ impl<T> Extend<Var<T>> for Vec<(T, Tv)> {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Con<Id = Ident, T = Id> {
     /// List constructor `[]`; arity = 1
     List,
@@ -353,6 +358,21 @@ impl<Id, T> Con<Id, T> {
     }
 }
 
+impl<S: Identifier + Symbolic> PartialEq<S> for Con<Ident, Tv> {
+    fn eq(&self, other: &S) -> bool {
+        match (self, other) {
+            (Con::List, c) => c.get_symbol() == wy_intern::COLON,
+            (Con::Tuple(n), c) => c.get_symbol() == Ident::mk_tuple_commas(*n).get_symbol(),
+            (Con::Arrow, c) => c.get_symbol() == wy_intern::ARROW,
+            (Con::Data(c) | Con::Alias(c), id) => id.get_symbol() == c.get_symbol(),
+            (Con::Free(t), s) if s.is_fresh() || s.is_lower() => {
+                s.get_symbol() == Symbol::intern(t.display())
+            }
+            _ => false,
+        }
+    }
+}
+
 impl Con<Ident, Tv> {
     const fn mk_data(symbol: Symbol) -> Con<Ident, Tv> {
         Con::Data(Ident::Upper(symbol))
@@ -369,6 +389,20 @@ impl Con<Ident, Tv> {
     pub const STR: Self = Self::mk_data(wy_intern::STR);
     pub const IO: Self = Self::mk_data(wy_intern::IO);
     pub const HOLE: Self = Self::mk_data(wy_intern::WILD);
+}
+
+impl<Id: std::fmt::Debug, T: std::fmt::Debug> std::fmt::Debug for Con<Id, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::List => write!(f, "[]"),
+            Self::Tuple(n) => (0..=*n)
+                .fold(write!(f, "("), |a, _| a.and(write!(f, ",")))
+                .and(write!(f, ")")),
+            Self::Arrow => write!(f, "(->)"),
+            Self::Data(con) | Self::Alias(con) => Id::fmt(con, f),
+            Self::Free(var) => T::fmt(var, f),
+        }
+    }
 }
 
 impl<Id: std::fmt::Display, T: std::fmt::Display> std::fmt::Display for Con<Id, T> {
@@ -1121,511 +1155,6 @@ impl Type<Ident, Tv> {
     }
 }
 
-impl<Id> Type<Id, Tv> {
-    /// Like the method `simplify`, this reduces a type in terms of type
-    /// variables and type application, but represented with a `Ty` instance
-    /// instead of as a `Self` type.
-    pub fn simplify_ty(&self) -> Ty<Id>
-    where
-        Id: Clone,
-    {
-        match self {
-            Type::Var(v) => Ty::Var(*v),
-            Type::Con(c, args) => Ty::Con(
-                c.clone(),
-                args.into_iter().map(|t| t.simplify_ty()).collect(),
-            ),
-            Type::Fun(x, y) => Ty::Con(Con::Arrow, vec![x.simplify_ty(), y.simplify_ty()]),
-            Type::Tup(ts) => Ty::Con(
-                Con::Tuple(ts.len()),
-                ts.into_iter().map(|ty| ty.simplify_ty()).collect(),
-            ),
-            Type::Vec(ts) => Ty::Con(Con::List, vec![ts.simplify_ty()]),
-            Type::Rec(rec) => match rec {
-                Record::Anon(_) => todo!(),
-                Record::Data(_, _) => todo!(),
-            },
-        }
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Ty<Id = Ident> {
-    Var(Tv),
-    Con(Con<Id, Tv>, Vec<Ty<Id>>),
-    App(Box<[Self; 2]>),
-}
-
-impl<Id> Default for Ty<Id> {
-    fn default() -> Self {
-        Ty::Var(Tv(0))
-    }
-}
-
-impl<Id> Ty<Id> {
-    /// Returns a list containing all type variables in a given type in order
-    /// **without** duplicates. Use the `vars` method to get a list containing
-    /// all type variables with duplicates.
-    ///
-    /// For example, this method applied to the type `(a, Int, a -> b -> c)`,
-    /// which simplifies to `(,,) a Int ((->) a ((->) b c))`, returns the list
-    /// `[a, b, c]`.
-    pub fn fv(&self) -> Vec<Tv> {
-        match self {
-            Ty::Var(tv) => vec![*tv],
-            Ty::Con(con, args) => {
-                // let mut tvs = con.get_var().copied().into_iter().collect::<Vec<_>>();
-                args.into_iter().fold(
-                    con.get_var().copied().into_iter().collect::<Vec<_>>(),
-                    |mut a, c| {
-                        for var in c.fv() {
-                            if !a.contains(&var) {
-                                a.push(var);
-                            }
-                        }
-                        a
-                    },
-                )
-            }
-            Ty::App(xy) => {
-                let [x, y] = xy.as_ref();
-                y.fv().into_iter().fold(x.fv(), push_if_absent)
-            }
-        }
-    }
-
-    #[inline]
-    pub fn mk_fun_ty(from_ty: Self, to_ty: Self) -> Self {
-        Self::Con(Con::Arrow, vec![from_ty, to_ty])
-    }
-
-    /// Given a type `t0` and a (reversible) collection of types `t1`, `t2`,
-    /// ..., `tn`, returns the function type `t0 -> (t1 -> (t2 -> ... -> tn))`.
-    /// If the collection of types provided is empty, then the initial type `t0`
-    /// is returned.
-    pub fn maybe_fun(head: Self, rest: impl DoubleEndedIterator + Iterator<Item = Self>) -> Self {
-        if let Some(tail) = rest.rev().reduce(|a, c| Self::mk_fun_ty(a, c)) {
-            Self::Con(Con::Arrow, vec![head, tail])
-        } else {
-            head
-        }
-    }
-
-    pub fn mk_list(list_of: Self) -> Self {
-        Self::Con(Con::List, vec![list_of])
-    }
-
-    pub fn mk_tuple(tuple_of: Vec<Self>) -> Self {
-        Self::Con(Con::Tuple(tuple_of.len()), tuple_of)
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Kind {
-    Star,
-    Arrow(Box<Kind>, Box<Kind>),
-}
-
-wy_common::variant_preds! {
-    Kind
-    | is_star => Star
-    | is_arrow => Arrow(..)
-}
-
-impl std::fmt::Debug for Kind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Star => write!(f, "*"),
-            Self::Arrow(arg0, arg1) => {
-                write!(f, "{:?} -> {:?}", arg0, arg1)
-            }
-        }
-    }
-}
-
-impl std::fmt::Display for Kind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Kind::Star => write!(f, "*"),
-            Kind::Arrow(a, b) => write!(f, "{} -> {}", a, b),
-        }
-    }
-}
-
-impl Kind {
-    pub fn from_poly(tvs: &[Tv]) -> Self {
-        let mut kind = Self::Star;
-        for _ in tvs {
-            kind = Self::Arrow(Box::new(Self::Star), Box::new(kind));
-        }
-        kind
-    }
-    pub fn from_type(ty: &Type) -> Self {
-        match ty {
-            Type::Var(_) => Self::Star,
-            Type::Con(Con::Tuple(0), _) => Self::Star,
-            Type::Con(Con::List, t) if t.len() == 1 => {
-                Self::Arrow(Box::new(Self::Star), Box::new(Self::from_type(&t[0])))
-            }
-            Type::Con(_, xs) if xs.is_empty() => Self::Star,
-            Type::Con(_, xs) => xs.into_iter().fold(Self::Star, |a, c| {
-                Self::Arrow(Box::new(Self::from_type(c)), Box::new(a))
-            }),
-            Type::Fun(..) => Self::Star,
-            Type::Tup(xs) if xs.is_empty() => Self::Star,
-            Type::Tup(xs) => Self::Arrow(
-                xs.into_iter().fold(Box::new(Self::Star), |a, c| {
-                    Box::new(Self::Arrow(a, Box::new(Self::from_type(c))))
-                }),
-                Box::new(Self::Star),
-            ),
-            Type::Vec(t) => {
-                Self::Arrow(Box::new(Self::Star), Box::new(Self::from_type(t.as_ref())))
-            }
-            Type::Rec(_) => Self::Star,
-        }
-    }
-    pub fn split(&self) -> Option<(&Self, &Self)> {
-        if let Self::Arrow(x, y) = self {
-            Some((x.as_ref(), y.as_ref()))
-        } else {
-            None
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Record<Id, T> {
-    /// Anonymous records don't have a *constructor* and are hence *extensible*,
-    /// but less type-safe
-    Anon(Vec<Field<Id, T>>),
-    /// Records associated with a given *constructor* and hence are statially
-    /// associated with that constructor's type.
-    Data(Id, Vec<Field<Id, T>>),
-}
-
-impl<Id, T> Record<Id, T> {
-    pub const VOID: Self = Self::Anon(vec![]);
-    /// Returns `true` if the record contains no fields, *regardless* of
-    /// `Record` variant. This is equivalent to calling `Record::len` and
-    /// comparing it to `0`.
-    pub fn is_empty(&self) -> bool {
-        match self {
-            Record::Anon(fields) | Record::Data(_, fields) => fields.is_empty(),
-        }
-    }
-
-    pub fn has_rest(&self) -> bool {
-        self.fields().into_iter().any(|fld| fld.is_rest())
-    }
-
-    pub fn has_repeated_keys(&self) -> bool
-    where
-        Id: Eq + std::hash::Hash,
-    {
-        let set: Set<&Id> = self.keys().collect();
-        self.len() == set.len()
-    }
-
-    #[inline]
-    pub fn len(&self) -> usize {
-        match self {
-            Record::Anon(es) | Record::Data(_, es) => es.len(),
-        }
-    }
-
-    /// Returns a slice of all the `Field`s contained by this `Record`. Note
-    /// that this method *makes no distinction* regarding its *constructor*.
-    pub fn fields(&self) -> &[Field<Id, T>] {
-        match self {
-            Record::Anon(fields) | Record::Data(_, fields) => fields.as_slice(),
-        }
-    }
-
-    #[inline]
-    pub fn keys(&self) -> impl Iterator<Item = &Id> + '_ {
-        self.fields().iter().filter_map(|field| match field {
-            Field::Rest => None,
-            Field::Key(k) | Field::Entry(k, _) => Some(k),
-        })
-    }
-
-    #[inline]
-    pub fn ctor(&self) -> Option<&Id> {
-        match self {
-            Record::Anon(_) => None,
-            Record::Data(c, _) => Some(c),
-        }
-    }
-
-    pub fn contains_key(&self, key: &Id) -> bool
-    where
-        Id: PartialEq,
-    {
-        self.keys().any(|id| id == key)
-    }
-
-    pub fn get(&self, key: &Id) -> Option<&T>
-    where
-        Id: PartialEq,
-    {
-        self.fields().into_iter().find_map(|field| {
-            field
-                .get_key()
-                .and_then(|id| if id == key { field.get_value() } else { None })
-        })
-    }
-
-    pub fn find(&self, pred: impl FnMut(&&Field<Id, T>) -> bool) -> Option<&Field<Id, T>>
-    where
-        Id: PartialEq,
-        T: PartialEq,
-    {
-        self.fields().into_iter().find(pred)
-    }
-
-    /// Applies a transformation to the underlying components of a `Record`.
-    /// Since a `Record` may or may not have a *constructor*, it follows that
-    /// the kind of record *returned* will also depend on whether the first
-    /// component of the tuple returned by the closure contains a `Some` variant
-    /// or not. This means that it is possible to map from an `Record::Anon`
-    /// variant to a `Record::Data` variant and vice-versa.
-    pub fn map<F, U, V>(self, mut f: F) -> Record<U, V>
-    where
-        F: FnMut((Option<Id>, Vec<Field<Id, T>>)) -> (Option<U>, Vec<Field<U, V>>),
-    {
-        match self {
-            Record::Anon(fields) => {
-                let (_, fs) = f((None, fields));
-                Record::Anon(fs)
-            }
-            Record::Data(con, fields) => {
-                let (c, fs) = f((Some(con), fields));
-                if let Some(ctor) = c {
-                    Record::Data(ctor, fs)
-                } else {
-                    Record::Anon(fs)
-                }
-            }
-        }
-    }
-
-    pub fn map_ref<U, V>(
-        &self,
-        f: &mut impl FnMut(Option<&Id>, &Vec<Field<Id, T>>) -> (Option<U>, Vec<Field<U, V>>),
-    ) -> Record<U, V> {
-        let (k, vs) = match self {
-            Record::Anon(fields) => f(None, fields),
-            Record::Data(k, v) => f(Some(k), v),
-        };
-        if let Some(con) = k {
-            Record::Data(con, vs)
-        } else {
-            Record::Anon(vs)
-        }
-    }
-
-    pub fn map_id<X>(self, mut f: impl FnMut(Id) -> X) -> Record<X, T> {
-        match self {
-            Record::Anon(fs) => {
-                Record::Anon(fs.into_iter().map(|fld| fld.map_id(|id| f(id))).collect())
-            }
-            Record::Data(k, vs) => Record::Data(
-                f(k),
-                vs.into_iter().map(|fld| fld.map_id(|id| f(id))).collect(),
-            ),
-        }
-    }
-
-    pub fn map_id_ref<X>(&self, f: &mut impl FnMut(&Id) -> X) -> Record<X, T>
-    where
-        T: Copy,
-    {
-        match self {
-            Record::Anon(fs) => Record::Anon(fs.iter().map(|fld| fld.map_id_ref(f)).collect()),
-            Record::Data(k, vs) => {
-                Record::Data(f(k), vs.iter().map(|fld| fld.map_id_ref(f)).collect())
-            }
-        }
-    }
-
-    pub fn map_t<U>(self, mut f: impl FnMut(T) -> U) -> Record<Id, U> {
-        let mut entries = vec![];
-        if let Record::Anon(es) = self {
-            for field in es {
-                match field {
-                    Field::Rest => entries.push(Field::Rest),
-                    Field::Key(k) => entries.push(Field::Key(k)),
-                    Field::Entry(k, v) => entries.push(Field::Entry(k, f(v))),
-                };
-            }
-            return Record::Anon(entries);
-        } else if let Record::Data(k, vs) = self {
-            for field in vs {
-                match field {
-                    Field::Rest => entries.push(Field::Rest),
-                    Field::Key(k) => entries.push(Field::Key(k)),
-                    Field::Entry(k, v) => entries.push(Field::Entry(k, f(v))),
-                };
-            }
-            return Record::Data(k, entries);
-        } else {
-            unreachable!()
-        }
-    }
-
-    pub fn map_t_ref<F, U>(&self, mut f: F) -> Record<Id, U>
-    where
-        F: FnMut(&T) -> U,
-        Id: Clone,
-    {
-        match self {
-            Record::Anon(es) => Record::Anon(iter_map_t_ref_field(&es[..], &mut |t| f(t))),
-            Record::Data(k, v) => {
-                Record::Data(k.clone(), iter_map_t_ref_field(&v[..], &mut |t| f(t)))
-            }
-        }
-    }
-}
-
-fn iter_map_t_ref_field<X, Y, Z>(
-    fields: &[Field<X, Y>],
-    mut f: &mut impl FnMut(&Y) -> Z,
-) -> Vec<Field<X, Z>>
-where
-    X: Clone,
-{
-    let mut fs = vec![];
-    for field in fields {
-        fs.push(field.map_t_ref(&mut f))
-    }
-    fs
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Field<Id, T> {
-    /// Primarily used in partial records to indicate that a given record's list
-    /// of fields is incomplete. Note that it is a syntactic error for this
-    /// field to *not* be the last field in record's list of fields.
-    Rest,
-    /// A `Field` containing only a key. Depending on the syntactic context,
-    /// this may correspond to "punning" of field labels, where the field
-    /// `Field::Key(x)` is interpreted as an `Field::Entry(x, x')`, with `x'`
-    /// being the result of some simple mapping `f :: Id -> T` applied to `x`.
-    /// For *expressions*, this `f` is equivalent to `Expression::Ident`, while
-    /// for *patterns* it corresponds to `Pattern::Var`.
-    Key(Id),
-    /// A (record) `Field` corresponding to a key-value pair of type `(Id, T)`.
-    Entry(Id, T),
-}
-
-impl<Id, T> Field<Id, T> {
-    pub fn is_rest(&self) -> bool {
-        matches!(self, Self::Rest)
-    }
-    pub fn key_only(&self) -> bool {
-        matches!(self, Self::Key(..))
-    }
-    pub fn get_key(&self) -> Option<&Id> {
-        match self {
-            Field::Rest => None,
-            Field::Key(k) | Field::Entry(k, _) => Some(k),
-        }
-    }
-
-    /// If the `Field` is an `Entry` variant, then this returns a reference to
-    /// the held value, wrapped in `Option::Some`. Otherwise, this returns
-    /// `None`.
-    pub fn get_value(&self) -> Option<&T> {
-        match self {
-            Field::Rest | Field::Key(_) => None,
-            Field::Entry(_, v) => Some(v),
-        }
-    }
-
-    /// Returns `None` unless both lhs and rhs are present.
-    pub fn as_pair(&self) -> Option<(&Id, &T)> {
-        match self {
-            Field::Rest => None,
-            Field::Key(_) => None,
-            Field::Entry(k, v) => Some((k, v)),
-        }
-    }
-
-    pub fn map<F, U, X>(self, mut f: F) -> Field<U, X>
-    where
-        F: FnMut((Id, Option<T>)) -> (U, Option<X>),
-    {
-        match self {
-            Field::Rest => Field::Rest,
-            Field::Key(k) => match f((k, None)) {
-                (a, None) => Field::Key(a),
-                (a, Some(b)) => Field::Entry(a, b),
-            },
-            Field::Entry(k, v) => match f((k, Some(v))) {
-                (a, None) => Field::Key(a),
-                (a, Some(b)) => Field::Entry(a, b),
-            },
-        }
-    }
-
-    pub fn map_ref<U, X>(
-        &self,
-        f: &mut impl FnMut((&Id, Option<&T>)) -> (U, Option<X>),
-    ) -> Field<U, X> {
-        match self {
-            Field::Rest => Field::Rest,
-            Field::Key(k) => Field::Key(f((k, None)).0),
-            Field::Entry(k, v) => match f((k, Some(v))) {
-                (key, None) => Field::Key(key),
-                (key, Some(val)) => Field::Entry(key, val),
-            },
-        }
-    }
-
-    pub fn map_id<X>(self, mut f: impl FnMut(Id) -> X) -> Field<X, T> {
-        match self {
-            Field::Rest => Field::Rest,
-            Field::Key(k) => Field::Key(f(k)),
-            Field::Entry(k, v) => Field::Entry(f(k), v),
-        }
-    }
-
-    pub fn map_id_ref<X>(&self, f: &mut impl FnMut(&Id) -> X) -> Field<X, T>
-    where
-        T: Copy,
-    {
-        match self {
-            Field::Rest => Field::Rest,
-            Field::Key(k) => Field::Key(f(k)),
-            Field::Entry(k, v) => Field::Entry(f(k), *v),
-        }
-    }
-
-    pub fn map_t<F, U>(self, mut f: F) -> Field<Id, U>
-    where
-        F: FnMut(T) -> U,
-    {
-        match self {
-            Field::Rest => Field::Rest,
-            Field::Key(k) => Field::Key(k),
-            Field::Entry(k, v) => Field::Entry(k, f(v)),
-        }
-    }
-
-    pub fn map_t_ref<F, U>(&self, mut f: F) -> Field<Id, U>
-    where
-        F: FnMut(&T) -> U,
-        Id: Clone,
-    {
-        match self {
-            Field::Rest => Field::Rest,
-            Field::Key(k) => Field::Key(k.clone()),
-            Field::Entry(k, v) => Field::Entry(k.clone(), f(v)),
-        }
-    }
-}
-
 /// A `Context` always appears as an element in a sequence of other `Context`s
 /// preceding a `=>` and a type signature, and encodes what *type constraints* a
 /// given *type variable* must adhere to in the following type signature.
@@ -1817,6 +1346,7 @@ impl<Id: std::fmt::Display, Ty: std::fmt::Display> std::fmt::Display for Type<Id
                     Ok(())
                 }
             }
+            // x -> y
             Type::Fun(x, y) => {
                 if x.is_fun() {
                     write!(f, "({})", x)?;
@@ -1824,11 +1354,11 @@ impl<Id: std::fmt::Display, Ty: std::fmt::Display> std::fmt::Display for Type<Id
                     write!(f, "{}", x)?;
                 }
                 write!(f, " -> ")?;
-                if y.is_fun() {
-                    write!(f, "({})", y)
-                } else {
-                    write!(f, "{}", y)
-                }
+                // if y.is_fun() {
+                //     write!(f, "({})", y)
+                // } else {
+                write!(f, "{}", y)
+                // }
             }
             Type::Tup(tys) => {
                 write!(f, "(")?;
@@ -1889,6 +1419,9 @@ macro_rules! Ty {
     ) => {{
         $crate::Ty! { $($ts)+ }
     }};
+    (
+        ($($an:tt,)*)
+    ) => {{ $crate::tipo::Type::mk_tuple([$($an,)*]) }};
     (@$id:ident) => {{ $id.clone() }};
     (@$id:ident -> $($rest:tt)+) => {{
         Type::mk_fun(
@@ -1935,9 +1468,6 @@ macro_rules! Ty {
         [$($ts:tt)+]
     ) => {{ $crate::tipo::Type::mk_list($($ts)+) }};
     (
-        ($a0:tt $(, $an:tt)*)
-    ) => {{ $crate::tipo::Type::mk_tuple([$a0 $(, $an)*]) }};
-    (
         $left:tt -> $($right:tt)+
     ) => {{
         $crate::tipo::Type::mk_fun(
@@ -1947,6 +1477,381 @@ macro_rules! Ty {
 
 }
 
+impl<Id> Type<Id, Tv> {
+    /// Like the method `simplify`, this reduces a type in terms of type
+    /// variables and type application, but represented with a `Ty` instance
+    /// instead of as a `Self` type.
+    pub fn simplify_ty(&self) -> Ty
+    where
+        Id: Copy + Symbolic,
+    {
+        match self {
+            Type::Var(v) => Ty::Var(Var(Kind::Star, *v)),
+            Type::Con(c, args) => {
+                let kind = || Kind::mk(self.fv().len());
+                match c {
+                    Con::List => {
+                        if args.is_empty() {
+                            Ty::Con(Symbol::from("[]"), Kind::mk(2))
+                        } else {
+                            Ty::mk_list(args[0].simplify_ty())
+                        }
+                    }
+                    Con::Tuple(n) => {
+                        let m = args.len();
+                        if *n == m {
+                            Ty::mk_tuple(args.into_iter().map(Self::simplify_ty).collect())
+                        } else {
+                            todo!()
+                        }
+                    }
+                    Con::Arrow => args
+                        .into_iter()
+                        .map(|t| t.simplify_ty())
+                        .reduce(Ty::mk_fun)
+                        .unwrap_or_else(|| Ty::Con(Ty::ARROW, Kind::mk(3))),
+                    Con::Data(n) | Con::Alias(n) => args.into_iter().map(|t| t.simplify_ty()).fold(
+                        Ty::Con(n.get_symbol(), Kind::mk(self.fv().len())),
+                        |a, c| Ty::mk_app(a, c),
+                    ),
+                    Con::Free(t) => args.into_iter().map(|t| t.simplify_ty()).fold(
+                        Ty::Con(t.symbol(), Kind::Arrow(Box::new([Kind::Star, kind()]))),
+                        |a, c| Ty::mk_app(a, c),
+                    ),
+                }
+            }
+            Type::Fun(x, y) => {
+                use Kind::{Arrow, Star};
+                let k = || Arrow(Box::new([Star, Arrow(Box::new([Star, Star]))]));
+                let app = |a, b| Ty::App(Box::new([a, b]));
+                let fun = |a, b| app(app(Ty::Con(Ty::ARROW, k()), a), b);
+                // a -> b -> c
+                // (->) a ((->) b c)
+                fun(x.simplify_ty(), y.simplify_ty())
+            }
+            Type::Tup(ts) => Ty::mk_tuple(ts.into_iter().map(|ty| ty.simplify_ty()).collect()),
+            Type::Vec(ts) => Ty::mk_list(ts.simplify_ty()),
+            Type::Rec(_) => todo!(),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Ty {
+    Var(Var<Kind>),
+    Con(Symbol, Kind),
+    App(Box<[Self; 2]>),
+    Gen(usize),
+}
+
+impl Default for Ty {
+    fn default() -> Self {
+        Ty::Var(Var(Kind::Star, Tv(0)))
+    }
+}
+
+impl Ty {
+    pub const ARROW: Symbol = wy_intern::ARROW;
+
+    /// Returns a list containing all type variables in a given type in order
+    /// **without** duplicates. Use the `vars` method to get a list containing
+    /// all type variables with duplicates.
+    ///
+    /// For example, this method applied to the type `(a, Int, a -> b -> c)`,
+    /// which simplifies to `(,,) a Int ((->) a ((->) b c))`, returns the list
+    /// `[a, b, c]`.
+    pub fn fv(&self) -> Vec<Tv> {
+        match self {
+            Ty::Var(Var(_, tv)) => vec![*tv],
+            Ty::App(xy) => {
+                let [x, y] = xy.as_ref();
+                y.fv().into_iter().fold(x.fv(), push_if_absent)
+            }
+            _ => vec![],
+        }
+    }
+
+    pub fn kind(&self) -> &Kind {
+        match self {
+            Ty::Var(Var(k, _)) => k,
+            Ty::Con(_, k) => k,
+            Ty::App(ab) => match ab.as_ref()[0].kind() {
+                Kind::Arrow(uv) => &uv.as_ref()[1],
+                Kind::Star => {
+                    println!(
+                            "\n\u{1b}[0m\u{1b}[31;15m[Error] malformed type\u{1b}[0m: the type\n\t`{self}`\nshould not be of kind `*`\n"
+                        );
+                    panic!("kind of `{self}`")
+                }
+            },
+            Ty::Gen(_) => todo!(),
+        }
+    }
+
+    #[inline]
+    pub fn is_var(&self) -> bool {
+        matches!(self, Ty::Var(..))
+    }
+
+    #[inline]
+    pub fn is_con(&self) -> bool {
+        matches!(self, Ty::Con(..))
+    }
+
+    #[inline]
+    pub fn is_app(&self) -> bool {
+        matches!(self, Ty::App(..))
+    }
+
+    #[inline]
+    pub fn is_fun(&self) -> bool {
+        matches!(
+            self,
+            Ty::App(ab) if matches!(
+                &ab.as_ref()[0],
+                Ty::App(xy) if matches!(
+                    &xy.as_ref()[0],
+                    Ty::Con(s, _) if *s == Self::ARROW
+                )
+            )
+        )
+    }
+
+    #[inline]
+    pub fn is_tuple(&self) -> bool {
+        if let Ty::App(ab) = self {
+            let mut tmp = &ab.as_ref()[0];
+            while let Ty::App(xy) = tmp {
+                let [x, _] = &**xy;
+                if let Ty::Con(s, _) = x {
+                    if s.as_str().starts_with("(,") {
+                        return true;
+                    }
+                } else {
+                    tmp = x
+                }
+            }
+        };
+        false
+    }
+
+    #[inline]
+    pub fn is_list(&self) -> bool {
+        matches!(self, Ty::App(xy) if matches!(&xy.as_ref()[0], Ty::Con(s, _) if s.as_str() == "[]"))
+    }
+
+    pub fn mk_app(ta: Ty, tb: Ty) -> Ty {
+        Ty::App(Box::new([ta, tb]))
+    }
+
+    pub fn mk_fun(from_ty: Self, to_ty: Self) -> Self {
+        Ty::App(Box::new([
+            Ty::App(Box::new([
+                Ty::Con(Ty::ARROW, Kind::Arrow(Box::new([Kind::Star, Kind::Star]))),
+                from_ty,
+            ])),
+            to_ty,
+        ]))
+    }
+
+    pub fn mk_list(list_of: Self) -> Self {
+        Self::mk_app(Self::Con(Symbol::intern("[]"), Kind::mk(2)), list_of)
+    }
+
+    pub fn mk_tuple(mut tuple_of: Vec<Self>) -> Self {
+        match tuple_of.len() {
+            0 => Ty::Con(Symbol::from_str("()"), Kind::Star),
+            1 => tuple_of.remove(0),
+            n => {
+                let con = Ty::Con(
+                    std::iter::once('(')
+                        .chain(std::iter::repeat_with(|| ','))
+                        .chain(std::iter::once(')'))
+                        .collect(),
+                    Kind::mk(n + 1),
+                );
+                tuple_of
+                    .into_iter()
+                    .rev()
+                    .fold(con, |a, c| Ty::mk_app(a, c))
+            }
+        }
+    }
+}
+
+impl std::fmt::Debug for Ty {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        struct K<A>([A; 2]);
+        impl<A: std::fmt::Debug> std::fmt::Debug for K<A> {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.debug_tuple("")
+                    .field(&self.0[0])
+                    .field(&self.0[1])
+                    .finish()
+            }
+        }
+        match self {
+            Ty::Var(Var(k, t)) => write!(f, "Var({t} :: {k})"),
+            Ty::Con(s, k) => {
+                write!(f, "Con({s} :: {k})")
+            }
+            Ty::App(xy) => {
+                let [x, y] = &**xy;
+                write!(f, "App")?;
+                K::fmt(&K([x, y]), f)
+            }
+            Ty::Gen(n) => write!(f, "Gen('{n})"),
+        }
+    }
+}
+
+impl std::fmt::Display for Ty {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Ty::Var(Var(_, t)) => write!(f, "{t}"),
+            Ty::Con(s, _) => write!(f, "{s}"),
+            Ty::App(xy) => {
+                let [x, y] = &**xy;
+                if let Ty::Con(s, _) = x {
+                    if s.as_str() == "[]" {
+                        write!(f, "[{y}]")
+                    } else {
+                        write!(f, "{s} {y}")
+                    }
+                } else if let Ty::App(uv) = x {
+                    let [u, v] = uv.as_ref();
+                    if let Ty::Con(s, _) = u {
+                        match s.as_str() {
+                            "->" => {
+                                if v.is_fun() {
+                                    write!(f, "({v} -> {y})")
+                                } else {
+                                    write!(f, "{v} -> {y}")
+                                }
+                            }
+                            "(,)" => {
+                                write!(f, "({v}, {y})")
+                            }
+                            s => {
+                                write!(f, "{s} {v} {y}")
+                            }
+                        }
+                    } else {
+                        write!(f, "{u} {v} {y}")
+                    }
+                } else {
+                    write!(f, "{x} {y}")
+                }
+            }
+            Ty::Gen(n) => f.write_str("'").and(usize::fmt(n, f)),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Kind {
+    Star,
+    Arrow(Box<[Kind; 2]>),
+}
+
+wy_common::variant_preds! {
+    Kind
+    | is_star => Star
+    | is_arrow => Arrow(..)
+}
+
+impl std::fmt::Debug for Kind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Star => write!(f, "*"),
+            Self::Arrow(ab) => {
+                let [a, b] = ab.as_ref();
+                match (a, b) {
+                    (Kind::Star, Kind::Star) => write!(f, "* -> *"),
+                    (Kind::Star, k) => write!(f, "* -> {:?}", k),
+                    (k, Kind::Star) => write!(f, "({:?}) -> *", k),
+                    _ => write!(f, "{:?} -> {:?}", a, b),
+                }
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for Kind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Kind::Star => write!(f, "*"),
+            Kind::Arrow(ab) => {
+                let [a, b] = ab.as_ref();
+                match (a, b) {
+                    (Kind::Star, Kind::Star) => write!(f, "* -> *"),
+                    (Kind::Star, k) => write!(f, "* -> {k}"),
+                    (k, Kind::Star) => write!(f, "({k}) -> *"),
+                    _ => write!(f, "{} -> {}", a, b),
+                }
+            }
+        }
+    }
+}
+
+impl Kind {
+    pub fn fun_con() -> Self {
+        Kind::Arrow(Box::new([
+            Kind::Star,
+            Kind::Arrow(Box::new([Kind::Star, Kind::Star])),
+        ]))
+    }
+    pub fn list_con() -> Self {
+        Kind::Arrow(Box::new([Kind::Star, Kind::Star]))
+    }
+
+    pub fn mk(mut n: usize) -> Kind {
+        let mut k = Kind::Star;
+        while n > 0 {
+            k = Kind::Arrow(Box::new([Kind::Star, k]));
+            n -= 1;
+        }
+        k
+    }
+    pub fn degree(&self) -> usize {
+        match self {
+            Kind::Star => 0,
+            Kind::Arrow(k) => {
+                let mut stack = vec![];
+                for kx in k.as_ref() {
+                    stack.push(kx);
+                }
+                // stack.reverse();
+                let mut deg = 0;
+                while let Some(kind) = stack.pop() {
+                    deg += 1;
+                    if let Kind::Arrow(xy) = kind {
+                        stack.extend(xy.as_ref());
+                    } else {
+                        continue;
+                    }
+                }
+                deg
+            }
+        }
+    }
+}
+
+impl Iterator for Kind {
+    type Item = Kind;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match std::mem::replace(self, Kind::Star) {
+            Kind::Star => None,
+            Kind::Arrow(xy) => {
+                let [x, y] = *xy;
+                *self = y;
+                Some(x)
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -1954,7 +1859,7 @@ mod test {
     #[test]
     fn test_ty_macro() {
         let vars = (0..10).map(Tv).collect::<Vec<_>>();
-        if let [a, b, c, d, e, f, g, h] = vars[..] {
+        if let [a, b, c, d, e, f, g, h, ..] = vars[..] {
             assert_eq!(
                 Ty! { 0 -> 1 -> (2 -> 3) -> #(Foo 4 5 6 7) },
                 Type::mk_fun(
@@ -1971,6 +1876,13 @@ mod test {
                     )
                 )
             );
+            let ty = Ty! { 0 -> 1 -> (2 -> 3) -> #(Foo 4 5 6 7) };
+            println!("type: {}", &ty);
+            let ty = dbg![ty.simplify_ty()];
+            println!("simplified: {}", &ty);
+            println!("kind: {}", ty.kind());
+            let kinds = ty.kind().clone().collect::<Vec<_>>();
+            println!("subkinds: {:?}", kinds);
         } else {
             unreachable!()
         }
