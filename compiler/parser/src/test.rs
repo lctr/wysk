@@ -97,7 +97,7 @@ fn let_expr() {
     in bar (foo 1) (foo 2)
 "#;
     let result = Parser::from_str(src).expression();
-    println!("showing let: {:#?}", &result)
+    println!("showing let:\n{:#?}", &result)
 }
 
 const fn var<T>(s: Symbol) -> Pattern<Ident, T> {
@@ -510,5 +510,8 @@ fn test_data_record() {
 
 #[test]
 fn inspect_expr() {
-    dbg!(parse_expression("do { let x = 5; x <- [a..b]; x <- [1..b]; return x }"));
+    println!(
+        "{:?}",
+        parse_expression("do { let x = 5; x <- [a..b]; x <- [1..b]; return x }")
+    );
 }
