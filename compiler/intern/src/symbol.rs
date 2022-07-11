@@ -113,6 +113,12 @@ impl std::ops::Deref for Symbol {
     }
 }
 
+impl FromIterator<char> for Symbol {
+    fn from_iter<T: IntoIterator<Item = char>>(iter: T) -> Self {
+        Symbol::intern(iter.into_iter().collect::<String>())
+    }
+}
+
 impl From<&str> for Symbol {
     #[inline]
     fn from(s: &str) -> Self {
