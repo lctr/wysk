@@ -1,5 +1,5 @@
 pub use std::collections::{HashMap as Map, HashSet as Set, VecDeque as Deque};
-use std::hash::Hash;
+use std::hash::{self, Hash};
 
 use crate::Mappable;
 
@@ -197,6 +197,78 @@ impl<X> Pair<X> {
         self.0.into_iter()
     }
 }
+
+/// Supertrait for types that may be stored in hashsets or in hashmaps as keys.
+pub trait Hashable: Eq + hash::Hash
+where
+    Self: Sized,
+{
+    #[inline]
+    fn hash_with(self, state: &mut impl hash::Hasher) {
+        self.hash(state);
+    }
+
+    #[inline]
+    fn associate<V>(self, v: V) -> (Self, V) {
+        (self, v)
+    }
+
+    #[inline]
+    fn hashset_from(items: impl IntoIterator<Item = Self>) -> Set<Self> {
+        items.into_iter().collect::<Set<_>>()
+    }
+
+    #[inline]
+    fn hashmap_from<V>(entries: impl IntoIterator<Item = (Self, V)>) -> Map<Self, V> {
+        entries.into_iter().collect::<Map<_, _>>()
+    }
+
+    #[inline]
+    fn envr_from<V>(entries: impl IntoIterator<Item = (Self, V)>) -> Envr<Self, V> {
+        Envr {
+            store: entries.into_iter().collect(),
+        }
+    }
+
+    #[inline]
+    fn hashmap_from_filtered_keys<V>(
+        pairs: impl IntoIterator<Item = (Option<Self>, V)>,
+    ) -> Map<Self, V> {
+        pairs
+            .into_iter()
+            .filter_map(|(k, v)| k.map(|k| (k, v)))
+            .collect()
+    }
+
+    #[inline]
+    fn hashmap_from_filtered<V>(
+        pairs: impl IntoIterator<Item = Option<(Self, V)>>,
+    ) -> Map<Self, V> {
+        pairs.into_iter().filter_map(|x| x).collect()
+    }
+
+    #[inline]
+    fn hashmap_from_filtered_values<V>(
+        pairs: impl IntoIterator<Item = (Self, Option<V>)>,
+    ) -> Map<Self, V> {
+        pairs
+            .into_iter()
+            .filter_map(|(k, v)| v.map(|v| (k, v)))
+            .collect()
+    }
+
+    #[inline]
+    fn hashmap_from_filtered_pairs<V>(
+        pairs: impl IntoIterator<Item = (Option<Self>, Option<V>)>,
+    ) -> Map<Self, V> {
+        pairs
+            .into_iter()
+            .filter_map(|(k, v)| k.and_then(|k| v.map(|v| (k, v))))
+            .collect()
+    }
+}
+
+impl<T> Hashable for T where T: Eq + hash::Hash {}
 
 #[derive(Clone)]
 pub struct Envr<K, V> {
@@ -711,7 +783,7 @@ impl<T, P: IdxPtr> Hash for Vector<T, P>
 where
     T: Hash,
 {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
         self.vec.hash(state);
         self._ptr.hash(state);
     }
