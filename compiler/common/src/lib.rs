@@ -9,7 +9,6 @@ pub use serde;
 pub mod data;
 pub mod either;
 pub mod functor;
-pub mod integral;
 pub mod iter;
 pub mod mapstack;
 pub mod newtypes;
