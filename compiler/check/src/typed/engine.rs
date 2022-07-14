@@ -292,7 +292,7 @@ infixr 1 |>
 fn (|>) :: (a -> b) -> a -> b
     | f = \x -> f x
 "#;
-        match wy_parser::parse_input(src) {
+        match wy_parser::parse_program(src) {
             Err(e) => eprintln!("{}", e),
             Ok(program) => {
                 let mut envr = Builder::with_program(&program);
