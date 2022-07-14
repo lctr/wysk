@@ -114,6 +114,16 @@ impl<I> SyntaxTree<I> {
             .collect()
     }
 
+    pub fn imported_modules_iter(&self) -> impl Iterator<Item = (&ModuleId, &Chain<I>)>
+    where
+        I: Copy,
+    {
+        self.programs_iter().flat_map(|prog| {
+            prog.get_imports_iter()
+                .map(|impf| (prog.module_id(), impf.module_name()))
+        })
+    }
+
     pub fn map_id<X>(self, f: &mut impl FnMut(I) -> X) -> SyntaxTree<X>
     where
         I: std::hash::Hash + Eq,
@@ -605,6 +615,10 @@ impl<Id> ImportSpec<Id> {
         }
     }
 
+    pub fn module_name(&self) -> &Chain<Id> {
+        &self.name
+    }
+
     pub fn get_imports(&self) -> &[Import<Id>] {
         self.imports.as_slice()
     }
@@ -636,7 +650,7 @@ impl<Id> ImportSpec<Id> {
 /// `Operator`, `Function`, `Abstract`, `Total`, and `Partial`
 /// * Type aliases are always `Abstract`
 ///
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Import<Id = Ident> {
     /// Infix imports
     Operator(Id),
