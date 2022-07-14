@@ -5,8 +5,8 @@ use wy_name::ident::{Chain, Ident};
 use wy_syntax::{
     decl::Declaration,
     expr::RawExpression,
-    tipo::{Signature, Tv, Type},
-    Ast, Import, ImportSpec, Module, Program, RawModule, RawProgram, SyntaxTree,
+    tipo::{Signature, Type},
+    Import, ImportSpec, Module, Program, RawModule, RawProgram,
 };
 
 mod decl;
