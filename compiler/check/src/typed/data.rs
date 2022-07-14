@@ -168,60 +168,6 @@ mod tests {
 
     use std::collections::HashMap;
 
-    #[test]
-    fn inspect_prelude_constructors() {
-        let mut map = HashMap::new();
-        match wy_parser::parse_prelude() {
-            Ok(program) => {
-                program
-                    .module
-                    // .map_t_ref(&mut |id| Tv::from(id))
-                    .datatys_iter()
-                    .for_each(|decl| {
-                        let mut tyn = true;
-                        decl.constructor_types().into_iter().for_each(|cons| {
-                            let name = cons.name;
-                            let vars = cons.var_map();
-                            let tipo = cons.tipo.map_t_ref(&mut |tv| vars[tv]);
-                            let mut vars = vars.into_iter().map(|(_k, v)| v).collect::<Vec<_>>();
-                            vars.sort();
-                            println!(
-                                "{id} | {con} :: {var}{ty}",
-                                id = if tyn {
-                                    tyn = false;
-                                    decl.name.to_string()
-                                } else {
-                                    std::iter::repeat(' ')
-                                        .take(decl.name.to_string().len())
-                                        .collect::<String>()
-                                },
-                                con = name,
-                                var = if vars.is_empty() {
-                                    String::new()
-                                } else {
-                                    {
-                                        let mut s = String::new();
-                                        s.push_str("forall");
-                                        for v in &vars {
-                                            s.push_str(&*format!(" {}", v));
-                                        }
-                                        s.push_str(" . ");
-                                        s
-                                    }
-                                },
-                                ty = &tipo
-                            );
-                            map.insert(name, tipo);
-                        })
-                    });
-                println!("Constructors {}", Dictionary(&map))
-            }
-            Err(e) => {
-                println!("{}", e)
-            }
-        }
-    }
-
     fn visit_match<Id: Eq + std::hash::Hash, T>(
         graph: &mut Graph<T>,
         bindings: &HashMap<Id, NodeId>,
@@ -254,39 +200,5 @@ mod tests {
         }
         .visit_expr(body)
         .unwrap();
-    }
-
-    #[test]
-    fn test_bindings_graph() {
-        let mut bindings = HashMap::new();
-        let mut graph = Graph::new();
-        match wy_parser::parse_prelude() {
-            Ok(program) => {
-                program
-                    .module
-                    .fundefs
-                    .clone()
-                    .into_iter()
-                    .for_each(|fundecl| {
-                        let idx = graph.add_node(fundecl.name);
-                        bindings.insert(fundecl.name, idx);
-                    });
-                program.module.fundefs.clone().into_iter().for_each(|decl| {
-                    decl.defs
-                        .into_iter()
-                        .for_each(|m| visit_match(&mut graph, &bindings, &m, &decl.name))
-                });
-                let sccs = graph.strongly_connected_components();
-                println!("sccs: {:?}", &sccs);
-                println!("graph: {:?}", &graph);
-                println!("bindings: {:?}", &bindings);
-                let sccs = sccs
-                    .into_iter()
-                    .map(|scc| scc.map(|node_id| &graph[node_id]).collect::<Vec<_>>())
-                    .collect::<Vec<_>>();
-                println!("sccs(2): {:#?}", &sccs)
-            }
-            Err(e) => println!("{}", e),
-        }
     }
 }
