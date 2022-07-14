@@ -159,7 +159,7 @@ pub struct Datum {
 
 #[cfg(test)]
 mod tests {
-    use wy_common::pretty::Dictionary;
+
     use wy_graph::{EdgeVisitor, Graph, NodeId};
     use wy_syntax::{
         stmt::{Binding, Match},
@@ -168,6 +168,7 @@ mod tests {
 
     use std::collections::HashMap;
 
+    // TODO: trampoline to SCC analysis from this
     fn visit_match<Id: Eq + std::hash::Hash, T>(
         graph: &mut Graph<T>,
         bindings: &HashMap<Id, NodeId>,
