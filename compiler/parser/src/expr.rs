@@ -597,6 +597,22 @@ mod test {
 
     use super::*;
 
+    fn infixed(
+        left: RawExpression,
+        infix: wy_intern::Symbol,
+        right: RawExpression,
+    ) -> RawExpression {
+        Expression::Infix {
+            infix: Ident::Infix(infix),
+            left: Box::new(left),
+            right: Box::new(right),
+        }
+    }
+
+    fn tuplex<const N: usize>(subexps: [RawExpression; N]) -> RawExpression {
+        Expression::Tuple(subexps.to_vec())
+    }
+
     #[test]
     fn case_expr() {
         let src = r#"
@@ -640,5 +656,113 @@ y -> y;
             ],
         );
         assert_eq!(expr, Ok(expected))
+    }
+
+    #[test]
+    fn test_infix_exprs() {
+        use Expression::Lit;
+        let [op1, op2, plus, times, minus, fun] =
+            wy_intern::intern_many(["<>", "><", "+", "*", "-", "fun"]);
+        let int = |n| Lit(Literal::Int(n));
+
+        let tests = [
+            (
+                "1 + 2 * 3 - 4",
+                infixed(
+                    int(1),
+                    plus,
+                    infixed(int(2), times, infixed(int(3), minus, int(4))),
+                ),
+            ),
+            (
+                "(1, 2, 3) <> (4, 5, 6) >< (7, 8, 9)",
+                infixed(
+                    tuplex([int(1), int(2), int(3)]),
+                    op1,
+                    infixed(
+                        tuplex([int(4), int(5), int(6)]),
+                        op2,
+                        tuplex([int(7), int(8), int(9)]),
+                    ),
+                ),
+            ),
+            (
+                "fun 1 2",
+                Expression::App(
+                    Box::new(Expression::App(
+                        Box::new(Expression::Ident(Ident::Lower(fun))),
+                        Box::new(int(1)),
+                    )),
+                    Box::new(int(2)),
+                ),
+            ),
+        ];
+
+        for (src, expected) in tests {
+            assert_eq!(Parser::from_str(src).expression().unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn let_expr() {
+        let src = r#"
+        let foo | 1 = 2 
+                | 3 = 4
+        , bar | x y = (x, y) where y = x + 2
+        in bar (foo 1) (foo 2)
+    "#;
+        let result = Parser::from_str(src).expression();
+        println!("showing let:\n{:#?}", &result)
+    }
+
+    #[test]
+    fn test_lambda_expr() {
+        let src = r#"\x -> f x"#;
+        let [x, f] = wy_intern::intern_many(["x", "f"]);
+        let expr = Parser::from_str(src).expression().unwrap();
+        let expected = Expression::Lambda(
+            Pattern::Var(Ident::Lower(x)),
+            Box::new(Expression::App(
+                Box::new(Expression::Ident(Ident::Lower(f))),
+                Box::new(Expression::Ident(Ident::Lower(x))),
+            )),
+        );
+        assert_eq!(expr, expected);
+        println!("{:?}", &expr);
+    }
+
+    #[test]
+    fn test_list_comprehension() {
+        let src = "[ f x | x <- [0..n] ]";
+        let mut parser = Parser::from_str(src);
+        let expr = parser.expression();
+        println!("{:?}", &expr);
+        println!("{:?}", &parser);
+    }
+
+    #[test]
+    fn test_section_expr() {
+        use wy_syntax::expr::Section::*;
+        use Expression as E;
+        use Literal::*;
+        let src = "map (+5) [1, 2, 3]";
+        let [map, plus] = wy_intern::intern_many(["map", "+"]);
+        let map = Ident::Lower(map);
+        let plus = Ident::Infix(plus);
+        let expected: RawExpression = E::App(
+            Box::new(E::App(
+                Box::new(E::Ident(map)),
+                Box::new(E::Section(Prefix {
+                    prefix: plus,
+                    right: Box::new(E::Lit(Int(5))),
+                })),
+            )),
+            Box::new(E::Array(vec![
+                E::Lit(Int(1)),
+                E::Lit(Int(2)),
+                E::Lit(Int(3)),
+            ])),
+        );
+        assert_eq!(Parser::from_str(src).expression(), Ok(expected))
     }
 }
