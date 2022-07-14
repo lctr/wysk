@@ -17,8 +17,6 @@ use wy_syntax::tipo::Type;
 use crate::error::*;
 use crate::stream::*;
 
-// use crate::stream::*;
-
 // TYPES TODO: refactor to differentiate between TYPEs (type only) and
 // SIGNATURES (context + type)
 type TypeParser<'t> = Parser<'t>;
