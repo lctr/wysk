@@ -17,6 +17,9 @@ use crate::record::{Field, Record};
 pub struct Tv(pub u32);
 
 impl Tv {
+    pub fn get(&self) -> u32 {
+        self.0
+    }
     pub fn tick(&self) -> Self {
         Self(self.0 + 1)
     }
@@ -39,7 +42,7 @@ impl Tv {
     }
 
     pub fn write_str(&self, buf: &mut String) {
-        wy_common::text::write_display_var(self.0, buf)
+        wy_common::text::write_display_var(self.0 as usize, buf)
     }
 
     pub fn as_type<X>(self) -> Type<X, Self> {
@@ -59,13 +62,13 @@ impl From<Tv> for usize {
 
 impl PartialEq<Ident> for Tv {
     fn eq(&self, other: &Ident) -> bool {
-        matches!(other, Ident::Fresh(n) if n.as_u32() == self.0)
+        matches!(other, Ident::Fresh(n) if *n == self.0)
     }
 }
 
 impl PartialEq<Tv> for Ident {
     fn eq(&self, other: &Tv) -> bool {
-        matches!(self, Ident::Fresh(s) if s.as_u32() == other.0)
+        matches!(self, Ident::Fresh(s) if *s == other.0)
     }
 }
 
@@ -95,7 +98,7 @@ impl From<Ident> for Tv {
 
 impl From<Tv> for Ident {
     fn from(tv: Tv) -> Self {
-        Ident::Fresh(wy_intern::intern_once(&*tv.display()))
+        Ident::Fresh(tv.get())
     }
 }
 
@@ -376,6 +379,20 @@ impl<S: Identifier + Symbolic> PartialEq<S> for Con<Ident, Tv> {
 impl Con<Ident, Tv> {
     const fn mk_data(symbol: Symbol) -> Con<Ident, Tv> {
         Con::Data(Ident::Upper(symbol))
+    }
+
+    pub fn from_ident(ident: Ident) -> Self {
+        if let Ident::Fresh(n) = ident {
+            Con::Free(Tv(n))
+        } else if let Some(n) = ident.comma_count() {
+            Con::Tuple(n)
+        } else if ident.is_cons_sign() {
+            Con::List
+        } else if ident.is_arrow() {
+            Con::ARROW
+        } else {
+            Con::Data(ident)
+        }
     }
 
     pub const ARROW: Self = Self::mk_data(wy_intern::ARROW);
@@ -1153,6 +1170,25 @@ impl Type<Ident, Tv> {
             })),
         }
     }
+
+    /// Returns a tuple type with `n` components, each component a
+    /// fresh type variable. If `n = 0`, then the unit type is
+    /// returned, and calling this method with `n = 1` will always
+    /// return the type variable `a` (`Type::Var(Tv(0))`).
+    ///
+    /// For example, `n = 3` returns `(a, b, c)`.
+    ///
+    /// Note that type variables must be
+    /// refreshed when used in a type context.
+    pub fn mk_n_tuple(n: usize) -> Type<Ident, Tv> {
+        if n == 0 {
+            Type::UNIT
+        } else if n == 1 {
+            Type::Var(Tv(0))
+        } else {
+            Type::Tup((0..n).map(|m| Type::Var(Tv(m as u32))).collect())
+        }
+    }
 }
 
 /// A `Context` always appears as an element in a sequence of other `Context`s
@@ -1323,6 +1359,77 @@ impl<Id, T> Signature<Id, T> {
             each: self.each_iter().map(|t| f(t)).collect(),
             ctxt: self.ctxt_iter().map(|c| c.map_t_ref(f)).collect(),
             tipo: self.tipo.map_t_ref(f),
+        }
+    }
+}
+
+/// Equivalent to `Option<Signature<Id, T>>`, expressing whether a
+/// type annotation has been provided (in which case the `Explicit`
+/// variant is used) or omitted (in which case the `Implicit` variant
+/// is used).
+///
+/// A benefit to using a custom type over `Option` is that it allows
+/// for further extension to the type system. Universal quantification
+/// is currently (superficially) recorded in the `Signature` type, but
+/// will be offloaded to `Contract`s, allowing for `Signature`s to
+/// specialize in gluing together class constraints with type nodes.
+///
+/// An explicit contract corresponds to the type signature found in
+/// source code and is never overwritten (only isomorphically modified
+/// in terms of representation), but rather used as a reference with
+/// which type inference and checking is unified in later phases.
+///
+/// Note that whether a contract is implicit or explicit does not
+/// affect whether the item to which it is tied has its type inferred.
+/// For example, the type of a binding is still inferred regardless as
+/// whether it was explicitly annotated with a type. However, after
+/// inference, explicit contracts are unified against the inferred
+/// types in addition to the inference-generated constraints.
+///
+/// For example, during type inference every binding has a type
+/// inferred along with a set of type constraints. Type checking fails
+/// if the inferred type cannot be solved according to the generated
+/// constraints. If a given binding is annotated, and the inferred
+/// type is solvable with respect to the generated constraints but
+/// cannot be unified with respect to the annotated type, an error
+/// will be raised and type checking will fail, as the explicit
+/// contract takes precedence over implicit inference.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Contract<Id, T> {
+    Implicit,
+    Explicit(Signature<Id, T>),
+}
+
+wy_common::variant_preds! {
+    |Id, T| Contract[Id, T]
+    | is_implicit => Implicit
+    | is_explicit => Explicit(_)
+}
+
+impl<Id, T> Contract<Id, T> {
+    pub fn signature(&self) -> Option<&Signature<Id, T>> {
+        if let Self::Explicit(s) = self {
+            Some(s)
+        } else {
+            None
+        }
+    }
+
+    pub fn map_id<U>(self, f: &mut impl FnMut(Id) -> U) -> Contract<U, T> {
+        match self {
+            Contract::Implicit => Contract::Implicit,
+            Contract::Explicit(Signature { each, ctxt, tipo }) => {
+                let ctxt = ctxt.fmap(|Context { class, head }| Context {
+                    class: f(class),
+                    head,
+                });
+                let tipo = {
+                    use wy_common::functor::Mapped;
+                    let m = Mapped::new(tipo, |ty: Type<Id, T>| ty.map_id(f));
+                    m.run_mut().take()
+                };
+                Contract::Explicit(Signature { each, ctxt, tipo })
+            }
         }
     }
 }

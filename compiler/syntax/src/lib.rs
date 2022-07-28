@@ -1,5 +1,7 @@
+#![feature(generic_associated_types)]
+
 use attr::Attribute;
-use wy_common::{deque, struct_field_iters, Map, Mappable};
+use wy_common::{deque, struct_field_iters, HashMap, Mappable};
 use wy_intern::symbol::{self, Symbol};
 use wy_name::{
     ident::{Chain, Ident},
@@ -16,7 +18,6 @@ pub mod decl;
 pub mod expr;
 pub mod fixity;
 pub mod pattern;
-pub mod pretty;
 pub mod record;
 pub mod stmt;
 pub mod tipo;
@@ -33,7 +34,7 @@ use tipo::*;
 #[derive(Clone, Debug)]
 pub struct SyntaxTree<I> {
     programs: Vec<Program<I, ModuleId, Tv>>,
-    packages: Map<ModuleId, Chain<I>>,
+    packages: HashMap<ModuleId, Chain<I>>,
 }
 
 pub type Ast = SyntaxTree<Ident>;
@@ -47,7 +48,7 @@ impl<I> SyntaxTree<I> {
     pub fn new() -> Self {
         Self {
             programs: Vec::new(),
-            packages: Map::new(),
+            packages: HashMap::new(),
         }
     }
     pub fn program_count(&self) -> usize {
@@ -68,7 +69,7 @@ impl<I> SyntaxTree<I> {
         Tv: From<T>,
     {
         let program = program.map_t(|t| Tv::from(t)).map_u(|_| ModuleId::new(0));
-        let packages = Map::from([(ModuleId::new(0), program.module.modname.clone())]);
+        let packages = HashMap::from([(ModuleId::new(0), program.module.modname.clone())]);
         Self {
             programs: vec![program],
             packages,
@@ -158,11 +159,23 @@ impl<I> SyntaxTree<I> {
 }
 
 impl Ast {
-    pub fn qualify_idents(self) -> SyntaxTree<wy_name::Unique> {
+    pub fn qualify_chain_idents(self) -> SyntaxTree<Chain<Ident>> {
         let SyntaxTree { programs, packages } = self;
         let programs = programs
             .into_iter()
-            .map(|program| program.qualify_idents())
+            .map(|program| program.qualify_chain_idents())
+            .collect();
+        let packages = packages
+            .into_iter()
+            .map(|(mid, chs)| (mid, Chain::new(chs, deque![])))
+            .collect();
+        SyntaxTree { programs, packages }
+    }
+    pub fn qualify_unique_idents(self) -> SyntaxTree<wy_name::Unique> {
+        let SyntaxTree { programs, packages } = self;
+        let programs = programs
+            .into_iter()
+            .map(|program| program.qualify_unique_idents())
             .collect();
         let packages = packages
             .into_iter()
@@ -340,14 +353,33 @@ impl<Id, U, T> Program<Id, U, T> {
 }
 
 impl Program<Ident, ModuleId, Tv> {
-    pub fn qualify_idents(self) -> Program<wy_name::Unique, ModuleId, Tv> {
+    pub fn qualify_chain_idents(self) -> Program<Chain<Ident>, ModuleId, Tv> {
+        let Program {
+            module,
+            fixities,
+            comments,
+        } = self;
+        let name = module.module_name().clone();
+        let module = qualify_module_chain_idents(module);
+        let fixities = fixities
+            .into_iter()
+            .map(|(id, fix)| (name.with_suffix(id), fix))
+            .collect();
+        Program {
+            module,
+            fixities,
+            comments,
+        }
+    }
+
+    pub fn qualify_unique_idents(self) -> Program<wy_name::Unique, ModuleId, Tv> {
         let Program {
             module,
             fixities,
             comments,
         } = self;
         let name = module.modname.clone();
-        let module = qualify_module_idents(module);
+        let module = qualify_unique_module_idents(module);
         let fixities = fixities
             .into_iter()
             .map(|(id, fix)| (wy_name::intern_chain(name.with_suffix(id)), fix))
@@ -550,9 +582,16 @@ impl<Id, U, T> Module<Id, U, T> {
     }
 }
 
+pub fn qualify_module_chain_idents(
+    mdl: Module<Ident, ModuleId, Tv>,
+) -> Module<Chain<Ident>, ModuleId, Tv> {
+    let root_name = mdl.module_name();
+    mdl.map_id_ref(&mut |id| root_name.with_suffix(*id))
+}
+
 /// Replaces every identifier in a module with a chain consisting of the module
 /// name prefixed to the identifier.
-pub fn qualify_module_idents(
+pub fn qualify_unique_module_idents(
     mdl: Module<Ident, ModuleId, Tv>,
 ) -> Module<wy_name::Unique, ModuleId, Tv> {
     let root_name = mdl.modname.clone();

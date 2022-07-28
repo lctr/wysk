@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use wy_common::{iter::Hashable, Map, Set};
+use wy_common::{iter::Hashable, HashMap, Map, Set};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Record<Id, T> {
@@ -113,7 +113,7 @@ impl<Id, T> Record<Id, T> {
         self.fields().into_iter().find(pred)
     }
 
-    pub fn into_hashmap(self) -> Map<Id, T>
+    pub fn into_hashmap(self) -> HashMap<Id, T>
     where
         Id: Hashable,
     {

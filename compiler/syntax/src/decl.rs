@@ -174,21 +174,83 @@ impl<Id, T> Constructor<Id, T> {
     }
 }
 
+/// A `DataDecl` defines a new *type constructor* `name` as well as a
+/// fixed set of *data constructors*, termed `variant`s, to construct
+/// values of said type. The type constructor defined may additionally
+/// hold constraints over the types by which it may be parametrized,
+/// as well as have *certain* built-in classes automatically
+/// implemented.
+///
+/// # Constructors
+/// Values for the defined type are constructed using the included
+/// *data* constructors. Data constructors share a separate namespace
+/// from the type constructor itself, so it is possible for a type
+/// constructor to have a data constructor with the same name. Note
+/// that a data declaration need not have data constructors.
+///
+/// Data constructors are semantically functions that return values of
+/// the data type. Constructors may either be *nullary* and take no
+/// arguments, be *curried* and take one or more arguments, or be
+/// *records* in which the arguments are labelled.
+///
+/// Note that record constructors may be treated as curried
+/// constructors when used without the record syntax but require that
+/// arguments be applied in the same order in which the field labels
+/// are defined.
+///
+/// The order in which constructors are defined is relevant for some
+/// automatically derived classes (such as `Ord` or `Enum` when all
+/// constructors are nullary).
+///
+/// # Polymorphism
+/// A data type may be polymorphic over a set of type variables, all
+/// of which must be declared as arguments to the type constructor
+/// `name` and *must* be linear, i.e., must not have repeated type
+/// variables.
+///
+/// # Automatically derived class implementations
+/// A data declaration may contain an optional `with` clause, which
+/// contains either a single class name or a list of class names; the
+/// compiler will automatically generate instances of these class
+/// names for the type defined by the data declaration. **Note** the
+/// classes in the `with` clause are limited and additionally require
+/// that every type contained by the defined type also be instances of
+/// each class. It is an error for a data declaration to hold data for
+/// some type that is not an instance of a class listed in the `with`
+/// clause.
+///
+/// The (to be defacto) supported classes are the following:
+/// * `Eq` - total equality
+/// * `Ord` - total ordering
+/// * `Show` - string representable
+/// * `Enum` - enumerable, only valid when all constructors are
+///   nullary
+/// * `Bound` - bounded from above and below, requires `Ord` and `Eq`
+/// * `Hash` - hashable, requires `Eq`
+///
+/// # Syntactic components
+/// | Fields | Description                                           |
+/// |--------|:------------------------------------------------------|
+/// | `name` | name of type (constructor) being defined              |
+/// | `poly` | list of type variables parametrizing the type         |
+/// | `ctxt` | classes of which type variables must be instances     |
+/// | `vnts` | data constructors for the defined type                |
+/// | `with` | classes for which instances are automatically derived |
+///
+/// # Example
+/// The following source code defines a type constructor `Foo`,
+/// parametrized by the type variable `a` (which must be an instance
+/// of the class `A`), with data constructors `Bar a :: a -> Foo a`
+/// and `Baz :: a -> Foo a -> Foo a`, and automatically derived
+/// instances for the classes `A`, `B`, `C`.
 ///
 /// ```wysk
-/// ~~        `name` `poly`
-/// ~~           V   /
+/// ~~    ctxt name poly
+/// ~~     🡓   🡓  🡓
 /// data |A a| Foo a
-/// ~~    ^^^
-/// ~~   `ctxt`
-///     = Bar a
-/// ~~    ^^^^^
-/// ~~   `vnts[0]`
-///     | Baz a (Foo a)
-/// ~~    ^^^^^^^^^^^^^
-/// ~~   `vnts[1]`
-///     with (B, C, D);
-/// ~~       ^^^^^^^^
+///     = Bar a          ~~ variant 0
+///     | Baz a (Foo a)  ~~ variant 1
+///     with (A, B, C);  ~~ with (deriving) clause
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DataDecl<Id = Ident, T = Ident> {

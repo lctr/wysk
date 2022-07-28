@@ -195,16 +195,16 @@ impl<Id, T> Pattern<Id, T> {
             Self::Or(alts) => match &alts[..] {
                 [] => true,
                 [first, rest @ ..] => {
-                    let vars = first.vars();
+                    let vars = first.idents();
                     for pat in rest {
-                        if vars != pat.vars() {
+                        if vars != pat.idents() {
                             return false;
                         }
                     }
                     true
                 }
             },
-            Self::At(id, pat) => pat.uniformly_bound_ors() && !pat.vars().contains(id),
+            Self::At(id, pat) => pat.uniformly_bound_ors() && !pat.idents().contains(id),
             Self::Tup(pats) | Self::Vec(pats) | Self::Dat(_, pats) => {
                 pats.into_iter().all(|pat| pat.uniformly_bound_ors())
             }
@@ -230,44 +230,44 @@ impl<Id, T> Pattern<Id, T> {
     /// checking for duplicates or variable identifier order: use the `binders`
     /// method instead, which returns a vector of variable identifiers
     /// potentially containing duplicates.
-    pub fn vars(&self) -> Set<Id>
+    pub fn idents(&self) -> Set<&Id>
     where
-        Id: Copy + Eq + std::hash::Hash,
+        Id: Eq + std::hash::Hash,
     {
         let mut vars = Set::new();
         match self {
             Pattern::Wild | Pattern::Lit(_) => (),
             Pattern::Var(id) => {
-                vars.insert(*id);
+                vars.insert(id);
             }
             Pattern::Dat(_, ps) | Pattern::Tup(ps) | Pattern::Vec(ps) | Pattern::Or(ps) => {
                 for p in ps {
-                    vars.extend(p.vars())
+                    vars.extend(p.idents())
                 }
             }
             Pattern::Lnk(x, y) => {
-                vars.extend(x.vars());
-                vars.extend(y.vars());
+                vars.extend(x.idents());
+                vars.extend(y.idents());
             }
             Pattern::At(x, y) => {
-                vars.insert(*x);
-                vars.extend(y.vars());
+                vars.insert(x);
+                vars.extend(y.idents());
             }
             Pattern::Rec(rec) => rec.fields().into_iter().for_each(|field| {
                 if let Some(key) = field.get_key() {
-                    vars.insert(*key);
+                    vars.insert(key);
                 }
                 if let Some(val) = field.get_value() {
-                    vars.extend(val.vars())
+                    vars.extend(val.idents())
                 }
             }),
             Pattern::Cast(p, _) => {
-                vars.extend(p.vars());
+                vars.extend(p.idents());
             }
             Pattern::Rng(a, b) => {
-                vars.extend(a.vars());
+                vars.extend(a.idents());
                 if let Some(c) = b {
-                    vars.extend(c.vars())
+                    vars.extend(c.idents())
                 }
             }
         };

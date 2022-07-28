@@ -311,7 +311,7 @@ impl<Id> std::ops::Deref for Fixities<Id> {
 }
 
 #[derive(Clone, Debug)]
-pub struct FixityTable<Id = Ident>(pub Map<Id, Fixity>);
+pub struct FixityTable<Id = Ident>(pub HashMap<Id, Fixity>);
 
 impl<Id> IntoIterator for FixityTable<Id> {
     type Item = (Id, Fixity);
@@ -341,7 +341,7 @@ where
     Id: Eq + std::hash::Hash,
 {
     pub fn new(mut infixify: impl FnMut(Symbol) -> Id) -> Self {
-        let mut map = Map::new();
+        let mut map = HashMap::new();
         map.insert(infixify(symbol::COLON), Fixity::CONS);
         Self(map)
     }
@@ -362,7 +362,7 @@ where
             self.0
                 .into_iter()
                 .map(|(id, fixity)| (f(id), fixity))
-                .collect::<Map<_, _>>(),
+                .collect::<HashMap<_, _>>(),
         )
     }
 
@@ -489,13 +489,13 @@ where
     Id: Eq + std::hash::Hash,
 {
     fn from_iter<T: IntoIterator<Item = (Id, Fixity)>>(iter: T) -> Self {
-        Self(iter.into_iter().collect::<Map<Id, Fixity>>())
+        Self(iter.into_iter().collect::<HashMap<Id, Fixity>>())
     }
 }
 
 // UTILS, PROBABLY TO BECOME STANDARDLY IMPLEMENTED
 impl std::ops::Deref for FixityTable {
-    type Target = Map<Ident, Fixity>;
+    type Target = HashMap<Ident, Fixity>;
 
     fn deref(&self) -> &Self::Target {
         &(self.0)
