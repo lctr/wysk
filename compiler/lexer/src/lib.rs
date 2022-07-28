@@ -15,7 +15,6 @@ pub use stream::{Lexer, Source};
 pub use token::{Keyword, LexError, Lexeme, Token};
 
 pub mod comment;
-pub mod identifier;
 pub mod literal;
 pub mod meta;
 pub mod stream;
@@ -151,6 +150,7 @@ impl<'t> Lexer<'t> {
             "=" => Lexeme::Equal,
             "\\" => Lexeme::Lambda,
             "@" => Lexeme::At,
+            "!" => Lexeme::Bang,
             "#" => {
                 let hash = Lexeme::Pound;
                 let bang = self
