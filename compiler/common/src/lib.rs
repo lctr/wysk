@@ -2,8 +2,6 @@
 // #![feature(explicit_generic_args_with_impl_trait)]
 #![feature(generic_associated_types)]
 
-pub use std::collections::{HashMap as Map, HashSet as Set, VecDeque as Deque};
-
 pub use serde;
 
 pub mod data;
@@ -16,6 +14,7 @@ pub mod pretty;
 pub mod text;
 
 pub use functor::Mappable;
+pub use iter::{Deque, HashMap, HashSet, Hashable, Map, Set, VecDeque};
 
 #[macro_export]
 macro_rules! deque {
