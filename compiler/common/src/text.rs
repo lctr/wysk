@@ -1,3 +1,5 @@
+use std::fmt::Write;
+
 pub const LOWER_LATIN: [char; 26] = [
     'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's',
     't', 'u', 'v', 'w', 'x', 'y', 'z',
@@ -31,19 +33,56 @@ pub fn display_var(n: u32) -> String {
 
 /// Similar to `display_var`, but writes to a given string buffer instead of
 /// allocating a new string.
-pub fn write_display_var(n: u32, buf: &mut String) {
-    let mut tmp = n as usize;
+pub fn write_display_var(mut n: usize, buf: &mut String) {
     let mut ct = 0;
     loop {
-        if tmp < 26 {
-            buf.push(LOWER_LATIN[tmp]);
+        if n < 26 {
+            buf.push(LOWER_LATIN[n]);
             break;
         } else {
             buf.push(LOWER_LATIN[ct % 26]);
             ct += 1;
-            tmp -= 26;
+            n -= 26;
         }
     }
+}
+
+pub fn fmt_display_var(mut n: usize, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    let mut ct = 0;
+    loop {
+        if n < 26 {
+            break f.write_char(LOWER_LATIN[n]);
+        } else {
+            f.write_char(LOWER_LATIN[ct % 26])?;
+            ct += 1;
+            n -= 6;
+        }
+    }
+}
+
+/// Capitalizes the first letter in a given string.
+pub fn capitalize_first(s: impl AsRef<str>) -> String {
+    let mut buf = String::new();
+    let s = s.as_ref();
+    if s.len() > 0 {
+        let mut chars = s.chars();
+        chars.next().map(|c: char| {
+            buf.push({
+                if c.is_ascii_lowercase() {
+                    c.to_ascii_uppercase()
+                } else {
+                    c
+                }
+            })
+        });
+        chars.for_each(|c| buf.push(c));
+    };
+    buf
+}
+
+#[test]
+fn test_capitalize_first() {
+    assert_eq!(String::from("Function"), capitalize_first("function"))
 }
 
 /// Enums corresponding to a literal, but that *don't* hold any data values,
