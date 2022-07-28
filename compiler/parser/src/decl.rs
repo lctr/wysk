@@ -91,9 +91,7 @@ impl<'t> DeclParser<'t> {
             vec![]
         };
         let name = self.expect_upper()?;
-        let poly = self.many_while_on(Not([Equal, Semi]), |p| {
-            p.expect_lower().map(|ident| Ident::Fresh(ident.symbol()))
-        })?;
+        let poly = self.many_while_on(Not([Equal, Semi]), |p| p.expect_lower())?;
         let mut decl = DataDecl {
             name,
             ctxt,
@@ -160,9 +158,7 @@ impl<'t> DeclParser<'t> {
         use Lexeme::Equal;
         self.eat(Type)?;
         let name = self.expect_upper()?;
-        let poly = self.many_while_on(Not(Equal), |p| {
-            p.expect_lower().map(|ident| Ident::Fresh(ident.symbol()))
-        })?;
+        let poly = self.many_while_on(Not(Equal), |p| p.expect_lower())?;
         self.eat(Equal)?;
         let sign = self.total_signature()?;
         Ok(AliasDecl { name, poly, sign })
@@ -172,9 +168,7 @@ impl<'t> DeclParser<'t> {
         self.eat(Keyword::Class)?;
         let ctxt = self.ty_contexts()?;
         let name = self.expect_upper()?;
-        let poly = self.many_while_on(Lexeme::is_lower, |p| {
-            p.expect_lower().map(|ident| Ident::Fresh(ident.symbol()))
-        })?;
+        let poly = self.many_while_on(Lexeme::is_lower, |p| p.expect_lower())?;
         self.eat(Lexeme::CurlyL)?;
         let mut defs = vec![];
         while !self.peek_on(Lexeme::CurlyR) {
