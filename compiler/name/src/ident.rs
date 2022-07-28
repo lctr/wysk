@@ -2,13 +2,203 @@ use serde::{Deserialize, Serialize};
 use wy_common::{deque, Deque};
 use wy_intern::symbol::{self, reserved, Symbol, Symbolic};
 
+const FRESH_PREFIX: &'static str = "_#";
+
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Ident {
+    Upper(Symbol),
+    Lower(Symbol),
+    Infix(Symbol),
+    Label(Symbol),
+    /// Represent internally generated variables distinguishable from `Lower`
+    /// variants, either for type variables or for parser/compiler generated
+    /// variables.
+    Fresh(u32),
+}
+
+impl std::fmt::Debug for Ident {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Upper(arg0) => write!(f, "Upper({})", arg0),
+            Self::Lower(arg0) => write!(f, "Lower({})", arg0),
+            Self::Infix(arg0) => write!(f, "Infix({})", arg0),
+            Self::Label(arg0) => write!(f, "Label({})", arg0),
+            Self::Fresh(arg0) => write!(f, "Fresh({})", arg0),
+        }
+    }
+}
+
+impl std::fmt::Display for Ident {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}{}",
+            if self.is_fresh() { "_#" } else { "" },
+            self.symbol()
+        )
+    }
+}
+
+impl Symbolic for Ident {
+    fn get_symbol(&self) -> Symbol {
+        self.symbol()
+    }
+}
+
+impl Ident {
+    pub const MAIN_MOD: Self = Ident::Upper(reserved::MAIN_MOD.symbol);
+    pub const MAIN_FUN: Self = Ident::Lower(reserved::MAIN_FUN.symbol);
+    pub const COLON: Self = Ident::Infix(reserved::COLON.symbol);
+    pub const ARROW: Self = Ident::Infix(reserved::ARROW.symbol);
+    pub const MINUS: Self = Ident::Infix(reserved::MINUS.symbol);
+    pub const TRUE: Self = Ident::Upper(reserved::TRUE.symbol);
+    pub const FALSE: Self = Ident::Lower(reserved::FALSE.symbol);
+    pub const WILD: Self = Ident::Lower(reserved::WILD.symbol);
+
+    pub const NAMES: [fn(Symbol) -> Self; 4] = [Self::Upper, Self::Lower, Self::Infix, Self::Label];
+
+    pub fn symbol(&self) -> Symbol {
+        match self {
+            Self::Upper(s) | Self::Lower(s) | Self::Infix(s) | Self::Label(s) => *s,
+            Self::Fresh(n) => Symbol::intern(format!("{FRESH_PREFIX}{n}")),
+        }
+    }
+    pub fn is_upper(&self) -> bool {
+        matches!(self, Self::Upper(..))
+    }
+    pub fn is_lower(&self) -> bool {
+        matches!(self, Self::Lower(..))
+    }
+    pub fn is_infix(&self) -> bool {
+        matches!(self, Self::Infix(..))
+    }
+    pub fn is_label(&self) -> bool {
+        matches!(self, Self::Label(..))
+    }
+    pub fn is_fresh(&self) -> bool {
+        matches!(self, Self::Fresh(..))
+    }
+
+    /// Returns the integer value held by the `Symbol` from this identifier.
+    pub fn as_u32(self) -> u32 {
+        self.symbol().as_u32()
+    }
+
+    /// Returns the constructor for the given `Ident` variant
+    pub fn constructor(&self) -> fn(Symbol) -> Self {
+        match self {
+            Ident::Upper(_) => Ident::Upper,
+            Ident::Lower(_) => Ident::Lower,
+            Ident::Infix(_) => Ident::Infix,
+            Ident::Label(_) => Ident::Label,
+            Ident::Fresh(_) => |s| {
+                use std::str::FromStr;
+                let s = &s.as_str()[FRESH_PREFIX.len()..];
+                Ident::Fresh(u32::from_str(s).unwrap())
+            },
+        }
+    }
+
+    #[inline]
+    pub fn minus_sign() -> Self {
+        Self::MINUS
+    }
+
+    #[inline]
+    pub fn cons_sign() -> Self {
+        Self::COLON
+    }
+
+    #[inline]
+    pub fn is_cons_sign(&self) -> bool {
+        self == &Self::COLON
+    }
+
+    #[inline]
+    pub fn is_arrow(&self) -> bool {
+        self == &Self::ARROW
+    }
+
+    pub fn mk_tuple_commas(extras: usize) -> Self {
+        Self::Infix(symbol::intern_once(
+            &*(0..(extras + 1)).map(|_| ',').collect::<String>(),
+        ))
+    }
+
+    pub fn with_suffix(self, suffix: Self) -> Chain<Self> {
+        Chain(self, wy_common::deque!(suffix))
+    }
+
+    /// If an identifier's string form consists entirely of commas, then this
+    /// returns the number of commas. Otherwise, it returns `None`.
+    pub fn comma_count(&self) -> Option<usize> {
+        if let Self::Infix(s) = self {
+            symbol::lookup(*s).chars().fold(Some(0), |a, c| {
+                a.and_then(|n| if c == ',' { Some(n + 1) } else { None })
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Returns a reference to the inner integer value if the identifier is a `Fresh` variant,
+    /// otherwise it returns `None`.
+    pub fn fresh_val(&self) -> Option<&u32> {
+        if let Self::Fresh(n) = self {
+            Some(n)
+        } else {
+            None
+        }
+    }
+}
+
+/// Given an iterator of a type that dereferences to an identifier, returns the highest inner value contained
+/// by a `Fresh` variant. If none of the identifiers encountered are `Fresh`
+/// variants, then `None` is returned.
+pub fn max_fresh_value<I: std::ops::Deref<Target = Ident>>(
+    iter: impl IntoIterator<Item = I>,
+) -> Option<u32> {
+    iter.into_iter()
+        .fold(None, |a, c| match (a, c.fresh_val()) {
+            (None, v) => v.copied(),
+            (Some(a), m @ Some(n)) if *n > a => m.copied(),
+            _ => a,
+        })
+}
+
+pub fn min_fresh_value<I: std::ops::Deref<Target = Ident>>(
+    iter: impl IntoIterator<Item = I>,
+) -> Option<u32> {
+    iter.into_iter()
+        .fold(None, |a, c| match (a, c.fresh_val()) {
+            (None, v) => v.copied(),
+            (Some(a), m @ Some(n)) if *n < a => m.copied(),
+            _ => a,
+        })
+}
+
+#[test]
+fn test_idents() {
+    let cons = Ident::cons_sign();
+    let minus = Ident::minus_sign();
+    let tuples = (0..5).map(Ident::mk_tuple_commas).collect::<Vec<_>>();
+    assert_eq!(cons, Ident::Infix(symbol::intern_once(":")));
+    assert_eq!(minus, Ident::Infix(symbol::intern_once("-")));
+    assert_eq!(tuples[0], Ident::Infix(symbol::intern_once(",")));
+    assert_eq!(tuples[1], Ident::Infix(symbol::intern_once(",,")));
+    assert_eq!(tuples[2], Ident::Infix(symbol::intern_once(",,,")));
+    assert_eq!(tuples[3], Ident::Infix(symbol::intern_once(",,,,")));
+    assert_eq!(tuples[4], Ident::Infix(symbol::intern_once(",,,,,")));
+}
+
 pub trait Identifier: Eq {
     fn is_upper(&self) -> bool;
     fn is_lower(&self) -> bool;
     fn is_infix(&self) -> bool;
     fn is_label(&self) -> bool;
     fn is_fresh(&self) -> bool;
-    fn pure(&self) -> fn(Symbol) -> Ident {
+    fn get_ident(&self) -> Ident;
+    fn ident_constructor(&self) -> fn(Symbol) -> Ident {
         if self.is_upper() {
             Ident::Upper
         } else if self.is_lower() {
@@ -18,7 +208,7 @@ pub trait Identifier: Eq {
         } else if self.is_label() {
             Ident::Label
         } else {
-            Ident::Fresh
+            |s| Ident::Fresh(s.as_u32())
         }
     }
 
@@ -46,181 +236,9 @@ impl Identifier for Ident {
     fn is_fresh(&self) -> bool {
         Ident::is_fresh(self)
     }
-}
-
-impl<Id> Identifier for Option<Id>
-where
-    Id: Identifier,
-{
-    #[inline]
-    fn is_upper(&self) -> bool {
-        matches!(self, Some(id) if id.is_upper())
+    fn get_ident(&self) -> Ident {
+        *self
     }
-
-    #[inline]
-    fn is_lower(&self) -> bool {
-        matches!(self, Some(id) if id.is_lower())
-    }
-
-    #[inline]
-    fn is_infix(&self) -> bool {
-        matches!(self, Some(id) if id.is_infix())
-    }
-
-    #[inline]
-    fn is_label(&self) -> bool {
-        matches!(self, Some(id) if id.is_label())
-    }
-
-    #[inline]
-    fn is_fresh(&self) -> bool {
-        matches!(self, Some(id) if id.is_fresh())
-    }
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Ident {
-    Upper(Symbol),
-    Lower(Symbol),
-    Infix(Symbol),
-    Label(Symbol),
-    /// Represent internally generated variables distinguishable from `Lower`
-    /// variants, either for type variables or for parser/compiler generated
-    /// variables.
-    Fresh(Symbol),
-}
-
-impl std::fmt::Debug for Ident {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Upper(arg0) => write!(f, "Upper({})", arg0),
-            Self::Lower(arg0) => write!(f, "Lower({})", arg0),
-            Self::Infix(arg0) => write!(f, "Infix({})", arg0),
-            Self::Label(arg0) => write!(f, "Label({})", arg0),
-            Self::Fresh(arg0) => write!(f, "Fresh({})", arg0),
-        }
-    }
-}
-
-impl std::fmt::Display for Ident {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}{}",
-            if self.is_fresh() { "#" } else { "" },
-            self.symbol()
-        )
-    }
-}
-
-impl Symbolic for Ident {
-    fn get_symbol(&self) -> Symbol {
-        self.symbol()
-    }
-}
-
-wy_common::variants!(#((Symbol) Ident :Upper :Lower :Infix :Label :Fresh));
-
-impl Ident {
-    pub const MAIN_MOD: Self = Ident::Upper(reserved::MAIN_MOD.symbol);
-    pub const MAIN_FUN: Self = Ident::Lower(reserved::MAIN_FUN.symbol);
-    pub const COLON: Self = Ident::Infix(reserved::COLON.symbol);
-    pub const ARROW: Self = Ident::Infix(reserved::ARROW.symbol);
-    pub const MINUS: Self = Ident::Infix(reserved::MINUS.symbol);
-    pub const TRUE: Self = Ident::Upper(reserved::TRUE.symbol);
-    pub const FALSE: Self = Ident::Lower(reserved::FALSE.symbol);
-    pub const WILD: Self = Ident::Fresh(reserved::WILD.symbol);
-
-    pub const NAMES: [fn(Symbol) -> Self; 4] = [Self::Upper, Self::Lower, Self::Infix, Self::Label];
-
-    pub fn symbol(&self) -> Symbol {
-        *self.get_inner()
-    }
-    pub fn is_upper(&self) -> bool {
-        matches!(self, Self::Upper(..))
-    }
-    pub fn is_lower(&self) -> bool {
-        matches!(self, Self::Lower(..))
-    }
-    pub fn is_infix(&self) -> bool {
-        matches!(self, Self::Infix(..))
-    }
-    pub fn is_label(&self) -> bool {
-        matches!(self, Self::Label(..))
-    }
-    pub fn is_fresh(&self) -> bool {
-        matches!(self, Self::Fresh(..))
-    }
-
-    pub fn as_u32(self) -> u32 {
-        self.get_inner().as_u32()
-    }
-
-    pub fn from_u32(n: u32) -> Self {
-        Self::Fresh(Symbol::intern(wy_common::text::display_var(n)))
-    }
-
-    /// Returns the constructor for the given `Ident` variant
-    pub fn constructor(&self) -> fn(Symbol) -> Self {
-        match self {
-            Ident::Upper(_) => Ident::Upper,
-            Ident::Lower(_) => Ident::Lower,
-            Ident::Infix(_) => Ident::Infix,
-            Ident::Label(_) => Ident::Label,
-            Ident::Fresh(_) => Ident::Fresh,
-        }
-    }
-
-    #[inline]
-    pub fn minus_sign() -> Self {
-        Self::MINUS
-    }
-
-    #[inline]
-    pub fn cons_sign() -> Self {
-        Self::COLON
-    }
-
-    #[inline]
-    pub fn is_cons_sign(&self) -> bool {
-        self == &Self::COLON
-    }
-
-    pub fn mk_tuple_commas(extras: usize) -> Self {
-        Self::Infix(symbol::intern_once(
-            &*(0..(extras + 1)).map(|_| ',').collect::<String>(),
-        ))
-    }
-
-    pub fn with_suffix(self, suffix: Self) -> Chain<Self> {
-        Chain(self, wy_common::deque!(suffix))
-    }
-
-    /// If an identifier's string form consists entirely of commas, then this
-    /// returns the number of commas. Otherwise, it returns `None`.
-    pub fn comma_count(&self) -> Option<usize> {
-        if let Self::Infix(s) = self {
-            symbol::lookup(*s).chars().fold(Some(0), |a, c| {
-                a.and_then(|n| if c == ',' { Some(n + 1) } else { None })
-            })
-        } else {
-            None
-        }
-    }
-}
-
-#[test]
-fn test_idents() {
-    let cons = Ident::cons_sign();
-    let minus = Ident::minus_sign();
-    let tuples = (0..5).map(Ident::mk_tuple_commas).collect::<Vec<_>>();
-    assert_eq!(cons, Ident::Infix(symbol::intern_once(":")));
-    assert_eq!(minus, Ident::Infix(symbol::intern_once("-")));
-    assert_eq!(tuples[0], Ident::Infix(symbol::intern_once(",")));
-    assert_eq!(tuples[1], Ident::Infix(symbol::intern_once(",,")));
-    assert_eq!(tuples[2], Ident::Infix(symbol::intern_once(",,,")));
-    assert_eq!(tuples[3], Ident::Infix(symbol::intern_once(",,,,")));
-    assert_eq!(tuples[4], Ident::Infix(symbol::intern_once(",,,,,")));
 }
 
 /// Single wrapper for the parts comprising an identifier path (named `Chain` to
@@ -236,23 +254,19 @@ pub struct Chain<Id = Ident>(Id, Deque<Id>);
 
 impl From<Chain<Ident>> for Ident {
     fn from(chain: Chain<Ident>) -> Self {
-        chain.root().constructor()(chain.flattened_symbol())
+        chain.last().constructor()(chain.flattened_symbol())
     }
 }
 
 impl From<&Chain<Ident>> for Ident {
     fn from(chain: &Chain<Ident>) -> Self {
-        chain.root().constructor()(chain.flattened_symbol())
+        chain.last().constructor()(chain.flattened_symbol())
     }
 }
 
 impl<Id> Chain<Id> {
     pub fn new(root: Id, tail: Deque<Id>) -> Self {
         Self(root, tail)
-    }
-
-    pub fn make_contiguous(&mut self) -> &mut [Id] {
-        self.1.make_contiguous()
     }
 
     pub fn root(&self) -> &Id {
@@ -328,6 +342,16 @@ impl<Id> Chain<Id> {
         Id: PartialEq,
     {
         self.1.contains(id)
+    }
+
+    pub fn get(&self, index: usize) -> Option<&Id> {
+        if self.len() <= index {
+            None
+        } else if index == 0 {
+            Some(self.root())
+        } else {
+            self.iter().nth(index)
+        }
     }
 
     /// Given a slice of `Id`s of length > 1, returns a new instance (wrapped in
@@ -418,41 +442,30 @@ impl<Id> Chain<Id> {
         std::iter::once(self.0.get_symbol()).chain(self.tail().map(|id| id.get_symbol()))
     }
 
-    pub fn into_string(&self) -> String
-    where
-        Id: std::fmt::Display,
-    {
-        format!("{}", self)
-    }
-
-    /// Collapses the `Chain` into a single vector.
-    pub fn to_vec(self) -> Vec<Id> {
-        std::iter::once(self.0).chain(self.1).collect()
-    }
-
-    pub fn write_to_string(&self, buf: &mut String)
-    where
-        Id: std::fmt::Display,
-    {
-        buf.push_str(&*(self.into_string()))
-    }
-
     /// Takes the string representation of this `Chain` and interns it,
     /// returning the `Symbol` corresponding to the concatenated (dot-separated)
     /// identifier. Notice that this does NOT return an `Ident`: this is because
     /// the upper/lower distinction is lost at this level!
     pub fn flattened_symbol(&self) -> Symbol
     where
-        Id: std::fmt::Display,
+        Id: Symbolic,
     {
-        symbol::intern_once(&*(self.into_string()))
+        let mut buf = String::new();
+        buf.push_str(self.root().get_symbol().as_str());
+
+        for id in self.tail() {
+            buf.push('.');
+            buf.push_str(id.get_symbol().as_str());
+        }
+
+        Symbol::intern(buf)
     }
 
     pub fn as_ident(&self) -> Ident
     where
-        Id: Identifier + std::fmt::Display,
+        Id: Identifier + Symbolic,
     {
-        self.pure()(self.flattened_symbol())
+        self.ident_constructor()(self.flattened_symbol())
     }
 
     pub fn from_strings<S: AsRef<str>, const N: usize>(head: S, strings: [S; N]) -> Chain<Symbol> {
@@ -469,6 +482,15 @@ impl<Id> Chain<Id> {
         let root = f(wy_intern::intern_once(head.as_ref()));
         let tail = wy_intern::intern_many_with(strings, f);
         Self::from((root, tail))
+    }
+
+    pub fn of_path_components<'p, P: AsRef<std::path::Path>>(
+        p: &'p P,
+    ) -> Chain<std::path::Component<'p>> {
+        let mut parts = p.as_ref().components();
+        let head = parts.next().unwrap_or_else(|| std::path::Component::CurDir);
+        let tail = parts.collect::<Deque<_>>();
+        Chain(head, tail)
     }
 }
 
@@ -579,7 +601,7 @@ impl<'id> std::fmt::Display for Chained<'id> {
 /// The categorization of a `Chain` depends on its last identifier, i.e., if
 /// the last identifier in the chain is an infix, then the `Chain` is
 /// categorized as an infix, etc.
-impl<Id: Identifier> Identifier for Chain<Id> {
+impl<Id: Identifier + Symbolic> Identifier for Chain<Id> {
     fn is_upper(&self) -> bool {
         self.last().is_upper()
     }
@@ -598,5 +620,9 @@ impl<Id: Identifier> Identifier for Chain<Id> {
 
     fn is_fresh(&self) -> bool {
         self.last().is_fresh()
+    }
+
+    fn get_ident(&self) -> Ident {
+        self.as_ident()
     }
 }
