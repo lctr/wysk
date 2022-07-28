@@ -106,15 +106,6 @@ impl<X, F, G> Mapped<Mapped<X, F>, G> {
     }
 }
 
-fn run_mapped<X, Y, F>(mapped: Mapped<X, F>) -> Mapped<Y, ()>
-where
-    F: FnMut(X) -> Y,
-{
-    let Mapped { data, mut f } = mapped;
-    let data = f(data);
-    Mapped { data, f: () }
-}
-
 pub trait Mappable<X> {
     type M<A>: Mappable<A>;
     fn fmap<F, Y>(self, f: F) -> Self::M<Y>

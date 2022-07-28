@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use wy_common::{iter::Hashable, HashMap, Map, Set};
+use wy_common::{iter::Hashable, HashMap, Set};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Record<Id, T> {
