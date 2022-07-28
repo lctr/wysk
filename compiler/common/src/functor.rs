@@ -1,6 +1,120 @@
 pub use std::collections::{HashMap as Map, HashSet as Set, VecDeque as Deque};
 use std::hash::Hash;
 
+pub struct Mapped<X, F> {
+    data: X,
+    f: F,
+}
+
+impl<X, F> Mapped<X, F> {
+    #![allow(unused)]
+    pub fn new(data: X, f: F) -> Self {
+        Self { data, f }
+    }
+
+    pub fn run<Y>(self) -> Mapped<Y, ()>
+    where
+        F: Fn(X) -> Y,
+    {
+        let Mapped { data, f } = self;
+        Mapped {
+            data: f(data),
+            f: (),
+        }
+    }
+
+    pub fn run_once<Y>(self) -> Mapped<Y, ()>
+    where
+        F: FnOnce(X) -> Y,
+    {
+        let Mapped { data, f } = self;
+        Mapped {
+            data: f(data),
+            f: (),
+        }
+    }
+
+    pub fn run_mut<Y>(self) -> Mapped<Y, ()>
+    where
+        F: FnMut(X) -> Y,
+    {
+        let Mapped { data, mut f } = self;
+        Mapped {
+            data: f(data),
+            f: (),
+        }
+    }
+
+    pub fn chain<G>(self, g: G) -> Mapped<Self, G> {
+        Mapped { data: self, f: g }
+    }
+
+    pub fn compose<G>(self, g: G) -> Mapped<Mapped<X, G>, F> {
+        let Mapped { data, f } = self;
+        Mapped {
+            data: Mapped { data, f: g },
+            f,
+        }
+    }
+
+    pub fn take(self) -> X {
+        self.data
+    }
+}
+
+impl<X, F, G> Mapped<Mapped<X, F>, G> {
+    #![allow(unused)]
+    #[inline]
+    pub fn run_f_g<Y, Z>(self) -> Z
+    where
+        F: Fn(X) -> Y,
+        G: Fn(Y) -> Z,
+    {
+        (self.f)((self.data.f)(self.data.data))
+    }
+    #[inline]
+    pub fn run_fo_go<Y, Z>(self) -> Z
+    where
+        F: FnOnce(X) -> Y,
+        G: FnOnce(Y) -> Z,
+    {
+        (self.f)((self.data.f)(self.data.data))
+    }
+    #[inline]
+    pub fn run_fm_gm<Y, Z>(self) -> Z
+    where
+        F: FnMut(X) -> Y,
+        G: FnMut(Y) -> Z,
+    {
+        self.run_fo_go()
+    }
+    #[inline]
+    pub fn runs_f_go<Y, Z>(self) -> Z
+    where
+        F: Fn(X) -> Y,
+        G: FnOnce(Y) -> Z,
+    {
+        self.run_fo_go()
+    }
+    #[inline]
+    pub fn run_fm_go<Y, Z>(self) -> Z
+    where
+        F: FnMut(X) -> Y,
+        G: FnOnce(Y) -> Z,
+    {
+        self.run_fo_go()
+    }
+}
+
+fn run_mapped<X, Y, F>(mapped: Mapped<X, F>) -> Mapped<Y, ()>
+where
+    F: FnMut(X) -> Y,
+{
+    let Mapped { data, mut f } = mapped;
+    let data = f(data);
+    Mapped { data, f: () }
+}
+
 pub trait Mappable<X> {
     type M<A>: Mappable<A>;
     fn fmap<F, Y>(self, f: F) -> Self::M<Y>
