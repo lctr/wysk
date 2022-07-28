@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use module::ModuleId;
 use serde::{Deserialize, Serialize};
-use wy_common::Mappable;
+use wy_common::{iter::Counter, Mappable};
 
 pub mod ident;
 pub mod module;
@@ -176,6 +176,43 @@ pub fn intern_many_chains<const N: usize>(chains: [Chain<Ident>; N]) -> [Unique;
             );
             panic!("{}", err)
         }
+    }
+}
+
+impl Chain<Ident> {
+    pub fn intern(chain: Self) -> Unique {
+        intern_chain(chain)
+    }
+
+    pub fn intern_chains(
+        chains: impl IntoIterator<Item = Chain<Ident>>,
+    ) -> impl Iterator<Item = Unique> {
+        intern_chains(chains)
+    }
+
+    pub fn lookup_chain(unique: Unique) -> Option<Chain<Ident>> {
+        lookup_chain(unique)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub struct NameState(Counter);
+
+impl NameState {
+    pub fn new() -> Self {
+        NameState::default()
+    }
+
+    pub fn with_offset(n: usize) -> Self {
+        NameState(Counter::new_from(n))
+    }
+
+    pub fn from_counter(counter: Counter) -> Self {
+        NameState(counter)
+    }
+
+    pub fn increment(&mut self) -> usize {
+        self.0.increment()
     }
 }
 
