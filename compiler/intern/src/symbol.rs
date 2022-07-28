@@ -85,6 +85,22 @@ impl Symbol {
         unsafe { std::mem::transmute::<_, &str>(guard.lookup(*self)) }
     }
 
+    /// Similar functionality as `as_str`, but instead of returning a string
+    /// slice (and containing unsafe code), a continuation is applied to the
+    /// string slice.
+    pub fn map_str<S>(&self, k: impl FnOnce(&str) -> S) -> S {
+        match INTERNER.lock() {
+            Ok(g) => k(g.lookup(*self)),
+            Err(e) => {
+                eprintln!(
+                    "Poison error while looking up string slice for symbol `{}` with continuation",
+                    self.0
+                );
+                panic!("{e}")
+            }
+        }
+    }
+
     #[inline]
     pub fn from_str_deref<S: std::ops::Deref<Target = str>>(s: S) -> Self {
         intern_once(&*s)
