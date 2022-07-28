@@ -42,9 +42,19 @@ pub fn is_manifest_file<P: AsRef<Path>>(p: &P) -> bool {
         || path.ends_with("MANIFEST.toml")
 }
 
-wy_common::newtype! {
-    /// Source files are uniquely identified via their enumerated `FileId`s
-    usize in FileId | Show (+=)
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FileId(usize);
+
+impl std::fmt::Debug for FileId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "FileId({})", &self.0)
+    }
+}
+
+impl std::fmt::Display for FileId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "FileId({})", &self.0)
+    }
 }
 
 impl From<&mut Counter> for FileId {
@@ -206,6 +216,10 @@ impl Atlas {
         }
     }
 
+    pub fn sources(&self) -> &[Src] {
+        self.sources.as_slice()
+    }
+
     #[inline]
     pub fn sources_iter(&self) -> std::slice::Iter<'_, Src> {
         self.sources.iter()
@@ -286,6 +300,14 @@ impl Atlas {
     }
 }
 
+impl std::ops::Index<FileId> for Atlas {
+    type Output = Src;
+
+    fn index(&self, index: FileId) -> &Self::Output {
+        &self.sources[index.0]
+    }
+}
+
 impl Extend<Src> for Atlas {
     fn extend<T: IntoIterator<Item = Src>>(&mut self, iter: T) {
         self.add_sources(iter.into_iter())
@@ -351,6 +373,75 @@ impl Src {
         // safe to unwrap since *all* `Src` instances **must** end in the
         // file-extension `.wy`.
         self.path().file_name().and_then(|s| s.to_str()).unwrap()
+    }
+
+    /// Checks whether the first character of the file's name begins with an
+    /// ascii alphabetic character
+    pub fn name_is_valid(&self) -> bool {
+        self.file_name()
+            .starts_with(|c: char| c.is_ascii_alphabetic())
+    }
+
+    /// Returns a string corresponding to the file's name with the first letter
+    /// capitalized. If the first letter of the filename is not able to be
+    /// capitalized, `None` is returned.
+    pub fn capitalize_init(&self) -> Option<String> {
+        let mut valid = false;
+        let name = self
+            .file_name()
+            .char_indices()
+            .map(|(n, c)| {
+                if n == 0 && c.is_ascii_alphabetic() {
+                    valid = true;
+                    c.to_ascii_uppercase()
+                } else {
+                    c
+                }
+            })
+            .collect::<String>();
+        if valid {
+            Some(name)
+        } else {
+            None
+        }
+    }
+
+    /// Identifies whether this file has a sibling with a name differing only by
+    /// the case of the first letter. This check exists because all module names
+    /// must begin with a capital letter, thus for example the two sibling files
+    /// `foo.wy` and `Foo.wy` would normalize to a module name of `Foo` and
+    /// hence have are ambiguously named.
+    ///
+    /// Note that this method will perform an IO search for files within the
+    /// same directory. Additionally, this is not necessary for filesystems with
+    /// case-insensitive filenames.
+    pub fn ambiguous_sibling(&self) -> bool {
+        let ext = self.path.extension();
+        let mine = self.file_name();
+        let len = mine.len();
+        let init = mine.chars().next().unwrap();
+        if let Some(pn) = self.path.parent() {
+            for rd in fs::read_dir(pn) {
+                for der in rd {
+                    if let Ok(de) = der {
+                        let their = de.path();
+                        if is_target_file(&their) {
+                            match their.file_name().and_then(|s| s.to_str()).map(|s| {
+                                let c0 = s.chars().next().unwrap();
+                                their.extension() == ext
+                                    && s.len() == len
+                                    && init == c0
+                                    && &mine[1..] == &s[1..]
+                            }) {
+                                Some(true) => return true,
+                                _ => (),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        false
     }
 
     #[inline]
@@ -654,9 +745,6 @@ impl Dir {
 #[cfg(test)]
 mod test {
     use super::*;
-
-    #[test]
-    fn load_dir() {}
 
     #[test]
     fn inspect_directory() {

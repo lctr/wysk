@@ -1,7 +1,7 @@
-use wy_check::typed::envr::{self, Environment};
+use wy_common::Deque;
 use wy_failure::Outcome;
 use wy_parser::error::ParseError;
-use wy_sources::paths::Atlas;
+use wy_sources::paths::{Atlas, FileId, Src};
 use wy_syntax::Ast;
 
 /// Blindly finds all wysk files contained within a directory, then parsing each
@@ -24,39 +24,34 @@ pub fn parse_prelude() -> Outcome<Ast, ParseError> {
     parse_atlas(&atlas)
 }
 
-pub fn prelude_environment() -> Outcome<(Ast, Environment), ParseError> {
-    parse_prelude().map(|tree| {
-        let env = envr::ast_environment(&tree);
-        (tree, env)
-    })
-}
-
 #[cfg(test)]
 mod test {
 
-    use wy_common::{push_if_absent, Map};
-    use wy_syntax::Program;
-
     use super::*;
+    use wy_common::push_if_absent;
+
+    #[test]
+    fn test_run_map_overflow() {
+        let tree =
+            parse_prelude().map(|tree| tree.qualify_chain_idents().map_id(&mut |ch| ch.as_ident()));
+        match tree {
+            Ok(ast) => {
+                println!("{:?}", ast)
+            }
+            Err(e) => eprintln!("{}", e),
+        }
+    }
 
     #[test]
     fn test_prim_uniques_write() {
         if let Ok(tree) = parse_prelude() {
-            let tree = tree.qualify_idents();
+            let tree = tree.qualify_unique_idents();
             println!(
                 "size of tree after uniquifying: {} bytes",
                 std::mem::size_of_val(&tree)
             );
             let data = format!("{:#?}", &tree);
             let _ = std::fs::write("../../tmp/prelude_ast_debug.txt", data);
-        }
-    }
-
-    #[test]
-    fn test_prelude_tyenv() {
-        match prelude_environment() {
-            Ok(env) => println!("{:#?}", env),
-            Err(e) => eprintln!("{}", e),
         }
     }
 

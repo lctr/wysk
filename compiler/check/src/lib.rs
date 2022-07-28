@@ -2,4 +2,4 @@
 // #![allow(unused)]
 
 pub mod prep;
-pub mod typed;
+pub mod ty;

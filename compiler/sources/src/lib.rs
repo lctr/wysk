@@ -5,6 +5,7 @@ use std::path::Path;
 
 use manifest::Manifest;
 use paths::{Atlas, Dir, Src};
+
 pub mod manifest;
 pub mod paths;
 
