@@ -7,3 +7,4 @@ edition = "2021"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
+indexmap = "1.9.1"
