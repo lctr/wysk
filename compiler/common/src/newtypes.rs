@@ -83,6 +83,9 @@ macro_rules! newtype {
             }
         }
     };
+    ($($(#[$com:meta])+)? $name:ident |$tipo:ty| $trait:tt $($ts:tt)+) => {
+        $crate::newtype! { $name |$tipo| $trait }
+    };
     ($($(#[$com:meta])+)? $name:ident |$tipo:ty| Wrapper) => {
         $($(#[$com])+)?
         $crate::newtype! { $name |$tipo| PartialEq }
@@ -106,6 +109,14 @@ macro_rules! newtype {
         impl std::cmp::PartialOrd<$tipo> for $name {
             fn partial_cmp(&self, other: &$tipo) -> Option<std::cmp::Ordering> {
                 self.0.partial_cmp(other)
+            }
+        }
+    };
+    ($($(#[$com:meta])+)? $name:ident |$tipo:ty| [$data:ty]) => {
+        impl std::ops::Index<$name> for Vec<$data> {
+            type Output = $data;
+            fn index(&self, index: $name) -> &Self::Output {
+                &self[index.0 as usize]
             }
         }
     };
@@ -249,9 +260,6 @@ macro_rules! newtype {
         }
     };
     ($name:ident |$tipo:ty| Deref) => {
-        $crate::newtype! { $name |$tipo| (&*)}
-    };
-    ($name:ident |$tipo:ty| (&*)) => {
         impl std::ops::Deref for $name {
             type Target = $tipo;
             fn deref(&self) -> &Self::Target {
@@ -260,9 +268,6 @@ macro_rules! newtype {
         }
     };
     ($name:ident |$tipo:ty| DerefMut) => {
-        $crate::newtype! { $name |$tipo| (mut &*)}
-    };
-    ($name:ident |$tipo:ty| (mut &*)) => {
         $crate::newtype!($name |$tipo| Deref);
 
         impl std::ops::DerefMut for $name {
@@ -282,92 +287,6 @@ macro_rules! newtype {
         impl AsMut<$tipo> for $name {
             fn as_mut(&mut self) -> &mut $tipo {
                 &mut (self.0)
-            }
-        }
-    };
-    ($name:ident |$tipo:ty| [#$gen:ident]) => {
-        impl std::ops::Index<$name> for Vec<$gen> {
-            type Output = $gen;
-            fn index(&self, index: $name) -> &Self::Output {
-                &self[usize::from(index)]
-            }
-        }
-    };
-    ($name:ident |$tipo:ty| [#mut $gen:ident]) => {
-        $crate::newtype! { $name |$tipo| [$gen] }
-        impl std::ops::IndexMut<$name> for Vec<$gen> {
-            fn index_mut(&mut self, index: $name) -> &mut Self::Output {
-                &mut self[usize::from(index)]
-            }
-        }
-    };
-    ($name:ident |$tipo:ty| [#$item:ty]) => {
-        impl std::ops::Index<$name> for Vec<$item> {
-            type Output = $item;
-            fn index(&self, index: $name) -> &Self::Output {
-                &self[usize::from(index)]
-            }
-        }
-        impl<const N: usize> std::ops::Index<$name> for [$item; N] {
-            type Output = $item;
-            fn index(&self, index: $name) -> &Self::Output {
-                &self[usize::from(index)]
-            }
-        }
-    };
-    ($name:ident |$tipo:ty| [#mut $item:ty]) => {
-        impl std::ops::Index<$name> for Vec<$item> {
-            fn index_mut(&mut self, index: $name) -> &mut Self::Output {
-                &mut self[usize::from(index)]
-            }
-        }
-
-        impl<const N: usize> std::ops::Index<$name> for [$item; N] {
-            fn index_mut(&mut self, index: $name) -> &mut Self::Output {
-                &mut self[usize::from(index)]
-            }
-        }
-    };
-    ($name:ident |$tipo:ty| [$gen:ident]) => {
-        impl<$gen> std::ops::Index<$name> for Vec<$gen> {
-            type Output = $gen;
-            fn index(&self, index: $name) -> &Self::Output {
-                &self[usize::from(index)]
-            }
-        }
-    };
-    ($name:ident |$tipo:ty| [mut $gen:ident]) => {
-        $crate::newtype! { $name |$tipo| [$gen] }
-        impl<$gen> std::ops::IndexMut<$name> for Vec<$gen> {
-            fn index_mut(&mut self, index: $name) -> &mut Self::Output {
-                &mut self[usize::from(index)]
-            }
-        }
-    };
-    ($name:ident |$tipo:ty| [$item:ty]) => {
-        impl std::ops::Index<$name> for Vec<$item> {
-            type Output = $item;
-            fn index(&self, index: $name) -> &Self::Output {
-                &self[usize::from(index)]
-            }
-        }
-        impl<const N: usize> std::ops::Index<$name> for [$item; N] {
-            type Output = $item;
-            fn index(&self, index: $name) -> &Self::Output {
-                &self[usize::from(index)]
-            }
-        }
-    };
-    ($name:ident |$tipo:ty| [mut $item:ty]) => {
-        impl std::ops::Index<$name> for Vec<$item> {
-            fn index_mut(&mut self, index: $name) -> &mut Self::Output {
-                &mut self[usize::from(index)]
-            }
-        }
-
-        impl<const N: usize> std::ops::Index<$name> for [$item; N] {
-            fn index_mut(&mut self, index: $name) -> &mut Self::Output {
-                &mut self[usize::from(index)]
             }
         }
     };
@@ -486,216 +405,7 @@ macro_rules! newtype {
             }
         }
     };
-    ($outer:ty[$name:ty] <> $elm:ty) => {
-        impl std::ops::Index<$name> for $outer {
-            type Output = $elm;
-            fn index(&self, index: $name) -> &Self::Output {
-                &self.0[usize::from(index)]
-            }
-        }
-    };
-    ($outer:ty[$name:ty] <mut> $elm:ty) => {
-        $crate::newtype! { $outer[$name] <> $elm }
-        impl std::ops::IndexMut<$name> for $outer where usize: From<$name> {
-            fn index_mut(&mut self, index: $name) -> &mut Self::Output {
-                &mut self.0[usize::from(index)]
-            }
-        }
-    };
-    (#$outer:ident<$g1:tt $(, $gs:tt)*>[$name:ty] <> #$elm:tt) => {
-        /// Implementation `Index` for some newtype store `S<T, U>` and an index
-        /// of type `U` such that `usize: From<U>`.
-        /// The `g1` and `gs` fragments correspond to generic parameters.
-        /// REQUIRES THE UNDERLYING STORAGE TO SUPPORT INDEXING WITH USIZES.
-        impl<$g1 $(, $gs)*> std::ops::Index<$name> for $outer<$g1 $(, $gs)*> where
-            usize: From<U>
-        {
-            type Output = $elm;
-            fn index(&self, index: $name) -> &Self::Output {
-                &self.0[usize::from(index)]
-            }
-        }
-    };
-    (#$outer:ident<$g1:tt $(, $gs:tt)*>[$name:ty] <mut> #$elm:tt) => {
-        $crate::newtype! { #$outer<$g1 $(, $gs)*>[$name] <> #$elm }
-        impl<$g1 $(, $gs)*> std::ops::IndexMut<$name> for $outer<$g1 $(, $gs)*> where usize: From<U> {
-            fn index_mut(&mut self, index: $name) -> &mut Self::Output {
-                &mut self.0[usize::from(index)]
-            }
-        }
-    };
-}
-
-/// Some utilities for parametrizable (new)types. In particular, it may not be
-/// ideal to automatically derive certain traits for containers or generic
-/// newtypes, as this would provide potentially unnecessary constraints on the
-/// type parameter. Instead, it is often more prudent to conditionally implement
-/// traits based on the type parameter's trait bounds (as opposed to
-/// vice-versa), though this has the downside of requiring quite the boilerplate
-/// (e.g., the two types `Foo<A>` and `Bar<B>` would need four impl blocks just
-/// to conditionally implement `Clone` and `PartialEq`, for example)
-#[macro_export]
-macro_rules! generic {
-    (do ** for $name:ident, $gen:ident $(, $inner:ty)?) => {
-        $crate::generic! { $name, $gen $(, $inner)?
-            | Clone Copy
-              Debug Display
-              PartialEq Eq
-              PartialOrd Ord
-              Hash Default
-        }
-    };
-    (
-        $name:ident, $gen:ident $(, $inner:ty)?
-        | $($trait:ident $(|)?)+
-    ) => {};
-    ($name:ident, $gen:ident $(, $inner:ty)? | Debug) => {
-        impl<$gen> std::fmt::Debug for $name<$gen>
-        where
-            $gen: std::fmt::Debug,
-            $($inner: std::fmt::Display)?
-        {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                f.debug_tuple(stringify!($name)).field(&self.0).finish()
-            }
-        }
-    };
-    ($name:ident, $gen:ident $(, $inner:ty)? | Display) => {
-        impl<$gen> std::fmt::Display for $name<$gen>
-        where
-            $gen: std::fmt::Display,
-            $($inner: std::fmt::Display)?
-        {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                write!(f, "{}({})", stringify!($name), &self.0)
-            }
-        }
-    };
-    ($name:ident, $gen:ident $(, $inner:ty)? | Clone) => {
-        impl<$gen> Clone for $name<$gen>
-        where
-            $gen: Clone,
-            $($inner: Clone)?
-        {
-            fn clone(&self) -> Self {
-                Self(self.0.clone())
-            }
-        }
-    };
-    ($name:ident, $gen:ident $(, $inner:ty)? | Copy) => {
-        impl<$gen> Copy for $name<$gen>
-        where
-            $gen: Copy,
-            $($inner: Copy)? {}
-    };
-    ($name:ident, $gen:ident $(, $inner:ty)? | PartialEq) => {
-        impl<$gen> PartialEq for $name<$gen>
-        where
-            $gen: PartialEq,
-            $($inner: PartialEq)? {
-                fn eq(&self, other: &Self) -> bool {
-                    self.0 == other.0
-                }
-            }
-    };
-    ($name:ident, $gen:ident $(, $inner:ty)? | Eq) => {
-        impl<$gen> Eq for $name<$gen>
-        where
-            $gen: Eq,
-            $($inner: Eq)? {}
-
-    };
-    ($name:ident, $gen:ident $(, $inner:ty)? | PartialOrd) => {
-        impl<$gen> PartialOrd for $name<$gen>
-        where
-            $gen: PartialOrd,
-            $($inner: PartialOrd)?
-        {
-            fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-                self.0.partial_cmp(&other.0)
-            }
-        }
-    };
-    ($name:ident, $gen:ident $(, $inner:ty)? | Ord) => {
-        impl<$gen> Ord for $name<$gen>
-        where
-            $gen: Ord,
-            $($inner: Ord)? {}
-    };
-    ($name:ident, $gen:ident $(, $inner:ty)? | Hash) => {
-        impl<$gen> std::hash::Hash for $name<$gen>
-        where
-            $gen: std::hash::Hash,
-            $($inner: std::hash::Hash)? {
-                fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-                    self.0.hash(state);
-                }
-            }
-    };
-    ($name:ident, $gen:ident | Default) => {
-        impl<$gen> Default for $name<$gen>
-        where
-            $gen: Default,
-            $inner: Default
-        {
-            fn default() -> Self {
-                Self(<$gen as Default>::default())
-            }
-        }
-    };
-    ($name:ident, $gen:ident, $inner:ty | Default) => {
-        impl<$gen> Default for $name<$gen>
-        where
-            $gen: Default,
-            $inner: Default
-        {
-            fn default() -> Self {
-                Self(Default::default())
-            }
-        }
-    };
-    ($name:ident, $gen:ident, $inner:ty | Deref) => {
-        impl<$gen> std::ops::Deref for $name<$gen>
-        where
-            $gen: std::ops::Deref,
-            $inner: std::ops::Deref
-        {
-            type Target = $inner;
-            fn deref(&self) -> &Self::Target {
-                &self.0
-            }
-        }
-    };
-    ($name:ident, $gen:ident, $inner:ty | DerefMut) => {
-        impl<$gen> std::ops::DerefMut for $name<$gen>
-        where
-            $gen: std::ops::DerefMut,
-            $inner: std::ops::DerefMut
-        {
-            fn deref_mut(&mut self) -> &mut Self::Target {
-                &mut self.0
-            }
-        }
-    };
 }
 
 #[cfg(test)]
-mod test {
-    newtype!(usize in U | Show Usize AsUsize [#char] (+) (-));
-    struct Many<T>(Vec<T>);
-
-    // implementing Clone for a newtype around a generic vector
-    generic! { Many, T, Vec<T> | Clone Debug }
-
-    newtype!(Many<()>[U] <mut> ());
-
-    #[test]
-    fn test_usize_newtype() {
-        assert_eq!(U(3) + U(5), U(8));
-        assert_eq!(U(150) - 50usize, U(100));
-        assert_eq!(vec!['a', 'b', 'c'][U(1)], 'b');
-        assert_eq!(Many(vec![(), (), (), ()])[U(3)], ());
-        newtype!(Many<char>[U] <> char);
-        assert_eq!(Many(vec!['a', 'b', 'c', 'd'])[U(3)], 'd');
-    }
-}
+mod test {}
