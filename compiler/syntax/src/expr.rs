@@ -779,22 +779,4 @@ mod tests {
             .reduce(|a, c| Expression::App(Box::new(a), Box::new(c)));
         assert_eq!(Some(app), re_app)
     }
-
-    #[test]
-    fn test_free_vars() {
-        #![allow(unused)]
-        // variable binder names
-        let [a, b, c, d, e, foo, bar, baz] = wy_intern::intern_many_with(
-            ["a", "b", "c", "d", "e", "foo", "bar", "baz"],
-            Ident::Lower,
-        );
-        // infixes
-        let [plus, equals, compose] =
-            wy_intern::intern_many_with(["+", "==", r#"\>"#], Ident::Infix);
-        // constructors
-        let [tru, fals, some, none] =
-            wy_intern::intern_many_with(["True", "False", "Some", "None"], Ident::Upper);
-
-        todo!()
-    }
 }
