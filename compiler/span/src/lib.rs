@@ -385,7 +385,7 @@ impl std::ops::Index<Span> for Str<'_> {
     }
 }
 
-#[derive(Clone, Copy, Debug, Hash)]
+#[derive(Clone, Copy, Debug)]
 pub struct Spanned<T>(pub T, pub Span);
 
 impl<T> Spanned<T> {
@@ -519,6 +519,16 @@ where
 {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         self.1.partial_cmp(&other.1)
+    }
+}
+
+impl<T> std::hash::Hash for Spanned<T>
+where
+    T: std::hash::Hash,
+{
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+        self.1.hash(state);
     }
 }
 
@@ -1127,8 +1137,8 @@ impl<X, E> Positioned<Result<X, E>> {
     pub fn flat_map<Y>(self, mut f: impl FnMut(X) -> Result<Y, E>) -> Result<Positioned<Y>, E> {
         self.0.and_then(|x| f(x).map(|y| Positioned(y, self.1)))
     }
-    pub fn map_err<A>(self, mut f: impl FnMut(E) -> A) -> Result<Positioned<X>, A> {
-        self.0.map(|x| Positioned(x, self.1)).map_err(|e| f(e))
+    pub fn map_err<A>(self, f: impl FnMut(E) -> A) -> Result<Positioned<X>, A> {
+        self.0.map(|x| Positioned(x, self.1)).map_err(f)
     }
     pub fn is_ok(&self) -> bool {
         self.0.is_ok()
