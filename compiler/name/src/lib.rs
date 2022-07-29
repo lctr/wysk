@@ -74,7 +74,7 @@ impl<T> Cache<T> {
 
     #[inline]
     pub fn position(&self, f: impl FnMut(&Chain<T>) -> bool) -> Option<Unique> {
-        self.iter().position(f).map(|idx| Unique(idx))
+        self.iter().position(f).map(Unique)
     }
 
     #[inline]

@@ -1,0 +1,67 @@
+~~~ A file with random code in Wysk, primarily to get a feel for things
+module Sample where
+
+
+fn differentiate :: |Num a| (a -> a) -> a -> a -> a
+| f dx x = (f (x + dx) - f x) / dx
+
+fn integrate :: |Num a| (a -> a) -> [a] -> a -> a 
+| _ [] _ = 0 ~~ trivially equivalent to an empty domain?
+| f [_] _ = 0 ~~ the integral over a single point is 0
+| f xs dx = sum <| f `over` xs <| dx
+where sum [] = 0 | (y:ys) = y + sum ys
+    , over f xs dx = [ (f x) * dx | x <- xs ];
+
+
+data Literal 
+    = Byte Byte 
+    | Int Int 
+    | Char Char 
+    | Flt Float 
+    | Dbl Double 
+    | Str String 
+    with (Show, Eq, Ord)
+
+data Ident 
+    = Upper Symbol 
+    | Lower Symbol 
+    | Infix Symbol 
+    with Eq
+
+data Lexeme 
+    = Lit Literal
+    | Var Ident
+    | Kw Keyword 
+    | At     | Wildcard
+    | Equal  | Pipe 
+    | Semi   | Comma
+    | Escape | Dot
+    | Colon2 | Dot2
+    | ParenL | ParenR
+    | BrackL | BrackR
+    | CurlyL | CurlyR
+    | ArrowR | ArrowL
+    with (Eq, Show)
+
+data Token a = Tok { 
+    lexeme :: Lexeme, 
+    span :: Span 
+} with (Eq, Show) 
+ 
+class Store s {
+    lookup :: |Eq a| s a b -> a -> Option b;
+    insert :: |Eq a| s a b -> (a, b) -> Option b;
+}
+
+newtype Line = Row Int with (Eq, Ord, Show)
+newtype Column = Col Int with (Eq, Ord, Show)
+newtype Symbol = Sym Int with (Eq, Ord, Show)
+newtype Pos = Pos Byte with (Eq, Ord, Show)
+newtype Span = Span (Pos, Pos) with (Eq, Ord, Show)
+newtype Position = Pos (Line, Column) with (Eq, Ord, Show)
+
+data Location = Loc { line :: Row, column :: Column, pos :: Pos } 
+    with (Eq, Show)
+
+
+

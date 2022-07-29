@@ -30,9 +30,9 @@ impl Base {
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum IntPrefix {
-    Bin = 'b' as u8,
-    Oct = 'o' as u8,
-    Hex = 'x' as u8,
+    Bin = b'b',
+    Oct = b'o',
+    Hex = b'x',
 }
 
 impl IntPrefix {

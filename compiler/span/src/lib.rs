@@ -375,12 +375,10 @@ impl std::ops::Index<Span> for Str<'_> {
         let lim = self.0.len();
         if start == end || start >= lim || end >= lim {
             ""
+        } else if start > end {
+            &self.0[end..start]
         } else {
-            if start > end {
-                &self.0[end..start]
-            } else {
-                &self.0[start..end]
-            }
+            &self.0[start..end]
         }
     }
 }

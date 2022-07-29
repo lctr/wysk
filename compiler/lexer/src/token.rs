@@ -394,8 +394,8 @@ impl std::fmt::Display for Lexeme {
             Lexeme::ParenR => write!(f, ")"),
             Lexeme::BrackL => write!(f, "["),
             Lexeme::BrackR => write!(f, "]"),
-            Lexeme::CurlyL => write!(f, "{}", '{'),
-            Lexeme::CurlyR => write!(f, "{}", '}'),
+            Lexeme::CurlyL => write!(f, "{{"),
+            Lexeme::CurlyR => write!(f, "}}"),
             Lexeme::Kw(kw) => write!(f, "{}", kw),
             Lexeme::Upper(s) => write!(f, "{}", s),
             Lexeme::Lower(s) => write!(f, "{}", s),
@@ -693,7 +693,7 @@ pub trait Lexlike<Tok = Token, Lex = Lexeme> {
         Tok: PartialEq<Lexeme>,
         Lexeme: PartialEq<Tok>,
     {
-        self.compare(Lexeme::Eof.into())
+        self.compare(Lexeme::Eof)
     }
 }
 

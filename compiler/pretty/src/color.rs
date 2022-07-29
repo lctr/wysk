@@ -148,7 +148,7 @@ impl Style {
             Style::FgBg { fg, bg } => {
                 buf.push_str(COLOR_ESC[0]);
                 buf.push_str(bg.bg_val_str());
-                buf.push_str(";");
+                buf.push(';');
                 buf.push_str(fg.fg_val_str());
                 buf.push_str(COLOR_ESC[1]);
                 buf.push_str(snip);
@@ -178,7 +178,7 @@ impl std::fmt::Display for TextError {
 impl std::error::Error for TextError {}
 
 /// Bases used in constructing colored text.
-pub const COLOR_ESC: [&'static str; 3] = ["\u{1b}[0m\u{1b}[", ";15m", "\u{1b}[0m"];
+pub const COLOR_ESC: [&str; 3] = ["\u{1b}[0m\u{1b}[", ";15m", "\u{1b}[0m"];
 
 type IoTxt = &'static str;
 
@@ -258,7 +258,7 @@ macro_rules! color {
         )
     };
     (wrap $color:ident [$start:expr, $end:expr] $body:expr) => {{
-        use crate::color::AsciiColor::*;
+        use $crate::color::AsciiColor::*;
         [color!(fg $color $start), $body,
         color!(fg $color $end)].concat()
     }};

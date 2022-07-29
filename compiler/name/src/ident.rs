@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use wy_common::{deque, Deque};
 use wy_intern::symbol::{self, reserved, Symbol, Symbolic};
 
-const FRESH_PREFIX: &'static str = "_#";
+const FRESH_PREFIX: &str = "_#";
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Ident {
@@ -282,7 +282,7 @@ impl<Id> Chain<Id> {
     /// then this method returns the same thing as `root`, i.e., the first
     /// identifier.
     pub fn last(&self) -> &Id {
-        self.1.iter().last().unwrap_or_else(|| &self.0)
+        self.1.iter().last().unwrap_or(&self.0)
     }
 
     /// Deconstructs into a tuple of its inner parts, returning a pair
@@ -488,7 +488,7 @@ impl<Id> Chain<Id> {
         p: &'p P,
     ) -> Chain<std::path::Component<'p>> {
         let mut parts = p.as_ref().components();
-        let head = parts.next().unwrap_or_else(|| std::path::Component::CurDir);
+        let head = parts.next().unwrap_or(std::path::Component::CurDir);
         let tail = parts.collect::<Deque<_>>();
         Chain(head, tail)
     }
@@ -528,7 +528,7 @@ impl<Id> From<Chain<Chain<Id>>> for Chain<Id> {
     fn from(chain: Chain<Chain<Id>>) -> Self {
         let Chain(head, tail) = chain;
         let Chain(head, mut htail) = head;
-        let tails = tail.into_iter().flat_map(|ch| ch).collect::<Deque<_>>();
+        let tails = tail.into_iter().flatten().collect::<Deque<_>>();
         htail.extend(tails);
         Chain(head, htail)
     }

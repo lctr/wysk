@@ -209,11 +209,11 @@ impl Scc {
         self.0.into_iter().map(f)
     }
 
-    pub fn map_ref<'x, F, X>(&'x self, mut f: F) -> impl Iterator<Item = X> + 'x
+    pub fn map_ref<'x, F, X>(&'x self, f: F) -> impl Iterator<Item = X> + 'x
     where
         F: 'x + FnMut(&'x NodeId) -> X,
     {
-        self.0.iter().map(move |node_id| f(node_id))
+        self.0.iter().map(f)
     }
 }
 

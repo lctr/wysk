@@ -20,7 +20,7 @@ where
     S: fmt::Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.0[..] {
+        match self.0 {
             [] => Ok(()),
             [a] => A::fmt(a, f),
             [ref head, rest @ ..] => {
@@ -67,7 +67,7 @@ impl<'a, A: 'a> Spacing<'a, A> {
     }
 
     pub fn write_line_tab(n: usize, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "\n")?;
+        writeln!(f)?;
         Self::write_spaces(n, f)
     }
 }
@@ -96,7 +96,7 @@ where
                             Self::write_line_tab(*n, f)?;
                             write!(f, "{}", b)?;
                         }
-                        write!(f, "\n")?;
+                        writeln!(f)?;
                     }
                 }
                 Ok(())
@@ -115,7 +115,7 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "[")?;
-        Many::fmt(&Many(&self.0, ", "), f)?;
+        Many::fmt(&Many(self.0, ", "), f)?;
         write!(f, "]")
     }
 }
@@ -130,10 +130,10 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.1 == 0 {
-            A::fmt(&self.0, f)
+            A::fmt(self.0, f)
         } else {
             write!(f, "(")?;
-            A::fmt(&self.0, f)?;
+            A::fmt(self.0, f)?;
             write!(f, ")")
         }
     }
@@ -148,9 +148,9 @@ where
     S: 'a + fmt::Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        L::fmt(&self.0, f)?;
+        L::fmt(self.0, f)?;
         <Spacing<'_, S> as fmt::Display>::fmt(&Spacing::After(&self.2), f)?;
-        R::fmt(&self.1, f)
+        R::fmt(self.1, f)
     }
 }
 
@@ -161,9 +161,9 @@ where
     S: 'a + fmt::Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        L::fmt(&self.0, f)?;
+        L::fmt(self.0, f)?;
         S::fmt(&self.2, f)?;
-        R::fmt(&self.1, f)
+        R::fmt(self.1, f)
     }
 }
 
@@ -186,7 +186,7 @@ where
     V: 'a + fmt::Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", '{')?;
+        write!(f, "{{")?;
         match &self.0 {
             [] => (),
             [(fld, kvs0), rest @ ..] => {
@@ -194,10 +194,10 @@ where
                 for (fld, kvs) in rest {
                     write!(f, ",\n    {}: {}", fld, Dict("=", kvs))?;
                 }
-                write!(f, "\n")?;
+                writeln!(f)?;
             }
         }
-        write!(f, "{}", '}')
+        write!(f, "}}")
     }
 }
 
@@ -210,7 +210,7 @@ where
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let dx = "    ";
         let Record(fields) = &self;
-        write!(f, "{}", '{')?;
+        write!(f, "{{")?;
         match fields {
             [] => (),
             [(fld, kvs0), rest @ ..] => {
@@ -222,10 +222,10 @@ where
                     debug_alt!(f, dx fld d0, ",\n{}{:?} {:?}" | #",\n{}{:?} {:#?}")?;
                     // write!(f, ",\n{}{:?} {:?}", dx, fld, Dict(": ", kvs))?;
                 }
-                write!(f, "\n")?;
+                writeln!(f)?;
             }
         }
-        write!(f, "{}", '}')
+        write!(f, "}}")
     }
 }
 
@@ -233,7 +233,7 @@ pub struct Dict<'a, K: 'a, V: 'a>(pub &'a str, pub &'a [(K, V)]);
 
 impl<'a, K: fmt::Debug, V: fmt::Debug> fmt::Debug for Dict<'a, K, V> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", '{')?;
+        write!(f, "{{")?;
         let sep = &self.0;
         match &self.1 {
             [] => (),
@@ -242,10 +242,10 @@ impl<'a, K: fmt::Debug, V: fmt::Debug> fmt::Debug for Dict<'a, K, V> {
                 for (k, v) in rest {
                     debug_alt!(f, k sep v, ",\n    {:?} {} {:?}" | #",\n    {:?} {} {:#?}")?;
                 }
-                write!(f, "\n")?;
+                writeln!(f)?;
             }
         }
-        write!(f, "{}", '}')
+        write!(f, "}}")
     }
 }
 
@@ -262,17 +262,17 @@ where
         match map.len() {
             0 => (),
             1 => {
-                let (k, v) = map.into_iter().next().unwrap();
+                let (k, v) = map.iter().next().unwrap();
                 write!(f, " {} = {} ", k, v)?;
             }
             _ => {
-                let mut iter = map.into_iter();
+                let mut iter = map.iter();
                 let (k0, v0) = iter.next().unwrap();
                 write!(f, "\n    {} = {}", k0, v0)?;
                 for (k, v) in iter {
                     write!(f, ",\n    {} = {}", k, v)?;
                 }
-                write!(f, "\n")?;
+                writeln!(f)?;
             }
         }
         f.write_char('}')
@@ -290,17 +290,17 @@ where
         match map.len() {
             0 => (),
             1 => {
-                let (k, v) = map.into_iter().next().unwrap();
+                let (k, v) = map.iter().next().unwrap();
                 debug_alt!(f, k v, "\n    {:?} = {:?}" | #"{:?} = {:#?}")?;
             }
             _ => {
-                let mut iter = map.into_iter();
+                let mut iter = map.iter();
                 let (k0, v0) = iter.next().unwrap();
                 debug_alt!(f, k0 v0, "\n    {:?} = {:?}" | #"{:?} = {:#?}")?;
                 for (k, v) in iter {
                     debug_alt!(f, k v, ", {:?} = {:?}" | #"{:?} = {:#?}")?;
                 }
-                write!(f, "\n")?;
+                writeln!(f)?;
             }
         }
         f.write_char('}')
@@ -321,12 +321,12 @@ where
             }
             [(k0, v0), bs @ ..] => {
                 let sp = "    ";
-                write!(f, "\n")?;
+                writeln!(f)?;
                 write!(f, "{}{} {} {}", sp, k0, &self.0, v0)?;
                 for (k, v) in bs {
                     write!(f, ",\n{}{} {} {}", sp, k, &self.0, v)?;
                 }
-                write!(f, "\n")?;
+                writeln!(f)?;
             }
         }
         for (k, v) in self.1 {

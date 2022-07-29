@@ -87,16 +87,14 @@ impl<'t> Lexer<'t> {
                 let lexeme = if self.source.on_char('\'') {
                     self.source.next();
                     Lit(Char(c))
+                } else if c == '_' && self.on_char(char::is_whitespace) {
+                    Lexeme::Unlabel
+                } else if is_ident_start(c) {
+                    let posn = self.source.eat_while(is_ident_char);
+                    let symbol = wy_intern::intern_once(&self.source[posn.span()]);
+                    Lexeme::Label(symbol)
                 } else {
-                    if c == '_' && self.on_char(char::is_whitespace) {
-                        Lexeme::Unlabel
-                    } else if is_ident_start(c) {
-                        let posn = self.source.eat_while(|c| is_ident_char(c));
-                        let symbol = wy_intern::intern_once(&self.source[posn.span()]);
-                        Lexeme::Label(symbol)
-                    } else {
-                        Lexeme::Unknown(LexError::UnterminatedChar)
-                    }
+                    Lexeme::Unknown(LexError::UnterminatedChar)
                 };
                 Token {
                     lexeme,
@@ -583,12 +581,10 @@ impl<'t> Lexer<'t> {
             } else {
                 Literal::parse_nat(src, Base::Dec).ok().map(Literal::Nat)
             }
+        } else if has_dot && src.len() < 15 {
+            Literal::parse_float(src).ok().map(Literal::Float)
         } else {
-            if has_dot && src.len() < 15 {
-                Literal::parse_float(src).ok().map(Literal::Float)
-            } else {
-                Literal::parse_double(src).ok().map(Literal::Double)
-            }
+            Literal::parse_double(src).ok().map(Literal::Double)
         }
         .map(Lexeme::Lit)
         .unwrap_or_else(|| Lexeme::Unknown(LexError::MalformedNumber));
@@ -931,7 +927,7 @@ mod test {
         let _356 = lexer.token();
         assert_eq!(_356.lexeme, Lexeme::Lit(Literal::Float(3.56)));
         let _4e12 = lexer.token();
-        assert_eq!(_4e12.lexeme, Lexeme::Lit(Literal::Double(4e12 as f64)));
+        assert_eq!(_4e12.lexeme, Lexeme::Lit(Literal::Double(4e12_f64)));
 
         println!("{:?}", lexer);
 
@@ -947,7 +943,7 @@ mod test {
         assert_eq!(lexer.token().lexeme, Lexeme::Lit(Literal::Int(5)));
         assert_eq!(
             lexer.token().lexeme,
-            Lexeme::Lit(Literal::Float(4.5 as f32))
+            Lexeme::Lit(Literal::Float(4.5_f32))
         );
         assert_eq!(lexer.token().lexeme, Lexeme::Lower(a));
         assert_eq!(lexer.token().lexeme, Lexeme::Dot);
