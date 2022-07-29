@@ -274,93 +274,6 @@ wy_common::variant_preds! {
     | is_alias => Alias(_)
 }
 
-impl<Id, T> Con<Id, T> {
-    /// If this constructor is not concrete (i.e., is a `Con::Free` variant),
-    /// then it returns an option, wrapped with `Some`, containing a reference
-    /// to the type variable standing in place of the type constructor.
-    /// Otherwise returns `None`.
-    pub fn get_var(&self) -> Option<&T> {
-        match self {
-            Self::Free(t) => Some(t),
-            _ => None,
-        }
-    }
-
-    /// Since `Type` is generic over identifiers, in order to extract the
-    /// identifier used for the (polymorphic) list constructor `:` -- which, as
-    /// a result of string interning, is represented by a `Symbol` -- a closure
-    /// must be provided to convert the `Symbol` corresponding to `:` into the
-    /// type used to represent identifiers.
-    ///
-    /// Note that, while `(:)` is formally written, the actual identifier does
-    /// *not* include the parentheses! Hence this function is essentially a
-    /// shortcut to interning `:` and mapping it to represent an identifier.
-    pub fn list_cons_id(mut f: impl FnMut(Symbol) -> Id) -> Id {
-        f(wy_intern::COLON)
-    }
-
-    /// Like with the list constructor `:`, the tuple constructor must also be
-    /// processed to match the type used to represent identifiers. However,
-    /// unlike the list constructor, which is used for *all* lists, tuples
-    /// require a new constructor depending on the number of type components
-    /// held. Namely, the constructor for a tuple with `N` elements is the
-    /// lexeme formed by combining `N - 1` commas and surrounding them in
-    /// parentheses.
-    pub fn n_tuple_id(commas: usize, mut f: impl FnMut(Symbol) -> Id) -> Id {
-        f(wy_intern::intern_once(
-            &*(1..(2 + commas)).map(|_| ',').collect::<String>(),
-        ))
-    }
-
-    pub fn map_id<X>(self, mut f: impl FnMut(Id) -> X) -> Con<X, T> {
-        match self {
-            Con::List => Con::List,
-            Con::Tuple(n) => Con::Tuple(n),
-            Con::Arrow => Con::Arrow,
-            Con::Data(id) => Con::Data(f(id)),
-            Con::Free(t) => Con::Free(t),
-            Con::Alias(id) => Con::Alias(f(id)),
-        }
-    }
-    pub fn map_id_ref<X>(&self, mut f: impl FnMut(&Id) -> X) -> Con<X, T>
-    where
-        T: Copy,
-    {
-        match self {
-            Con::List => Con::List,
-            Con::Tuple(n) => Con::Tuple(*n),
-            Con::Arrow => Con::Arrow,
-            Con::Data(id) => Con::Data(f(id)),
-            Con::Free(t) => Con::Free(*t),
-            Con::Alias(id) => Con::Alias(f(id)),
-        }
-    }
-
-    pub fn map_t<X>(self, mut f: impl FnMut(T) -> X) -> Con<Id, X> {
-        match self {
-            Con::List => Con::List,
-            Con::Tuple(n) => Con::Tuple(n),
-            Con::Arrow => Con::Arrow,
-            Con::Data(id) => Con::Data(id),
-            Con::Free(t) => Con::Free(f(t)),
-            Con::Alias(id) => Con::Alias(id),
-        }
-    }
-    pub fn map_t_ref<X>(&self, mut f: impl FnMut(&T) -> X) -> Con<Id, X>
-    where
-        Id: Clone,
-    {
-        match self {
-            Con::List => Con::List,
-            Con::Tuple(n) => Con::Tuple(*n),
-            Con::Arrow => Con::Arrow,
-            Con::Data(id) => Con::Data(id.clone()),
-            Con::Free(t) => Con::Free(f(t)),
-            Con::Alias(id) => Con::Alias(id.clone()),
-        }
-    }
-}
-
 impl<S: Identifier + Symbolic> PartialEq<S> for Con<Ident, Tv> {
     fn eq(&self, other: &S) -> bool {
         match (self, other) {
@@ -851,79 +764,6 @@ impl<Id, T> Type<Id, T> {
         }
     }
 
-    pub fn map_id<F, X>(self, f: &mut F) -> Type<X, T>
-    where
-        F: FnMut(Id) -> X,
-    {
-        match self {
-            Type::Var(t) => Type::Var(t),
-            Type::Con(Con::Data(n), ts) => Type::Con(Con::Data(f(n)), ts.fmap(|ty| ty.map_id(f))),
-            Type::Con(id, tys) => Type::Con(
-                id.map_id(|i| f(i)),
-                tys.into_iter().map(|ty| ty.map_id(f)).collect(),
-            ),
-            Type::Fun(x, y) => Type::Fun(Box::new(x.map_id(f)), Box::new(y.map_id(f))),
-            Type::Tup(ts) => Type::Tup(ts.into_iter().map(|t| t.map_id(f)).collect()),
-            Type::Vec(t) => Type::Vec(Box::new(t.map_id(f))),
-            Type::Rec(rec) => Type::Rec(rec.map(|(k, v)| {
-                (
-                    k.map(|id| f(id)),
-                    v.into_iter()
-                        .map(|field| match field {
-                            Field::Rest => Field::Rest,
-                            Field::Key(k) => Field::Key(f(k)),
-                            Field::Entry(k, v) => Field::Entry(f(k), v.map_id(f)),
-                        })
-                        .collect(),
-                )
-            })),
-        }
-    }
-
-    pub fn map_id_ref<F, X>(&self, f: &mut F) -> Type<X, T>
-    where
-        F: FnMut(&Id) -> X,
-        T: Copy,
-    {
-        match self {
-            Type::Var(t) => Type::Var(*t),
-            Type::Con(id, tys) => Type::Con(
-                id.map_id_ref(|id| f(id)),
-                tys.iter().map(|ty| ty.map_id_ref(f)).collect(),
-            ),
-            Type::Fun(x, y) => Type::Fun(Box::new(x.map_id_ref(f)), Box::new(y.map_id_ref(f))),
-            Type::Tup(ts) => Type::Tup(ts.iter().map(|t| t.map_id_ref(f)).collect()),
-            Type::Vec(t) => Type::Vec(Box::new(t.map_id_ref(f))),
-            Type::Rec(rec) => Type::Rec(rec.map_ref(&mut |k, v| {
-                (
-                    k.map(|id| f(id)),
-                    v.into_iter()
-                        .map(|field| match field {
-                            Field::Rest => Field::Rest,
-                            Field::Key(k) => Field::Key(f(k)),
-                            Field::Entry(k, v) => Field::Entry(f(k), v.map_id_ref(f)),
-                        })
-                        .collect(),
-                )
-            })),
-        }
-    }
-
-    pub fn map_t_ref<F, U>(&self, f: &mut F) -> Type<Id, U>
-    where
-        F: FnMut(&T) -> U,
-        Id: Clone,
-    {
-        match self {
-            Type::Var(t) => Type::Var(f(t)),
-            Type::Con(c, ts) => Type::Con(c.map_t_ref(|t| f(t)), iter_map_t_ref(&ts[..], f)),
-            Type::Fun(x, y) => Type::Fun(Box::new(x.map_t_ref(f)), Box::new(y.map_t_ref(f))),
-            Type::Tup(tys) => Type::Tup(iter_map_t_ref(&tys[..], f)),
-            Type::Vec(ty) => Type::Vec(Box::new(ty.map_t_ref(f))),
-            Type::Rec(rs) => Type::Rec(rs.map_t_ref(|ty| ty.map_t_ref(f))),
-        }
-    }
-
     /// If a given type is a nullary type, then this will return a reference to
     /// the identifier represemting the nullary type constructor.
     pub fn id_if_nullary(&self) -> Option<&Id> {
@@ -1049,37 +889,6 @@ impl<Id, T> Type<Id, T> {
     pub fn ty_str(&self, prec: usize) -> TypeStr<'_, Id, T> {
         TypeStr(self, prec)
     }
-
-    pub fn map_t<U>(self, f: &mut impl FnMut(T) -> U) -> Type<Id, U> {
-        match self {
-            Type::Var(t) => Type::Var(f(t)),
-            Type::Con(c, ts) => {
-                let mut args = vec![];
-                let con = match c {
-                    Con::Arrow => Con::Arrow,
-                    Con::List => Con::List,
-                    Con::Tuple(n) => Con::Tuple(n),
-                    Con::Data(id) => Con::Data(id),
-                    Con::Free(c) => Con::Free(f(c)),
-                    Con::Alias(id) => Con::Alias(id),
-                };
-                for ty in ts {
-                    args.push(ty.map_t(f))
-                }
-                Type::Con(con, args)
-            }
-            Type::Fun(x, y) => Type::Fun(Box::new(x.map_t(f)), Box::new(y.map_t(f))),
-            Type::Tup(tys) => Type::Tup({
-                let mut args = vec![];
-                for ty in tys {
-                    args.push(ty.map_t(f));
-                }
-                args
-            }),
-            Type::Vec(ty) => Type::Vec(Box::new(ty.map_t(f))),
-            Type::Rec(rs) => Type::Rec(rs.map_t(|ty| ty.map_t(f))),
-        }
-    }
 }
 
 pub fn poly_vars<'a, Id>(poly: impl IntoIterator<Item = &'a Tv>) -> Vec<Type<Id, Tv>> {
@@ -1095,17 +904,6 @@ where
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
-}
-
-fn iter_map_t_ref<X: Clone, Y, Z>(
-    typs: &[Type<X, Y>],
-    f: &mut impl FnMut(&Y) -> Z,
-) -> Vec<Type<X, Z>> {
-    let mut tys = vec![];
-    for ty in typs {
-        tys.push(ty.map_t_ref(f))
-    }
-    tys
 }
 
 /// Takes a type constructor and its type arguments, of the form `C t1 t2 ...
@@ -1228,42 +1026,6 @@ impl<Id, T> Context<Id, T> {
     pub fn head(&self) -> &T {
         &self.head
     }
-    pub fn map_id<F, X>(self, mut f: F) -> Context<X, T>
-    where
-        F: FnMut(Id) -> X,
-    {
-        Context {
-            class: f(self.class),
-            head: self.head,
-        }
-    }
-    pub fn map_id_ref<X>(&self, f: &mut impl FnMut(&Id) -> X) -> Context<X, T>
-    where
-        T: Copy,
-    {
-        Context {
-            class: f(&self.class),
-            head: self.head,
-        }
-    }
-    pub fn map_t<F, U>(self, mut f: F) -> Context<Id, U>
-    where
-        F: FnMut(T) -> U,
-    {
-        Context {
-            class: self.class,
-            head: f(self.head),
-        }
-    }
-    pub fn map_t_ref<U>(&self, f: &mut impl FnMut(&T) -> U) -> Context<Id, U>
-    where
-        Id: Clone,
-    {
-        Context {
-            class: self.class.clone(),
-            head: f(&self.head),
-        }
-    }
 
     pub fn unzip(contexts: &[Self]) -> Vec<(Id, T)>
     where
@@ -1311,55 +1073,6 @@ impl<Id, T> Signature<Id, T> {
 
     pub fn ctxt_iter_mut(&mut self) -> std::slice::IterMut<'_, Context<Id, T>> {
         self.ctxt.iter_mut()
-    }
-
-    pub fn map_id<X>(self, mut f: impl FnMut(Id) -> X) -> Signature<X, T> {
-        Signature {
-            each: self.each,
-            ctxt: self
-                .ctxt
-                .into_iter()
-                .map(|ctx| ctx.map_id(|id| f(id)))
-                .collect(),
-            tipo: self.tipo.map_id(&mut f),
-        }
-    }
-
-    pub fn map_id_ref<X>(&self, f: &mut impl FnMut(&Id) -> X) -> Signature<X, T>
-    where
-        T: Copy,
-    {
-        Signature {
-            each: self.each.clone(),
-            ctxt: self.ctxt_iter().map(|ctx| ctx.map_id_ref(f)).collect(),
-            tipo: self.tipo.map_id_ref(f),
-        }
-    }
-
-    pub fn map_t<U>(self, f: &mut impl FnMut(T) -> U) -> Signature<Id, U> {
-        let mut ctxt = vec![];
-        for Context { class, head: tyvar } in self.ctxt {
-            ctxt.push(Context {
-                class,
-                head: f(tyvar),
-            })
-        }
-        Signature {
-            each: self.each.fmap(|t| f(t)),
-            ctxt,
-            tipo: self.tipo.map_t(f),
-        }
-    }
-
-    pub fn map_t_ref<U>(&self, f: &mut impl FnMut(&T) -> U) -> Signature<Id, U>
-    where
-        Id: Clone,
-    {
-        Signature {
-            each: self.each_iter().map(|t| f(t)).collect(),
-            ctxt: self.ctxt_iter().map(|c| c.map_t_ref(f)).collect(),
-            tipo: self.tipo.map_t_ref(f),
-        }
     }
 }
 
@@ -1412,24 +1125,6 @@ impl<Id, T> Contract<Id, T> {
             Some(s)
         } else {
             None
-        }
-    }
-
-    pub fn map_id<U>(self, f: &mut impl FnMut(Id) -> U) -> Contract<U, T> {
-        match self {
-            Contract::Implicit => Contract::Implicit,
-            Contract::Explicit(Signature { each, ctxt, tipo }) => {
-                let ctxt = ctxt.fmap(|Context { class, head }| Context {
-                    class: f(class),
-                    head,
-                });
-                let tipo = {
-                    use wy_common::functor::Mapped;
-                    let m = Mapped::new(tipo, |ty: Type<Id, T>| ty.map_id(f));
-                    m.run_mut().take()
-                };
-                Contract::Explicit(Signature { each, ctxt, tipo })
-            }
         }
     }
 }

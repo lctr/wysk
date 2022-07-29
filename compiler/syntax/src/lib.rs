@@ -1,7 +1,7 @@
 #![feature(generic_associated_types)]
 
 use attr::Attribute;
-use wy_common::{deque, struct_field_iters, HashMap, Mappable};
+use wy_common::{deque, struct_field_iters, HashMap};
 use wy_intern::symbol::{self, Symbol};
 use wy_name::{
     ident::{Chain, Ident},
@@ -63,38 +63,24 @@ impl<I> SyntaxTree<I> {
         self.packages.get(uid)
     }
 
-    pub fn with_program<M, T>(program: Program<I, M, T>) -> Self
+    pub fn add_program<M>(&mut self, program: Program<I, M, Tv>) -> ModuleId
     where
         I: Copy,
-        Tv: From<T>,
-    {
-        let program = program.map_t(|t| Tv::from(t)).map_u(|_| ModuleId::new(0));
-        let packages = HashMap::from([(ModuleId::new(0), program.module.modname.clone())]);
-        Self {
-            programs: vec![program],
-            packages,
-        }
-    }
-    pub fn add_program<M, T>(&mut self, program: Program<I, M, T>) -> ModuleId
-    where
-        I: Copy,
-        Tv: From<T>,
     {
         let uid = ModuleId::new(self.programs.len() as u32);
         let chain = program.module.modname.clone();
-        let program = program.map_t(|t| Tv::from(t)).map_u(|_| uid);
+        let program = program.map_u(|_| uid);
         self.programs.push(program);
         self.packages.insert(uid, chain);
         uid
     }
 
-    pub fn add_programs<M, T>(
+    pub fn add_programs<M>(
         &mut self,
-        programs: impl IntoIterator<Item = Program<I, M, T>>,
+        programs: impl IntoIterator<Item = Program<I, M, Tv>>,
     ) -> Vec<ModuleId>
     where
         I: Copy,
-        Tv: From<T>,
     {
         programs
             .into_iter()
@@ -124,66 +110,9 @@ impl<I> SyntaxTree<I> {
                 .map(|impf| (prog.module_id(), impf.module_name()))
         })
     }
-
-    pub fn map_id<X>(self, f: &mut impl FnMut(I) -> X) -> SyntaxTree<X>
-    where
-        I: std::hash::Hash + Eq,
-        X: std::hash::Hash + Eq,
-    {
-        SyntaxTree {
-            programs: self.programs.fmap(|prog| prog.map_id(f)),
-            packages: self
-                .packages
-                .into_iter()
-                .map(|(mid, chain)| (mid, chain.map(|id| f(id))))
-                .collect(),
-        }
-    }
-
-    pub fn map_id_ref<X>(&self, mut f: impl FnMut(&I) -> X) -> SyntaxTree<X>
-    where
-        I: std::hash::Hash + Eq + Copy,
-        X: std::hash::Hash + Eq,
-    {
-        SyntaxTree {
-            programs: self
-                .programs_iter()
-                .map(|prog| prog.map_id_ref(&mut |id| f(id)))
-                .collect(),
-            packages: self
-                .packages_iter()
-                .map(|(mid, chain)| (*mid, chain.map_ref(|id| f(id))))
-                .collect(),
-        }
-    }
 }
 
-impl Ast {
-    pub fn qualify_chain_idents(self) -> SyntaxTree<Chain<Ident>> {
-        let SyntaxTree { programs, packages } = self;
-        let programs = programs
-            .into_iter()
-            .map(|program| program.qualify_chain_idents())
-            .collect();
-        let packages = packages
-            .into_iter()
-            .map(|(mid, chs)| (mid, Chain::new(chs, deque![])))
-            .collect();
-        SyntaxTree { programs, packages }
-    }
-    pub fn qualify_unique_idents(self) -> SyntaxTree<wy_name::Unique> {
-        let SyntaxTree { programs, packages } = self;
-        let programs = programs
-            .into_iter()
-            .map(|program| program.qualify_unique_idents())
-            .collect();
-        let packages = packages
-            .into_iter()
-            .map(|(mid, chs)| (mid, Chain::new(wy_name::intern_chain(chs), deque![])))
-            .collect();
-        SyntaxTree { programs, packages }
-    }
-}
+impl Ast {}
 
 pub fn enumerate_programs<Id, U: Copy, T, I: IntoIterator<Item = Program<Id, U, T>>>(
     progs: I,
@@ -303,93 +232,6 @@ impl<Id, U, T> Program<Id, U, T> {
             comments,
         }
     }
-    pub fn map_id<X>(self, f: &mut impl FnMut(Id) -> X) -> Program<X, U, T>
-    where
-        X: Eq + std::hash::Hash,
-        Id: Eq + std::hash::Hash,
-    {
-        Program {
-            module: self.module.map_id(f),
-            fixities: self.fixities.map(f),
-            comments: self.comments,
-        }
-    }
-    pub fn map_id_ref<X>(&self, f: &mut impl FnMut(&Id) -> X) -> Program<X, U, T>
-    where
-        U: Copy,
-        T: Copy,
-        X: Eq + std::hash::Hash,
-        Id: Copy + Eq + std::hash::Hash,
-    {
-        Program {
-            module: self.module.map_id_ref(f),
-            fixities: FixityTable(
-                self.fixities
-                    .iter()
-                    .map(|(id, fixity)| (f(id), *fixity))
-                    .collect(),
-            ),
-            comments: self.comments.clone(),
-        }
-    }
-    pub fn map_t<X>(self, mut f: impl FnMut(T) -> X) -> Program<Id, U, X> {
-        Program {
-            module: self.module.map_t(|t| f(t)),
-            fixities: self.fixities,
-            comments: self.comments,
-        }
-    }
-    pub fn map_t_ref<X>(&self, f: &mut impl FnMut(&T) -> X) -> Program<Id, U, X>
-    where
-        Id: Copy,
-        U: Copy,
-    {
-        Program {
-            module: self.module.map_t_ref(f),
-            fixities: self.fixities.clone(),
-            comments: self.comments.clone(),
-        }
-    }
-}
-
-impl Program<Ident, ModuleId, Tv> {
-    pub fn qualify_chain_idents(self) -> Program<Chain<Ident>, ModuleId, Tv> {
-        let Program {
-            module,
-            fixities,
-            comments,
-        } = self;
-        let name = module.module_name().clone();
-        let module = qualify_module_chain_idents(module);
-        let fixities = fixities
-            .into_iter()
-            .map(|(id, fix)| (name.with_suffix(id), fix))
-            .collect();
-        Program {
-            module,
-            fixities,
-            comments,
-        }
-    }
-
-    pub fn qualify_unique_idents(self) -> Program<wy_name::Unique, ModuleId, Tv> {
-        let Program {
-            module,
-            fixities,
-            comments,
-        } = self;
-        let name = module.modname.clone();
-        let module = qualify_unique_module_idents(module);
-        let fixities = fixities
-            .into_iter()
-            .map(|(id, fix)| (wy_name::intern_chain(name.with_suffix(id)), fix))
-            .collect();
-        Program {
-            module,
-            fixities,
-            comments,
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -460,142 +302,6 @@ impl<Id, U, T> Module<Id, U, T> {
             pragmas: self.pragmas,
         }
     }
-
-    pub fn map_id<X>(self, f: &mut impl FnMut(Id) -> X) -> Module<X, U, T> {
-        Module {
-            uid: self.uid,
-            modname: self.modname.map(|id| f(id)),
-            imports: self.imports.fmap(|imp| imp.map(|id| f(id))),
-            infixes: self.infixes.fmap(|decl| decl.map(|id| f(id))),
-            datatys: self.datatys.fmap(|decl| decl.map_id(|id| f(id))),
-            classes: self.classes.fmap(|decl| decl.map_id(f)),
-            implems: self.implems.fmap(|decl| decl.map_id(f)),
-            fundefs: self.fundefs.fmap(|decl| decl.map_id(f)),
-            aliases: self.aliases.fmap(|decl| decl.map_id(|id| f(id))),
-            newtyps: self.newtyps.fmap(|decl| decl.map_id(|id| f(id))),
-            pragmas: self.pragmas.fmap(|decl| decl.map_id(|id| f(id))),
-        }
-    }
-
-    pub fn map_id_ref<X>(&self, f: &mut impl FnMut(&Id) -> X) -> Module<X, U, T>
-    where
-        U: Copy,
-        T: Copy,
-    {
-        Module {
-            uid: self.uid,
-            modname: self.modname.map_ref(|id| f(id)),
-            imports: self
-                .imports_iter()
-                .map(|imp| imp.map_ref(&mut |id| f(id)))
-                .collect(),
-            infixes: self
-                .infixes_iter()
-                .map(|fixities| fixities.map_ref(f))
-                .collect(),
-            datatys: self
-                .datatys_iter()
-                .map(|datatys| datatys.map_id_ref(f))
-                .collect(),
-            classes: self
-                .classes_iter()
-                .map(|classes| classes.map_id_ref(f))
-                .collect(),
-            implems: self
-                .implems_iter()
-                .map(|implems| implems.map_id_ref(f))
-                .collect(),
-            fundefs: self
-                .fundefs_iter()
-                .map(|fundefs| fundefs.map_id_ref(f))
-                .collect(),
-            aliases: self
-                .aliases_iter()
-                .map(|aliases| aliases.map_id_ref(f))
-                .collect(),
-            newtyps: self
-                .newtyps_iter()
-                .map(|newtyps| newtyps.map_id_ref(f))
-                .collect(),
-            pragmas: self
-                .pragmas_iter()
-                .map(|pragmas| pragmas.map_id_ref(f))
-                .collect(),
-        }
-    }
-
-    pub fn map_t<X>(self, mut f: impl FnMut(T) -> X) -> Module<Id, U, X> {
-        Module {
-            uid: self.uid,
-            modname: self.modname,
-            imports: self.imports,
-            infixes: self.infixes,
-            datatys: self.datatys.fmap(|decl| decl.map_t(|t| f(t))),
-            classes: self.classes.fmap(|decl| decl.map_t(|t| f(t))),
-            implems: self.implems.fmap(|decl| decl.map_t(|t| f(t))),
-            fundefs: self.fundefs.fmap(|decl| decl.map_t(|t| f(t))),
-            aliases: self.aliases.fmap(|decl| decl.map_t(|t| f(t))),
-            newtyps: self.newtyps.fmap(|decl| decl.map_t(|t| f(t))),
-            pragmas: self.pragmas.fmap(|decl| decl.map_t(|t| f(t))),
-        }
-    }
-
-    pub fn map_t_ref<X>(&self, f: &mut impl FnMut(&T) -> X) -> Module<Id, U, X>
-    where
-        Id: Copy,
-        U: Copy,
-    {
-        Module {
-            uid: self.uid,
-            modname: self.modname.clone(),
-            imports: self.imports.clone(),
-            infixes: self.infixes.clone(),
-            datatys: self
-                .datatys_iter()
-                .map(|datatys| datatys.map_t_ref(f))
-                .collect(),
-            classes: self
-                .classes_iter()
-                .map(|classes| classes.map_t_ref(f))
-                .collect(),
-            implems: self
-                .implems_iter()
-                .map(|implems| implems.map_t_ref(f))
-                .collect(),
-            fundefs: self
-                .fundefs_iter()
-                .map(|fundefs| fundefs.map_t_ref(f))
-                .collect(),
-            aliases: self
-                .aliases_iter()
-                .map(|aliases| aliases.map_t_ref(f))
-                .collect(),
-            newtyps: self
-                .newtyps_iter()
-                .map(|newtyps| newtyps.map_t_ref(f))
-                .collect(),
-            pragmas: self
-                .pragmas_iter()
-                .map(|pragma| pragma.map_t_ref(f))
-                .collect(),
-        }
-    }
-}
-
-pub fn qualify_module_chain_idents(
-    mdl: Module<Ident, ModuleId, Tv>,
-) -> Module<Chain<Ident>, ModuleId, Tv> {
-    let root_name = mdl.module_name();
-    mdl.map_id_ref(&mut |id| root_name.with_suffix(*id))
-}
-
-/// Replaces every identifier in a module with a chain consisting of the module
-/// name prefixed to the identifier.
-pub fn qualify_unique_module_idents(
-    mdl: Module<Ident, ModuleId, Tv>,
-) -> Module<wy_name::Unique, ModuleId, Tv> {
-    let root_name = mdl.modname.clone();
-    mdl.map_id_ref(&mut |id| wy_name::intern_chain(root_name.with_suffix(*id)))
 }
 
 /// Describe the declared dependencies on other modules within a given module.
