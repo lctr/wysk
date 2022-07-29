@@ -920,22 +920,7 @@ where
     V: std::fmt::Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use crate::pretty::Dictionary;
-        if f.alternate() {
-            write!(f, "Envr {:#?}", self.as_ref())
-        } else {
-            write!(f, "Envr {:?}", &Dictionary(self.as_ref()))
-        }
-    }
-}
-
-impl<K, V> std::fmt::Display for Envr<K, V>
-where
-    K: std::fmt::Display,
-    V: std::fmt::Display,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Envr {}", crate::pretty::Dictionary(self.as_ref()))
+        f.debug_struct("Envr").field("store", &self.store).finish()
     }
 }
 

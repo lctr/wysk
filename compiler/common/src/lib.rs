@@ -10,7 +10,6 @@ pub mod functor;
 pub mod iter;
 pub mod mapstack;
 pub mod newtypes;
-pub mod pretty;
 pub mod text;
 
 pub use functor::Mappable;

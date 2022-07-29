@@ -1,4 +1,3 @@
-use wy_common::pretty::Many;
 // use serde::{Deserialize, Serialize};
 use wy_common::ref_lifting_strenum;
 use wy_intern::symbol::{self, Symbol};
@@ -559,7 +558,15 @@ impl std::fmt::Display for LexKind {
             LexKind::Character => write!(f, "character"),
             LexKind::Specified(lexeme) => write!(f, "{}", lexeme),
             LexKind::AnyOf(lexemes) => {
-                write!(f, "any of [{}]", Many(lexemes, ", "))
+                assert!(
+                    lexemes.len() > 1,
+                    "LexKind::AnyOf requires at least 2 elements"
+                );
+                write!(f, "any of [{}", lexemes[0])?;
+                for lex in &lexemes[1..] {
+                    write!(f, ", {}", lex)?;
+                }
+                write!(f, "]")
             }
             LexKind::Attribute => write!(f, "attribute"),
         }

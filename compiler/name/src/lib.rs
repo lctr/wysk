@@ -9,6 +9,8 @@ pub mod module;
 
 use ident::{Chain, Ident};
 
+use crate::ident::Identifier;
+
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Unique(usize);
 
@@ -157,10 +159,11 @@ pub fn intern_chains(
     match CHAINS.lock() {
         Ok(mut guard) => chains.into_iter().map(move |chain| guard.push(chain)),
         Err(err) => {
-            eprintln!(
-                "Poison error while interning chains `{}`",
-                wy_common::pretty::List(&chains.into_iter().collect::<Vec<_>>()[..])
-            );
+            let chs = chains
+                .into_iter()
+                .map(|ch| ch.map(|id| id.map_symbol(|s| s.as_u32())))
+                .collect::<Vec<_>>();
+            eprintln!("Poison error while interning chains `{chs:?}`");
             panic!("{}", err)
         }
     }
@@ -170,10 +173,11 @@ pub fn intern_many_chains<const N: usize>(chains: [Chain<Ident>; N]) -> [Unique;
     match CHAINS.lock() {
         Ok(mut guard) => chains.fmap(move |chain| guard.push(chain)),
         Err(err) => {
-            eprintln!(
-                "Poison error while interning chains `{}`",
-                wy_common::pretty::List(&chains.into_iter().collect::<Vec<_>>()[..])
-            );
+            let chs = chains
+                .into_iter()
+                .map(|ch| ch.map(|id| id.map_symbol(|s| s.as_u32())))
+                .collect::<Vec<_>>();
+            eprintln!("Poison error while interning chains `{chs:?}`");
             panic!("{}", err)
         }
     }
