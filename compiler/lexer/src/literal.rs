@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use wy_common::strenum;
 use wy_intern::symbol::{self, Symbol};
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Base {
     /// Base 2 (binary) integers. By default parsed as `u32`.
     Bin,
@@ -28,7 +28,7 @@ impl Base {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum IntPrefix {
     Bin = 'b' as u8,
     Oct = 'o' as u8,
@@ -102,7 +102,7 @@ impl NumSuffix {
         matches!(*ch, 'u' | 'i' | 'f' | 'd')
     }
 
-    pub fn allows_size(ch: &char) -> bool {
+    pub fn word_size(ch: &char) -> bool {
         matches!(*ch, 'u' | 'i')
     }
 }
