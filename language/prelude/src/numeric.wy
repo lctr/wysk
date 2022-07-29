@@ -1,6 +1,6 @@
 module Numeric where 
 
-import Predicates
+import Predicate
 import Function
 
 data Byte = Byte U'8 
@@ -18,8 +18,13 @@ impl Eq Nat where {
         | (Succ n) (Succ m) = n == m
 }
 
+~~ Arbitrary precision signed integers
 type Integer = PrimBigInt
-type Rational = PrimRatio Integer
+
+data Ratio a = Ratio a a | PosInfinity | NegInfinity
+
+~~ Arbitrary precision rational numbers representable by a pair of `Integer`s
+type Rational = Ratio Integer
 
 ~~ Note: floating point numbers do NOT implement Eq
 impl Eq Int {
