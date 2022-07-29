@@ -258,17 +258,17 @@ impl Character for [char] {
     }
 
     fn cmp_str(&self, s: &str) -> bool {
-        self.into_iter().any(|c| c.cmp_str(s))
+        self.iter().any(|c| c.cmp_str(s))
     }
 }
 
 impl Character for &[char] {
     fn cmp_char(&self, c: char) -> bool {
-        self.into_iter().any(|ch| *ch == c)
+        self.iter().any(|ch| *ch == c)
     }
 
     fn cmp_str(&self, s: &str) -> bool {
-        self.into_iter().any(|c| c.cmp_str(s))
+        self.iter().any(|c| c.cmp_str(s))
     }
 }
 
@@ -495,7 +495,7 @@ impl<'t> Lexer<'t> {
             Some(token) => token,
             None => {
                 if let Some(tok) = self.stack.pop() {
-                    return tok;
+                    tok
                 } else {
                     self.eof_token()
                 }
