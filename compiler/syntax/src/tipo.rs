@@ -511,17 +511,17 @@ impl<Id, T> Type<Id, T> {
 
     /// Returns a vector of all the argument types of a function type in order
     /// from left to right; e.g., for the type
-    ///
+    /// ```wysk
     ///     a -> b -> c -> d
-    ///
+    /// ```
     /// which is parsed as
-    ///
+    /// ```wysk
     ///     a -> (b -> (c -> d))
-    ///
+    /// ```
     /// this method returns the list
-    ///
+    /// ```wysk
     ///     [a, b, c, d]
-    ///
+    /// ```
     /// If the type corresponding to `Self` is not a function type, then a
     /// single-element vector containing the `Self` type instance is returned.
     /// Thus, this method returns vectors of length > 1 for function types. The
@@ -529,21 +529,21 @@ impl<Id, T> Type<Id, T> {
     /// instance as an alternative to this functionality.
     ///
     /// Note however that this does not have a "flattening" effect: the type
-    ///
+    /// ```wysk
     ///     (a -> b) -> (c -> (d -> e)) -> f
-    ///
+    /// ```
     /// with this method applied, would return
-    ///
+    /// ```wysk
     ///     [(a -> b), (c -> (d -> e)), f]
-    ///
+    /// ```
     /// while the function type
-    ///
+    /// ```wysk
     ///     (a -> b) -> c -> d -> (e -> f)
-    ///
+    /// ```
     /// would return
-    ///
+    /// ```wysk
     ///     [(a -> b), c, d, e, f]
-    ///
+    /// ```
     /// since function arrows are *right* associative.
     ///
     pub fn fun_vec(self) -> Vec<Self> {

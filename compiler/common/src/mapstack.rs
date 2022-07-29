@@ -209,7 +209,7 @@ where
     /// with the following scopes would return `true` for keys `k2` and `k3`
     /// and `false` otherwise.
     ///
-    /// ```rust,no-test
+    /// ```rust,ignore
     /// [
     ///     // START OF FIRST SCOPE     => last one to go out of scope
     ///     Scoped::Init,

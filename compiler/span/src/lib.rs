@@ -637,9 +637,9 @@ impl Coord {
     }
 
     /// First, we say a [`Loc`] `x` *contains* a [`Loc`] `y` if
-    ///
-    ///     x.row == y.row || (x.row < y.row && x.col < y.col)
-    ///
+    /// ```rust,ignore
+    /// x.row == y.row || (x.row < y.row && x.col < y.col)
+    /// ```
     /// i.e, any of the following hold:
     ///
     /// * `y` is on the same row (= line) as `x`

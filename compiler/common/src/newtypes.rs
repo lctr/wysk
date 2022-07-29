@@ -2,37 +2,6 @@ pub trait Newtype<T, Inner = T> {
     type Inner;
 }
 
-#[macro_export]
-/// Dealing with enums with uniformly shaped variants.
-///
-///
-/// # Examples
-/// ```
-/// /// An enum whose variants are all uniformly shaped
-/// enum Thing<X> {
-///     A(X),
-///     B(X),
-///     C(X)
-/// }
-/// /// Implement a `get_inner` method to return `&X`
-/// variants!{ #(X Thing :A :B :C) }
-/// ```
-/// to return a reference to the data held of type `X`.
-macro_rules! variants {
-    (
-        #(($inner:ty) $name:ident $(:$ids:ident)+)
-    ) => {
-        impl $name {
-            pub fn get_inner(&self) -> &$inner {
-                match self {
-                    // Self::$id($a0 $(, $as)*) => { ($a, $(, $as)*) }
-                    $($name::$ids(s) => { s })+
-                }
-            }
-        }
-    };
-}
-
 // Simplify generating newtype definitions and implementations
 // (predominantly for numeric indexing purposes)
 #[macro_export]

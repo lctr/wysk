@@ -68,7 +68,7 @@ pub trait Streaming {
     /// This method is useful as a shortcut to the pattern involved in
     /// conditionally advancing the inner stream of tokens as the side effect of
     /// a predicate (as in the following code snippet):
-    /// ```rust,no-test
+    /// ```rust,ignore
     /// if self.peek_on(...) {
     ///     self.bump();
     ///     /* do something */

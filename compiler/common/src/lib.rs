@@ -35,9 +35,14 @@ macro_rules! deque {
 /// For example, a generic struct `Foo<X, Y>` with fields `bar` of type `Bar<X>`
 /// and `baz` of type `Baz<Y>` would be implemented as following:
 ///
-/// ```
+/// ```rust,ignore
+/// use wy_common::struct_field_iters;
+///
+/// struct Bar<X>(X);
+/// struct Baz<Y>(Y);
+///
 /// struct Foo<X, Y> {
-///     bar: Bar<X>,
+///     bar: Vec<Bar<X>>,
 ///     baz: Baz<Y>,
 /// }
 ///
@@ -88,7 +93,7 @@ macro_rules! struct_field_iters {
 /// For example, a generic struct `Foo<X, Y>` with fields `bar` of type `Bar<X>`
 /// and `baz` of type `Baz<Y>` would be implemented as following:
 ///
-/// ```
+/// ```rust,ignore
 /// struct Foo<X, Y> {
 ///     bar: Bar<X>,
 ///     baz: Baz<Y>,

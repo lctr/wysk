@@ -454,7 +454,7 @@ pub enum LexKind {
     RightDelim,
     /// A reserved identifier lexed as a `Keyword`.
     Keyword,
-    /// A numeric, string, or character literal. This encompases
+    /// A numeric, string, or character literal. This encompasses
     /// `LexKind::Number` and `LexKind::Character`
     Literal,
     /// A numeric literal
@@ -597,13 +597,6 @@ impl Token<Lexeme> {
     /// `Option<&Token<Lexeme>>` using a method on a `Lexeme` reference that
     /// *only* the
     /// lexeme receiver by reference as a parameter.
-    ///
-    /// # Example
-    /// ```
-    /// let maybe_tok = Some(&Token { lexeme: Lexeme::Dot, span: Span::DUMMY });
-    ///
-    /// assert!(maybe_tok)
-    /// ```
     pub fn lift<X>(f: impl Fn(&Lexeme) -> X) -> impl Fn(&Token) -> X {
         move |this| f(&this.lexeme)
     }
@@ -652,32 +645,35 @@ impl AsRef<Lexeme> for Token {
     }
 }
 
-/// Public interface used to generalize (or alternatively, specify with greater
-/// detail) comparisons for type parameters `Tok` (which defaults to `Token`)
-/// and `Lex` (which defaults to `Lexeme`) types. This trait is generic in `Tok`
-/// and `Lex` to allow for extending existing functionality without specifically
-/// requiring the lexemes compared to be a concrete type.
+/// Public interface used to generalize (or alternatively, specify
+/// with greater detail) comparisons for type parameters `Tok` (which
+/// defaults to `Token`) and `Lex` (which defaults to `Lexeme`) types.
+/// This trait is generic in `Tok` and `Lex` to allow for extending
+/// existing functionality without specifically requiring the lexemes
+/// compared to be a concrete type.
 ///
-/// For example, the `Tok`
-/// parameter may be set to `(X, T)` for some `T` that also implements this
-/// trait, allowing extra data `X` to be included with lexemes without requiring
-/// that extra data specifically be derived from a lexeme.
+/// For example, the `Tok` parameter may be set to `(X, T)` for some
+/// `T` that also implements this trait, allowing extra data `X` to be
+/// included with lexemes without requiring that extra data
+/// specifically be derived from a lexeme.
 ///
-/// Since a `Lexeme` may contain
-/// derivative types, such as `Keyword` and `Literal` (all of which are
-/// comparable with `Token` and `Lexeme` types), this trait trivially extends
-/// this functionality to *non-derivative* types. A nontrivial example is that
-/// of types `F` that implement `FnMut(Lex) -> bool`, which allows for
-/// comparisons using predicates instead of just relying on `PartialEq`.
+/// Since a `Lexeme` may contain derivative types, such as `Keyword`
+/// and `Literal` (all of which are comparable with `Token` and
+/// `Lexeme` types), this trait trivially extends this functionality
+/// to *non-derivative* types. A nontrivial example is that of types
+/// `F` that implement `FnMut(Lex) -> bool`, which allows for
+/// comparisons using predicates instead of just relying on
+/// `PartialEq`.
 ///
-/// The idea behind this trait is to allow for greater ergonomics in applying
-/// predicates and in fact was inspired by the Rust `Pattern<'a>` trait (not to
-/// be confused with other types in the compiler named `Pattern`), which allows
-/// for comparison-based functionality on string slices using characters, other
-/// string slices, or character-valued predicates.
+/// The idea behind this trait is to allow for greater ergonomics in
+/// applying predicates and in fact was inspired by the Rust
+/// `Pattern<'a>` trait (not to be confused with other types in the
+/// compiler named `Pattern`), which allows for comparison-based
+/// functionality on string slices using characters, other string
+/// slices, or character-valued predicates.
 ///
-/// An example of a type that benefits from implementing this trait, but that
-/// isn't a derivative type of `Token` or `Lexeme`
+/// An example of a type that benefits from implementing this trait,
+/// but that isn't a derivative type of `Token` or `Lexeme`
 pub trait Lexlike<Tok = Token, Lex = Lexeme> {
     fn cmp_lex(&self, lex: &Lex) -> bool;
     fn cmp_tok(&self, tok: &Tok) -> bool;
@@ -975,17 +971,9 @@ pub enum LexError {
     /// backtick.
     ///
     /// Examples:
-    /// * invalid due to space:
-    ///
-    ///         `modulo`
-    /// * invalid due to non-lowercase-initial* identifier `#`:
-    ///
-    ///         `foo#`
-    /// * invalid, `<>` is already an infix:
-    ///
-    ///         `<>`
-    ///
-    ///
+    /// * invalid due to space: `modulo`
+    /// * invalid due to non-lowercase-initial* identifier `#`: `foo#`
+    /// * invalid, `<>` is already an infix: `<>`
     UnterminatedInfix,
     /// Emitted when encountering a nondigit character (that isn't `b`, `B`,
     /// `o`, `O`, `x`, or `X`) after (the initial) `0` in a number beginning

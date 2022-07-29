@@ -9,7 +9,7 @@ use std::{
 /// collection provided with the given separator in between each element.
 ///
 /// # Example
-/// ```rust
+/// ```rust,ignore
 /// let list = vec![1, 2, 3, 4, 5];
 /// println!("[{}]", Many(list.as_slice()), ',')
 pub struct Many<'a, A, S>(pub &'a [A], pub S);
