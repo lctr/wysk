@@ -142,9 +142,39 @@ impl From<&str> for Symbol {
     }
 }
 
+impl PartialEq<&Symbol> for Symbol {
+    fn eq(&self, other: &&Symbol) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl PartialEq<Symbol> for &Symbol {
+    fn eq(&self, other: &Symbol) -> bool {
+        self.0 == other.0
+    }
+}
+
 impl PartialEq<str> for Symbol {
     fn eq(&self, other: &str) -> bool {
         self.cmp_str(other)
+    }
+}
+
+impl PartialEq<str> for &Symbol {
+    fn eq(&self, other: &str) -> bool {
+        self.cmp_str(other)
+    }
+}
+
+impl PartialEq<Symbol> for str {
+    fn eq(&self, other: &Symbol) -> bool {
+        self == other.as_str()
+    }
+}
+
+impl PartialEq<&Symbol> for str {
+    fn eq(&self, other: &&Symbol) -> bool {
+        self == other.as_str()
     }
 }
 
@@ -501,12 +531,6 @@ macro_rules! with_reserved {
                 fn as_ref(&self) -> &str { self.text }
             }
 
-            // impl From<Reserved> for Symbol {
-            //     fn from(reserved: Reserved) -> Symbol {
-            //         reserved.symbol
-            //     }
-            // }
-
             impl From<Reserved> for &str {
                 fn from(reserved: Reserved) -> &'static str {
                     reserved.text
@@ -548,67 +572,124 @@ with_reserved! {
     | 1 WILD "_"
     | 2 COLON ":"
     | 3 MINUS "-"
+
+    // built-in type constructors
     | 4 ARROW "->"
+    | 5 PAREN_LR "()"
+    | 6 BRACK_LR "[]"
+    | 7 CURLY_LR "{}"
 
-    | 5 BOOL "Bool"
-    | 6 BYTE "Byte"
-    | 7 INT "Int"
-    | 8 NAT "Nat"
-    | 9 FLOAT "Float"
-    | 10 DOUBLE "Double"
-    | 11 CHAR "Char"
-    | 12 STR "Str"
-    | 13 IO "IO"
+    // built-in types
+    | 8 BOOL "Bool"
+    | 9 BYTE "Byte"
+    | 10 INT "Int"
+    | 11 NAT "Nat"
+    | 12 FLOAT "Float"
+    | 13 DOUBLE "Double"
+    | 14 CHAR "Char"
+    | 15 STR "Str"
+    | 16 IO "IO"
 
-    | 14 MAIN_MOD "Main"
-    | 15 MAIN_FUN "main"
+    // predefined (but not exhaustive) tuple constructors
+    | 17 COMMA_1 "(,)"
+    | 18 COMMA_2 "(,,)"
+    | 19 COMMA_3 "(,,,)"
+    | 20 COMMA_4 "(,,,,)"
+    | 21 COMMA_5 "(,,,,,)"
+    | 22 COMMA_6 "(,,,,,,)"
+    | 23 COMMA_7 "(,,,,,,,)"
+    | 24 COMMA_8 "(,,,,,,,,)"
+    | 25 COMMA_9 "(,,,,,,,,,)"
+    | 26 COMMA_10 "(,,,,,,,,,,,)"
+    | 27 TRUE "True"
+    | 28 FALSE "False"
 
-    | 16 TRUE "True"
-    | 17 FALSE "False"
+    // since these may not *always* be keywords
+    | 29 AS "as"
+    | 30 EXTERN "extern"
+    | 31 MAIN_MOD "Main"
+    | 32 MAIN_FN "main"
+    | 33 PRELUDE "Prelude"
 
-    | 18 RS_U8 "U'8"
-    | 19 RS_U16 "U'16"
-    | 20 RS_U32 "U'32"
-    | 21 RS_U64 "U'64"
-    | 22 RS_U128 "U'128"
-    | 23 RS_I8 "I'8"
-    | 24 RS_I16 "I'16"
-    | 25 RS_I32 "I'32"
-    | 26 RS_I64 "I'64"
-    | 27 RS_I128 "I'128"
+    // primitive Rust-based numeric type names
+    | 34 RS_U8 "U'8"
+    | 35 RS_U16 "U'16"
+    | 36 RS_U32 "U'32"
+    | 37 RS_U64 "U'64"
+    | 38 RS_U128 "U'128"
+    | 39 RS_I8 "I'8"
+    | 40 RS_I16 "I'16"
+    | 41 RS_I32 "I'32"
+    | 42 RS_I64 "I'64"
+    | 43 RS_I128 "I'128"
+    | 44 RS_USIZE "Usize"
+    | 45 RS_ISIZE "Isize"
 
-    | 28 IT "it"
-    | 29 SELF_MOD "Self"
+    // widely used symbols
+    | 46 IT "it"
+    | 47 SELF "Self"
+    | 48 FIXITY "fixity"
+    | 49 LEFT "Left"
+    | 50 RIGHT "Right"
+    | 51 NONE "None"
+    | 52 SOME "Some"
+    | 53 OK "Ok"
+    | 54 ERR "Err"
 
-    /// Reserved as a symbol in order since it is not strictly a keyword!
-    | 30 AS "as"
+    // predefined attributes
+    | 55 INLINE "inline"
+    | 56 NO_INLINE "no_inline"
+    | 57 TEST "test"
+    | 58 IGNORE "ignore"
+    | 59 ALLOW "allow"
 
-    | 31 INLINE "inline"
-    | 32 NO_INLINE "no_inline"
-    | 33 FIXITY "fixity"
+    // termination fns known to the compiler
+    | 60 PANIC "panic"
+    | 61 ERROR "error"
+    | 62 UNDEFINED "undefined"
 
-    | 34 LEFT "Left"
-    | 35 RIGHT "Right"
+    // used in desugaring, etc
+    | 63 MAP_LIST "mapList"
+    | 64 MAP "map"
+    | 65 FILTER "filter"
+    | 66 FOLD_R "foldr"
+    | 67 FOLD_L "foldl"
+    | 68 CONCAT_MAP "concatMap"
+    | 69 WRAP "wrap"
+    | 70 AND_THEN ">>="
+    | 71 SHOW_FN "show"
 
-    | 36 MAP_FN "map"
-    | 37 FOLDR_FN "foldr"
-    | 38 FOLDL_FN "foldl"
-    | 39 LENGTH_FN "length"
-    | 40 PANIC "panic"
-    | 41 TODO "todo"
-    | 42 UNDEFINED "undefined"
+    // built-in class names
+    | 72 SHOW_CLASS "Show"
+    | 73 EQ_CLASS "Eq"
+    | 74 ORD_CLASS "Ord"
+    | 75 ENUM_CLASS "Enum"
+    | 76 BOUNDED_CLASS "Bounded"
+    | 77 NUM "Num"
+    | 78 REAL "Real"
+    | 79 FRACTIONAL "Fractional"
+    | 80 APPLICATIVE "Applicative"
+    | 81 MONAD "Monad"
 
-    | 43 SHOW "Show"
-    | 44 EQ "Eq"
-    | 45 ORD "Ord"
-    | 46 NUM "Num"
-    | 47 FUNCTOR "Functor"
-    | 48 APPLICATIVE "Applicative"
-    | 49 FOLDABLE "Foldable"
-    | 50 SEMIGROUP "Semigroup"
-    | 51 MONOID "Monoid"
-    | 52 MONAD "Monad"
-    | 53 FRACTIONAL "Fractional"
+    // lower level primitive names
+    | 82 PRIM_ADD_NAT "prim'AddNat"
+    | 83 PRIM_ADD_BYTE "prim'AddByte"
+    | 84 PRIM_ADD_INT "prim'AddInt"
+    | 85 PRIM_ADD_FLOAT "prim'AddFloat"
+    | 86 PRIM_ADD_DOUBLE "prim'AddDouble"
+    | 87 PRIM_NEGATE_INT "prim'NegateInt"
+    | 88 PRIM_NEGATE_FLOAT "prim'NegateFloat"
+    | 89 PRIM_NEGATE_DOUBLE "prim'NegateDouble"
+    | 90 PRIM_MUL_NAT "prim'MulNat"
+    | 91 PRIM_MUL_BYTE "prim'MulByte"
+    | 92 PRIM_MUL_INT "prim'MulInt"
+    | 93 PRIM_MUL_FLOAT "prim'MulFloat"
+    | 94 PRIM_MUL_DOUBLE "prim'MulDouble"
+    | 95 PRIM_SUB_NAT "prim'SubNat"
+    | 96 PRIM_SUB_INT "prim'SubInt"
+    | 97 PRIM_SUB_BYTE "prim'SubByte"
+    | 98 PRIM_SUB_FLOAT "prim'SubFloat"
+    | 99 PRIM_SUB_DOUBLE "prim'SubDouble"
 
 }
 
