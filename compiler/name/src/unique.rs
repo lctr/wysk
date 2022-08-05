@@ -26,168 +26,11 @@ impl Unique {
     }
 
     /// Shortcut for interning an identifier chain
+    #[inline]
     pub fn from_chain(chain: Chain<Ident>) -> Self {
         intern_chain(chain)
     }
-}
 
-impl std::fmt::Debug for Unique {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Unique({})", &self.0)
-    }
-}
-
-impl std::fmt::Display for Unique {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(chain) = lookup_chain(self) {
-            write!(f, "{}", chain)
-        } else {
-            write!(f, "Unique({})", self.0)
-        }
-    }
-}
-
-/// Interned identifier chains. Instead of collapsing a `Chain<Ident>` into a
-/// single `Symbol` by concatenating idents, we store the chains in a separate
-/// global static structure. This way, we can use simple pointer equality for
-/// identifier chains composed of identifiers, as well as preserve the
-/// identifiers comprising the chain. If we were to "collapse" multiple
-/// identifiers into a single one -- i.e., join identifiers `A`, `B`, `c` into
-/// the string `A.B.c` and interning it -- we would have to separate joined the
-/// string into its components and look each up to get the corresponding
-/// symbols.  
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct Cache {
-    buf: Vec<Chain<Ident>>,
-}
-
-impl Cache {
-    // const fn new() -> Self {
-    //     Cache { buf: vec![] }
-    // }
-
-    #[inline]
-    fn iter(&self) -> std::slice::Iter<'_, Chain<Ident>> {
-        self.buf.iter()
-    }
-
-    // #[inline]
-    // pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, Chain<Ident>> {
-    //     self.buf.iter_mut()
-    // }
-
-    #[inline]
-    fn find(&self, f: impl FnMut(&&Chain<Ident>) -> bool) -> Option<&Chain<Ident>> {
-        self.iter().find(f)
-    }
-
-    #[inline]
-    fn position(&self, f: impl FnMut(&Chain<Ident>) -> bool) -> Option<Unique> {
-        self.iter().position(f).map(Unique)
-    }
-
-    #[inline]
-    fn filter<'a>(
-        &'a self,
-        f: impl FnMut(&&Chain<Ident>) -> bool,
-    ) -> impl Iterator<Item = &'a Chain<Ident>> {
-        self.iter().filter(f)
-    }
-
-    fn get(&self, unique: &Unique) -> Option<&Chain<Ident>> {
-        self.buf.get(unique.0)
-    }
-
-    fn get_unchecked(&self, unique: &Unique) -> &Chain<Ident> {
-        &self[unique]
-    }
-
-    fn push(&mut self, chain: Chain<Ident>) -> Unique {
-        if let Some(u) = self.position(|ch| ch == &chain) {
-            u
-        } else {
-            let u = Unique(self.buf.len());
-            self.buf.push(chain);
-            u
-        }
-    }
-}
-
-impl std::ops::Deref for Cache {
-    type Target = [Chain<Ident>];
-
-    fn deref(&self) -> &Self::Target {
-        &self.buf[..]
-    }
-}
-
-impl std::ops::DerefMut for Cache {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.buf
-    }
-}
-
-impl std::ops::Index<Unique> for Cache {
-    type Output = Chain<Ident>;
-
-    fn index(&self, index: Unique) -> &Self::Output {
-        &self.buf[index.0]
-    }
-}
-
-impl std::ops::Index<&Unique> for Cache {
-    type Output = Chain<Ident>;
-
-    fn index(&self, index: &Unique) -> &Self::Output {
-        &self.buf[index.0]
-    }
-}
-
-lazy_static::lazy_static! {
-    static ref CHAINS: Arc<Mutex<Cache>> =
-        Arc::new(Mutex::new(Cache { buf: Vec::new() }));
-}
-
-fn lookup_chain(unique: &Unique) -> Option<Chain<Ident>> {
-    match CHAINS.lock() {
-        Ok(guard) => guard.get(unique).cloned(),
-        Err(err) => poison_error!(
-            #error = err;
-            #msg = "looking up chain in position";
-            #query = &unique.0
-        ),
-    }
-}
-
-fn intern_chain(chain: Chain<Ident>) -> Unique {
-    match CHAINS.lock() {
-        Ok(mut guard) => guard.push(chain),
-        Err(err) => poison_error!(
-            #error = err;
-            #msg = "interning chain";
-            #query = chain
-        ),
-    }
-}
-
-fn intern_chains(chains: impl IntoIterator<Item = Chain<Ident>>) -> impl Iterator<Item = Unique> {
-    match CHAINS.lock() {
-        Ok(mut guard) => chains.into_iter().map(move |chain| guard.push(chain)),
-        Err(err) => {
-            let chs = chains
-                .into_iter()
-                .map(|ch| ch.map(|id| id.map_symbol(|s| s.as_u32())))
-                .collect::<Vec<_>>();
-            poison_error!(#error = err; #msg = "interning chains"; #query = chs)
-        }
-    }
-}
-
-/// Provides a separate namespace to chain chaching functions,
-/// allowing for minimal imports.
-pub struct IdStore;
-
-impl IdStore {
     pub fn intern(chain: Chain<Ident>) -> Unique {
         intern_chain(chain)
     }
@@ -261,6 +104,135 @@ impl IdStore {
         match CHAINS.lock() {
             Ok(guard) => guard.filter(|ch| ch.starts_with(id)).cloned().collect(),
             Err(err) => poison_error!(err, "finding chains starting with", &id),
+        }
+    }
+}
+
+impl std::fmt::Debug for Unique {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Unique({})", &self.0)
+    }
+}
+
+impl std::fmt::Display for Unique {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(chain) = lookup_chain(self) {
+            write!(f, "{}", chain)
+        } else {
+            write!(f, "Unique({})", self.0)
+        }
+    }
+}
+
+/// Interned identifier chains. Instead of collapsing a `Chain<Ident>` into a
+/// single `Symbol` by concatenating idents, we store the chains in a separate
+/// global static structure. This way, we can use simple pointer equality for
+/// identifier chains composed of identifiers, as well as preserve the
+/// identifiers comprising the chain. If we were to "collapse" multiple
+/// identifiers into a single one -- i.e., join identifiers `A`, `B`, `c` into
+/// the string `A.B.c` and interning it -- we would have to separate joined the
+/// string into its components and look each up to get the corresponding
+/// symbols.  
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct Cache {
+    buf: Vec<Chain<Ident>>,
+}
+
+impl Cache {
+    #[inline]
+    fn iter(&self) -> std::slice::Iter<'_, Chain<Ident>> {
+        self.buf.iter()
+    }
+
+    #[inline]
+    fn find(&self, f: impl FnMut(&&Chain<Ident>) -> bool) -> Option<&Chain<Ident>> {
+        self.iter().find(f)
+    }
+
+    #[inline]
+    fn position(&self, f: impl FnMut(&Chain<Ident>) -> bool) -> Option<Unique> {
+        self.iter().position(f).map(Unique)
+    }
+
+    #[inline]
+    fn filter<'a>(
+        &'a self,
+        f: impl FnMut(&&Chain<Ident>) -> bool,
+    ) -> impl Iterator<Item = &'a Chain<Ident>> {
+        self.iter().filter(f)
+    }
+
+    fn get(&self, unique: &Unique) -> Option<&Chain<Ident>> {
+        self.buf.get(unique.0)
+    }
+
+    fn get_unchecked(&self, unique: &Unique) -> &Chain<Ident> {
+        &self[unique]
+    }
+
+    fn push(&mut self, chain: Chain<Ident>) -> Unique {
+        if let Some(u) = self.position(|ch| ch == &chain) {
+            u
+        } else {
+            let u = Unique(self.buf.len());
+            self.buf.push(chain);
+            u
+        }
+    }
+}
+
+impl std::ops::Index<Unique> for Cache {
+    type Output = Chain<Ident>;
+
+    fn index(&self, index: Unique) -> &Self::Output {
+        &self.buf[index.0]
+    }
+}
+
+impl std::ops::Index<&Unique> for Cache {
+    type Output = Chain<Ident>;
+
+    fn index(&self, index: &Unique) -> &Self::Output {
+        &self.buf[index.0]
+    }
+}
+
+lazy_static::lazy_static! {
+    static ref CHAINS: Arc<Mutex<Cache>> =
+        Arc::new(Mutex::new(Cache { buf: Vec::new() }));
+}
+
+fn lookup_chain(unique: &Unique) -> Option<Chain<Ident>> {
+    match CHAINS.lock() {
+        Ok(guard) => guard.get(unique).cloned(),
+        Err(err) => poison_error!(
+            #error = err;
+            #msg = "looking up chain in position";
+            #query = &unique.0
+        ),
+    }
+}
+
+fn intern_chain(chain: Chain<Ident>) -> Unique {
+    match CHAINS.lock() {
+        Ok(mut guard) => guard.push(chain),
+        Err(err) => poison_error!(
+            #error = err;
+            #msg = "interning chain";
+            #query = chain
+        ),
+    }
+}
+
+fn intern_chains(chains: impl IntoIterator<Item = Chain<Ident>>) -> impl Iterator<Item = Unique> {
+    match CHAINS.lock() {
+        Ok(mut guard) => chains.into_iter().map(move |chain| guard.push(chain)),
+        Err(err) => {
+            let chs = chains
+                .into_iter()
+                .map(|ch| ch.map(|id| id.map_symbol(|s| s.as_u32())))
+                .collect::<Vec<_>>();
+            poison_error!(#error = err; #msg = "interning chains"; #query = chs)
         }
     }
 }

@@ -80,7 +80,7 @@ mod test {
 
         let curry_chain = Chain::from((prelude, [function, curry]));
         let uncurry_chain = Chain::from((prelude, [function, uncurry]));
-        let [uid0, uid1] = unique::IdStore::intern_many_chains([curry_chain, uncurry_chain]);
+        let [uid0, uid1] = unique::Unique::intern_many_chains([curry_chain, uncurry_chain]);
         assert_eq!(uid0.display(), "Prelude.Function.curry");
         assert_eq!(uid1.display(), "Prelude.Function.uncurry");
     }
