@@ -1,4 +1,4 @@
-use crate::{functor::Bifunctor, variant_preds};
+use crate::variant_preds;
 
 pub enum Either<L, R> {
     Left(L),
@@ -344,22 +344,6 @@ impl<L, R> From<Either<L, Either<L, R>>> for Either<L, R> {
             Either::Left(l) | Either::Right(Either::Left(l)) => Self::Left(l),
             Either::Right(Either::Right(r)) => Self::Right(r),
         }
-    }
-}
-
-impl<L, R> Bifunctor<L, R> for Either<L, R> {
-    type Bi<U, V> = Either<U, V>;
-
-    fn map_fst<A>(self, f: impl FnMut(L) -> A) -> Either<A, R> {
-        self.map_left(f)
-    }
-
-    fn map_snd<B>(self, f: impl FnMut(R) -> B) -> Either<L, B> {
-        self.map_right(f)
-    }
-
-    fn bimap<A, B>(self, f: impl FnMut(L) -> A, g: impl FnMut(R) -> B) -> Either<A, B> {
-        self.map(f, g)
     }
 }
 
