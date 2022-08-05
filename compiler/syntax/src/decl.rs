@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
-use wy_common::Map;
-use wy_name::ident::{Ident, Identifier};
+use wy_common::functor::{Functor, MapFst, MapSnd};
+use wy_name::ident::Ident;
 
 pub use wy_lexer::{
     comment::{self, Comment},
@@ -15,72 +15,15 @@ pub struct FixityDecl<Id = Ident> {
     pub fixity: Fixity,
 }
 
-macro_rules! get_dupe_ids {
-    (for $ex:expr) => {{
-        let mut dupes = vec![];
-        let mut seen = vec![];
-        for (idx, item) in $ex {
-            if seen.contains(&item) {
-                dupes.push((idx, *item))
-            } else {
-                seen.push(item)
-            }
-        }
-        if dupes.is_empty() {
-            None
-        } else {
-            Some(dupes)
-        }
-    }};
-}
-
 impl<Id> FixityDecl<Id> {
-    pub fn new(assoc: Assoc, prec: Prec, infixes: Vec<Id>) -> Self {
-        Self {
-            infixes,
-            fixity: Fixity { assoc, prec },
-        }
-    }
-    pub fn infixes_iter(&self) -> std::slice::Iter<'_, Id> {
-        self.infixes.iter()
-    }
-
-    pub fn duplicates(&self) -> Option<Vec<(usize, Id)>>
+    pub fn mapf<F, X>(self, f: &mut wy_common::functor::Func<'_, F>) -> FixityDecl<X>
     where
-        Id: Copy + PartialEq,
-    {
-        get_dupe_ids!(for self.infixes_iter().enumerate())
-    }
-
-    pub fn contains_id(&self, infix_id: &Id) -> bool
-    where
-        Id: PartialEq,
-    {
-        self.infixes.contains(infix_id)
-    }
-    pub fn map<F, T>(self, f: F) -> FixityDecl<T>
-    where
-        F: FnMut(Id) -> T,
+        F: FnMut(Id) -> X,
     {
         FixityDecl {
-            infixes: self.infixes.into_iter().map(f).collect(),
+            infixes: Functor::fmap(self.infixes, f),
             fixity: self.fixity,
         }
-    }
-
-    pub fn map_ref<X>(&self, f: &mut impl FnMut(&Id) -> X) -> FixityDecl<X> {
-        FixityDecl {
-            infixes: self.infixes_iter().map(|id| f(id)).collect(),
-            fixity: self.fixity,
-        }
-    }
-
-    /// Returns an iterator of (infix, fixity) pairs.
-    pub fn distribute(&self) -> impl Iterator<Item = (Id, Fixity)> + '_
-    where
-        Id: Copy,
-    {
-        self.infixes.iter().map(|infix| (*infix, self.fixity))
     }
 }
 
@@ -94,40 +37,6 @@ impl<Id: Copy + Eq + std::hash::Hash> From<&[FixityDecl<Id>]> for FixityTable<Id
                 })
                 .collect(),
         )
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Constructor<Id, T> {
-    pub parent: Id,
-    pub name: Id,
-    pub tag: Tag,
-    pub arity: Arity,
-    pub tipo: Type<Id, T>,
-}
-
-wy_common::struct_getters! {
-    |Id, T| Constructor<Id, T>
-    | parent => get_parent :: Id
-    | name => get_name :: Id
-    | tag => get_tag :: Tag
-    | arity => get_arity :: Arity
-    | tipo => get_tipo :: Type<Id, T>
-}
-
-impl<Id, T> Constructor<Id, T> {
-    pub fn ty_vars(&self) -> impl Iterator<Item = Var<T>>
-    where
-        T: Eq + Copy,
-    {
-        self.tipo.enumerate()
-    }
-
-    pub fn var_map(&self) -> Map<T, Tv>
-    where
-        T: Eq + Copy + std::hash::Hash,
-    {
-        self.ty_vars().map(Var::as_pair).collect()
     }
 }
 
@@ -190,7 +99,7 @@ impl<Id, T> Constructor<Id, T> {
 /// |--------|:------------------------------------------------------|
 /// | `name` | name of type (constructor) being defined              |
 /// | `poly` | list of type variables parametrizing the type         |
-/// | `ctxt` | classes of which type variables must be instances     |
+/// | `pred` | classes of which type variables must be instances     |
 /// | `vnts` | data constructors for the defined type                |
 /// | `with` | classes for which instances are automatically derived |
 ///
@@ -202,7 +111,7 @@ impl<Id, T> Constructor<Id, T> {
 /// instances for the classes `A`, `B`, `C`.
 ///
 /// ```wysk
-/// ~~    ctxt name poly
+/// ~~    pred name poly
 /// ~~     🡓   🡓  🡓
 /// data |A a| Foo a
 ///     = Bar a          ~~ variant 0
@@ -210,238 +119,242 @@ impl<Id, T> Constructor<Id, T> {
 ///     with (A, B, C);  ~~ with (deriving) clause
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DataDecl<Id = Ident, T = Ident> {
-    pub name: Id,
-    pub poly: Vec<T>,
-    pub ctxt: Vec<Context<Id, T>>,
-    pub vnts: Vec<Variant<Id, T>>,
+pub struct DataDecl<Id = Ident, V = Ident> {
+    pub tdef: SimpleType<Id, V>,
+    pub pred: Vec<Predicate<Id, V>>,
+    pub vnts: Vec<Variant<Id, V>>,
     pub with: Vec<Id>,
 }
 
 wy_common::struct_field_iters! {
-    |Id, T| DataDecl<Id, T>
-    | poly => poly_iter :: T
-    | ctxt => context_iter :: Context<Id, T>
-    | vnts => variants_iter :: Variant<Id, T>
+    |Id, V| DataDecl<Id, V>
+    | pred => context_iter :: Predicate<Id, V>
+    | vnts => variants_iter :: Variant<Id, V>
     | with => derives_iter :: Id
 }
 
-pub const TAG_MIN: u32 = 1;
+impl<Id, V, X> MapFst<Id, X> for DataDecl<Id, V> {
+    type WrapFst = DataDecl<X, V>;
 
-impl<Id, T> DataDecl<Id, T> {
-    pub fn constructor_types(&self) -> Vec<Constructor<Id, T>>
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
     where
-        Id: Copy,
-        T: Copy,
+        F: FnMut(Id) -> X,
     {
-        let data_ty = Type::Con(
-            Con::Data(self.name),
-            self.poly_iter().map(|t| Type::Var(*t)).collect(),
-        );
-        self.variants_iter()
-            .map(|variant| {
-                let tipo = variant.fun_ty(data_ty.clone());
-                Constructor {
-                    parent: self.name,
-                    name: variant.name,
-                    tag: variant.tag,
-                    arity: variant.arity,
-                    tipo,
-                }
-            })
-            .collect()
-    }
-
-    /// Checks whether every data constructor is polymorphic over at *most* the
-    /// type variables in the `poly` field, i.e.,  every type variable in every
-    /// variant in the `vnts` field, as well as every type variable in the
-    /// `ctxt` field, is contained in the `poly` field.
-    pub fn no_unbound_tyvars(&self) -> bool
-    where
-        T: Copy + PartialEq,
-        Id: Identifier,
-    {
-        self.class_vars().all(|tv| self.depends_on(&tv))
-            && self.variants_iter().all(|vnt| {
-                vnt.args_iter()
-                    .all(|ty| ty.fv().iter().all(|tv| self.depends_on(tv)))
-            })
-    }
-
-    /// Identifies whether the data type defined by this data declaration is
-    /// parametrized over the given type variable, i.e., whether a type variable
-    /// is contained in the `poly` field by testing a reference for containment.
-    #[inline]
-    pub fn depends_on(&self, var: &T) -> bool
-    where
-        T: PartialEq,
-    {
-        self.poly.contains(var)
-    }
-
-    #[inline]
-    pub fn get_ctxt(&self, id: &Id) -> Option<&Context<Id, T>>
-    where
-        Id: PartialEq,
-    {
-        self.ctxt.iter().find(|c| c.class == *id)
-    }
-
-    #[inline]
-    pub fn get_variant(&self, id: &Id) -> Option<&Variant<Id, T>>
-    where
-        Id: PartialEq,
-    {
-        self.vnts.iter().find(|v| v.name == *id)
-    }
-
-    #[inline]
-    pub fn find_variant<F>(&self, f: F) -> Option<&Variant<Id, T>>
-    where
-        F: FnMut(&&Variant<Id, T>) -> bool,
-    {
-        self.vnts.iter().find(f)
-    }
-
-    pub fn get_variant_by_tag(&self, tag: &Tag) -> Option<&Variant<Id, T>> {
-        let idx = tag.0 as usize;
-        if self.vnts.len() <= idx {
-            None
-        } else {
-            Some(&self.vnts[idx - (TAG_MIN as usize)])
+        let DataDecl {
+            tdef,
+            pred,
+            vnts,
+            with,
+        } = self;
+        let tdef = tdef.map_fst(f);
+        let pred = pred.map_fst(f);
+        let vnts = vnts.map_fst(f);
+        let with = with.into_iter().map(|id| f.apply(id)).collect();
+        DataDecl {
+            tdef,
+            pred,
+            vnts,
+            with,
         }
     }
+}
 
-    #[inline]
-    pub fn variant_names(&self) -> impl Iterator<Item = &Id> + '_ {
-        self.vnts.iter().map(|v| &v.name)
-    }
+impl<Id, V, X> MapSnd<V, X> for DataDecl<Id, V> {
+    type WrapSnd = DataDecl<Id, X>;
 
-    #[inline]
-    pub fn class_names(&self) -> impl Iterator<Item = &Id> + '_ {
-        self.ctxt.iter().map(|c| &c.class)
-    }
-
-    #[inline]
-    pub fn class_vars(&self) -> impl Iterator<Item = &T> + '_ {
-        self.context_iter().map(|Context { head: tyvar, .. }| tyvar)
-    }
-
-    #[inline]
-    pub fn derived_names(&self) -> impl Iterator<Item = &Id> + '_ {
-        self.with.iter()
-    }
-
-    pub fn enumer_tags(mut self) -> Self {
-        for (n, Variant { tag, .. }) in self.vnts.iter_mut().enumerate() {
-            *tag = Tag(n as u32 + TAG_MIN);
-        }
-        self
-    }
-
-    pub fn duplicates(&self) -> Option<Vec<(usize, Id)>>
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
     where
-        Id: Copy + PartialEq,
+        F: FnMut(V) -> X,
     {
-        get_dupe_ids!(for self.variant_names().enumerate())
+        let DataDecl {
+            tdef,
+            pred,
+            vnts,
+            with,
+        } = self;
+        let tdef = tdef.map_snd(f);
+        let pred = pred.map_snd(f);
+        let vnts = vnts.map_snd(f);
+        DataDecl {
+            tdef,
+            pred,
+            vnts,
+            with,
+        }
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Variant<Id = Ident, T = Ident> {
+pub struct Selector<Id = Ident, V = Ident> {
     pub name: Id,
-    pub args: Vec<Type<Id, T>>,
-    pub tag: Tag,
-    pub arity: Arity,
+    pub tipo: Type<Id, V>,
 }
 
-impl<Id, T> Variant<Id, T> {
-    /// Returns the function type corresponding to this data constructor. Note
-    /// that it requires the  "constructed" type.
-    ///
-    /// A constructed datatype `T a1 a2 ... an`, where `a1`, `a2`, ..., `an` are
-    /// type variables (if any) over which the type `T` is parametrized, may be
-    /// constructed by any of its data constructors `C` and their respective
-    /// arguments.
-    ///
-    /// A data constructor `C` has an *arity* equal to the number of arguments
-    /// it takes, *regardless* of how many type variables it may range over.
-    /// Furthermore, every data constructor is effectively a *function* from its
-    /// arguments (curried) to the data type they construct.
-    ///
-    /// The data type `Foo a b` defined below is constructed with *four*
-    /// variants, each funtions of their arguments.
-    /// ```wysk
-    /// data Foo a b = Zero | One a | Two a b | Three a b (a, b)
-    /// ~~: Zero :: Foo a b
-    /// ~~: One :: a -> Foo a b
-    /// ~~: Two :: a -> b -> Foo a b
-    /// ~~: Three :: a -> b -> (a, b) -> Foo a b
-    /// ```
-    pub fn fun_ty(&self, data_ty: Type<Id, T>) -> Type<Id, T>
+impl<Id, V, X> MapFst<Id, X> for Selector<Id, V> {
+    type WrapFst = Selector<X, V>;
+
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
     where
-        Id: Clone,
-        T: Copy,
+        F: FnMut(Id) -> X,
     {
-        if self.args.is_empty() {
-            return data_ty;
-        };
-
-        self.args
-            .clone()
-            .into_iter()
-            .rev()
-            .fold(data_ty, |a, c| Type::Fun(Box::new(c), Box::new(a)))
-    }
-
-    /// Same as `con_ty`, but for the concrete type with `Id = Ident` and `T =
-    /// Tv`. Hence it requires a reference to the data type `Type<Ident, Tv>`
-    /// and will return another `Type<Ident, Tv>` corresponding to the function
-    /// type of this variant/constructor.
-    pub fn function_type(
-        variant: Variant<Ident, Tv>,
-        data_type: &Type<Ident, Tv>,
-    ) -> Type<Ident, Tv> {
-        variant
-            .args
-            .into_iter()
-            .rev()
-            .fold(data_type.clone(), |a, c| {
-                Type::Fun(Box::new(c), Box::new(a))
-            })
-    }
-
-    pub fn args_iter(&self) -> std::slice::Iter<'_, Type<Id, T>> {
-        self.args.iter()
-    }
-
-    pub fn args_iter_mut(&mut self) -> std::slice::IterMut<'_, Type<Id, T>> {
-        self.args.iter_mut()
-    }
-
-    pub fn find_arg(&self, predicate: impl FnMut(&&Type<Id, T>) -> bool) -> Option<&Type<Id, T>> {
-        self.args_iter().find(predicate)
+        Selector {
+            name: f.apply(self.name),
+            tipo: self.tipo.map_fst(f),
+        }
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct Tag(pub u32);
+impl<Id, V, X> MapSnd<V, X> for Selector<Id, V> {
+    type WrapSnd = Selector<Id, X>;
 
-impl Default for Tag {
-    fn default() -> Self {
-        Self(0)
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(V) -> X,
+    {
+        Selector {
+            name: self.name,
+            tipo: self.tipo.map_snd(f),
+        }
     }
 }
 
-impl std::fmt::Debug for Tag {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Tag({})", &self.0)
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TypeArg<Id = Ident, V = Ident, T = Type<Id, V>, S = Selector<Id, V>> {
+    /// Not really used since nullary type constructors can just take
+    /// an empty vector of `TypeArg`s, however this is here to allow
+    /// parametrizing the existing type and selector parameters
+    Empty(std::marker::PhantomData<(Id, V)>),
+    ///
+    Type(T),
+    ///
+    Selector(S),
+}
+
+wy_common::variant_preds! {
+    |Id, V| TypeArg[Id, V]
+    | is_type => Type(_)
+    | is_selector => Selector(..)
+}
+
+impl<Id, V, X> MapFst<Id, X> for TypeArg<Id, V> {
+    type WrapFst = TypeArg<X, V>;
+
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(Id) -> X,
+    {
+        match self {
+            TypeArg::Empty(_) => TypeArg::Empty(std::marker::PhantomData),
+            TypeArg::Type(t) => TypeArg::Type(t.map_fst(f)),
+            TypeArg::Selector(sel) => TypeArg::Selector(sel.map_fst(f)),
+        }
     }
 }
 
-impl std::fmt::Display for Tag {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Tag({})", &self.0)
+impl<Id, V, X> MapSnd<V, X> for TypeArg<Id, V> {
+    type WrapSnd = TypeArg<Id, X>;
+
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(V) -> X,
+    {
+        match self {
+            TypeArg::Empty(_) => TypeArg::Empty(std::marker::PhantomData),
+            TypeArg::Type(t) => TypeArg::Type(t.map_snd(f)),
+            TypeArg::Selector(sel) => TypeArg::Selector(sel.map_snd(f)),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TypeArgs<Id = Ident, V = Ident> {
+    Curried(Vec<Type<Id, V>>),
+    Record(Vec<Selector<Id, V>>),
+}
+
+impl<Id, V> TypeArgs<Id, V> {
+    pub fn len(&self) -> usize {
+        match self {
+            TypeArgs::Curried(ts) => ts.len(),
+            TypeArgs::Record(sels) => sels.len(),
+        }
+    }
+
+    // pub fn iter(
+    //     &self,
+    // ) -> impl Iterator<Item = TypeArg<Id, V, &Type<Id, V>, &Selector<Id, V>>> + '_ {
+    //     todo!()
+    // }
+}
+
+impl<Id, V, X> MapFst<Id, X> for TypeArgs<Id, V> {
+    type WrapFst = TypeArgs<X, V>;
+
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(Id) -> X,
+    {
+        match self {
+            TypeArgs::Curried(t) => TypeArgs::Curried(t.map_fst(f)),
+            TypeArgs::Record(sel) => TypeArgs::Record(sel.map_fst(f)),
+        }
+    }
+}
+
+impl<Id, V, X> MapSnd<V, X> for TypeArgs<Id, V> {
+    type WrapSnd = TypeArgs<Id, X>;
+
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(V) -> X,
+    {
+        match self {
+            TypeArgs::Curried(t) => TypeArgs::Curried(t.map_snd(f)),
+            TypeArgs::Record(sel) => TypeArgs::Record(sel.map_snd(f)),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Variant<Id = Ident, V = Ident> {
+    pub name: Id,
+    pub args: TypeArgs<Id, V>,
+}
+
+impl<Id, V> Variant<Id, V> {
+    // pub fn args_iter(&self) -> std::slice::Iter<'_, TypeArg<Id, V>> {
+    //     self.args.iter()
+    // }
+
+    // pub fn args_iter_mut(&mut self) -> std::slice::IterMut<'_, TypeArg<Id, V>> {
+    //     self.args.iter_mut()
+    // }
+}
+
+impl<Id, V, X> MapFst<Id, X> for Variant<Id, V> {
+    type WrapFst = Variant<X, V>;
+
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(Id) -> X,
+    {
+        let Variant { name, args } = self;
+        let name = f.apply(name);
+        let args = args.map_fst(f);
+        Variant { name, args }
+    }
+}
+
+impl<Id, V, X> MapSnd<V, X> for Variant<Id, V> {
+    type WrapSnd = Variant<Id, X>;
+
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(V) -> X,
+    {
+        let Variant { name, args } = self;
+        let args = args.map_snd(f);
+        Variant { name, args }
     }
 }
 
@@ -475,40 +388,6 @@ impl Arity {
     pub fn is_zero(self) -> bool {
         self.0 == 0
     }
-
-    /// Shortcut to check whether a given item takes a *single* argument.
-    pub fn is_one(self) -> bool {
-        self.0 == 1
-    }
-
-    /// Shortcut for checking whether the `Arity` of a given item is larger than
-    /// one. If so, then it is implied that whatever this `Arity` belongs to
-    /// must be curried.
-    pub fn curries(self) -> bool {
-        self.0 > 1
-    }
-
-    /// Since `Arity` is essentially a `usize` wrapper corresponding to the
-    /// *number of __arguments__*, this method makes it easy to compare an arity
-    /// with any type `T` that implements `ExactSizeIterator` (i.e., has a `len`
-    /// method).
-    pub fn cmp_len<I>(&self, iter: I) -> std::cmp::Ordering
-    where
-        I: ExactSizeIterator,
-    {
-        let n = self.0;
-        n.cmp(&iter.len())
-    }
-
-    pub fn increment(&mut self) {
-        self.0 += 1;
-    }
-
-    pub fn decrement(&mut self) {
-        if !self.is_zero() {
-            self.0 -= 1
-        }
-    }
 }
 
 // make it easy to compare Arity using usizes by implementing PartialEq<usize>
@@ -518,68 +397,36 @@ wy_common::newtype!(Arity | usize | PartialOrd);
 wy_common::newtype!(Arity | usize | (+= usize |rhs| rhs) );
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AliasDecl<Id = Ident, T = Ident> {
-    pub name: Id,
-    pub poly: Vec<T>,
-    pub sign: Signature<Id, T>,
+pub struct AliasDecl<Id = Ident, V = Ident> {
+    pub ldef: SimpleType<Id, V>,
+    pub tipo: Type<Id, V>,
 }
 
-wy_common::struct_field_iters! {
-    |Id, T| AliasDecl<Id, T>
-    | poly => poly_iter :: T
+impl<Id, V, X> MapFst<Id, X> for AliasDecl<Id, V> {
+    type WrapFst = AliasDecl<X, V>;
+
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(Id) -> X,
+    {
+        AliasDecl {
+            ldef: self.ldef.map_fst(f),
+            tipo: self.tipo.map_fst(f),
+        }
+    }
 }
 
-impl<Id, T> AliasDecl<Id, T> {
-    pub fn get_contexts_iter(&self) -> std::slice::Iter<'_, Context<Id, T>> {
-        self.sign.ctxt.iter()
-    }
+impl<Id, V, X> MapSnd<V, X> for AliasDecl<Id, V> {
+    type WrapSnd = AliasDecl<Id, X>;
 
-    pub fn duplicate_tyvars(&self) -> Option<Vec<(usize, T)>>
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
     where
-        T: Copy + PartialEq,
+        F: FnMut(V) -> X,
     {
-        get_dupe_ids!(for self.poly.iter().enumerate())
-    }
-
-    pub fn enumerate_tyvars(&self) -> impl Iterator<Item = (usize, &T)> + '_ {
-        self.poly.iter().enumerate()
-    }
-
-    pub fn no_unused_tyvars(&self) -> bool
-    where
-        T: Copy + PartialEq,
-        Id: Identifier,
-    {
-        let fvs = self.sign.tipo.fv();
-        self.poly.iter().all(|tv| fvs.contains(tv))
-    }
-
-    pub fn no_unused_tyvars_in_ctxts(&self) -> bool
-    where
-        T: Copy + PartialEq,
-        Id: Identifier,
-    {
-        let fvs = self.sign.tipo.fv();
-        self.sign.ctxt.iter().all(|ctx| fvs.contains(&ctx.head))
-    }
-
-    /// Checks whether all type variables in the `Type` (right-hand-side) are
-    /// declared as type variables for the type alias.
-    ///
-    /// For example, `type Foo a b = |Baz a| (a -> b) -> c` would fail and this method
-    /// would return `false`, as `c` is not included in the left-hand-side of
-    /// the type alias declaration.
-    pub fn no_new_tyvar_in_type(&self) -> bool
-    where
-        T: Copy + PartialEq,
-        Id: Identifier,
-    {
-        self.sign
-            .tipo
-            .fv()
-            .into_iter()
-            .chain(self.sign.ctxt.iter().map(|ctx| ctx.head))
-            .all(|t| self.poly.contains(&t))
+        AliasDecl {
+            ldef: self.ldef.map_snd(f),
+            tipo: self.tipo.map_snd(f),
+        }
     }
 }
 
@@ -589,239 +436,367 @@ impl<Id, T> AliasDecl<Id, T> {
 /// for discriminating against various "uses" of a single type. For example, it
 /// is perfectly acceptable to use a type alias to distinguish between numerical
 /// units, however this does not provide a safeguard against inconsistencies!
-///
-/// Like data variants, `Newtype` variants define constructors -- HOWEVER, *only
-/// one* constructor is accepted! A `Product` variant corresponds to a single
-/// data constructor with (arbitrarily many) arguments, while a `Record` variant
-/// corresponds to a single constructor *associated with* a selector function,
-/// whose signature is included in the variant.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum NewtypeArg<Id = Ident, T = Ident> {
-    /// Used when the newtype constructor is *not* a record and instead takes
-    /// multiple type arguments, such as `newtype Foo a = Bar a`
-    Stacked(Vec<Type<Id, T>>),
-    /// Used when the newtype constructor is a single-entry record. The label
-    /// for this constructor defines the function used to "lift" a computation
-    /// or value into the newtype, such as `newtype Foo a = Foo { foo :: a }`
-    Record(Id, Signature<Id, T>),
-}
-
-wy_common::variant_preds! {
-    NewtypeArg
-    | is_stacked => Stacked(_)
-    | is_record => Record(..)
-}
-
-impl<Id, T> NewtypeArg<Id, T> {}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct NewtypeDecl<Id = Ident, T = Ident> {
-    pub name: Id,
-    pub poly: Vec<T>,
+pub struct NewtypeDecl<Id = Ident, V = Ident> {
+    pub tdef: SimpleType<Id, V>,
     pub ctor: Id,
-    pub narg: NewtypeArg<Id, T>,
+    pub narg: TypeArg<Id, V>,
     pub with: Vec<Id>,
 }
 
+impl<Id, V> NewtypeDecl<Id, V> {
+    pub fn name(&self) -> &Id {
+        self.tdef.con()
+    }
+
+    pub fn vars(&self) -> &[V] {
+        self.tdef.vars()
+    }
+}
+
 wy_common::struct_field_iters! {
-    |Id, T| NewtypeDecl<Id, T>
-    | poly => poly_iter :: T
+    |Id, V| NewtypeDecl<Id, V>
     | with => derives_iter :: Id
 }
 
-impl<Id, T> NewtypeDecl<Id, T> {}
+impl<Id, V, X> MapFst<Id, X> for NewtypeDecl<Id, V> {
+    type WrapFst = NewtypeDecl<X, V>;
+
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(Id) -> X,
+    {
+        let NewtypeDecl {
+            tdef,
+            ctor,
+            narg,
+            with,
+        } = self;
+        let tdef = tdef.map_fst(f);
+        let ctor = f.apply(ctor);
+        let narg = narg.map_fst(f);
+        let with = with.into_iter().map(|id| f.apply(id)).collect();
+        NewtypeDecl {
+            tdef,
+            ctor,
+            narg,
+            with,
+        }
+    }
+}
+
+impl<Id, V, X> MapSnd<V, X> for NewtypeDecl<Id, V> {
+    type WrapSnd = NewtypeDecl<Id, X>;
+
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(V) -> X,
+    {
+        let NewtypeDecl {
+            tdef,
+            ctor,
+            narg,
+            with,
+        } = self;
+        let tdef = tdef.map_snd(f);
+        let narg = narg.map_snd(f);
+        NewtypeDecl {
+            tdef,
+            ctor,
+            narg,
+            with,
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ClassDecl<Id = Ident, T = Ident> {
-    pub name: Id,
-    pub poly: Vec<T>,
-    pub ctxt: Vec<Context<Id, T>>,
-    pub defs: Vec<MethodDef<Id, T>>,
+pub struct ClassDecl<Id = Ident, V = Ident> {
+    pub cdef: SimpleType<Id, V>,
+    pub pred: Vec<Predicate<Id, V>>,
+    pub defs: Vec<MethodDef<Id, V>>,
 }
 
 wy_common::struct_field_iters! {
-    |Id, T| ClassDecl<Id, T>
-    | poly => poly_iter :: T
-    | ctxt => context_iter :: Context<Id, T>
-    | defs => methods_iter :: MethodDef<Id, T>
+    |Id, V| ClassDecl<Id, V>
+    | pred => pred_iter :: Predicate<Id, V>
+    | defs => defs_iter :: MethodDef<Id, V>
 }
 
-impl<Id, T> ClassDecl<Id, T> {
+impl<Id, V> ClassDecl<Id, V> {
     pub fn item_names(&self) -> impl Iterator<Item = &Id> + '_ {
         self.defs.iter().map(|MethodDef { name, .. }| name)
     }
 }
 
+impl<Id, V, X> MapFst<Id, X> for ClassDecl<Id, V> {
+    type WrapFst = ClassDecl<X, V>;
+
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(Id) -> X,
+    {
+        let ClassDecl { cdef, pred, defs } = self;
+        let cdef = cdef.map_fst(f);
+        let pred = pred.map_fst(f);
+        let defs = defs.map_fst(f);
+        ClassDecl { cdef, pred, defs }
+    }
+}
+
+impl<Id, V, X> MapSnd<V, X> for ClassDecl<Id, V> {
+    type WrapSnd = ClassDecl<Id, X>;
+
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(V) -> X,
+    {
+        let ClassDecl { cdef, pred, defs } = self;
+        let cdef = cdef.map_snd(f);
+        let pred = pred.map_snd(f);
+        let defs = defs.map_snd(f);
+        ClassDecl { cdef, pred, defs }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InstDecl<Id = Ident, T = Ident> {
+pub struct InstDecl<Id = Ident, V = Ident> {
     pub name: Id,
-    pub tipo: Type<Id, T>,
-    pub ctxt: Vec<Context<Id, T>>,
-    pub defs: Vec<Binding<Id, T>>,
+    pub tipo: Type<Id, V>,
+    pub pred: Vec<Predicate<Id, V>>,
+    pub defs: Vec<Binding<Id, V>>,
 }
 
 wy_common::struct_field_iters! {
-    |Id, T| InstDecl<Id, T>
-    | ctxt => context_iter :: Context<Id, T>
-    | defs => bindings_iter :: Binding<Id, T>
+    |Id, V| InstDecl<Id, V>
+    | pred => pred_iter :: Predicate<Id, V>
+    | defs => defs_iter :: Binding<Id, V>
 }
 
-impl<Id, T> InstDecl<Id, T> {
+impl<Id, V, X> MapFst<Id, X> for InstDecl<Id, V> {
+    type WrapFst = InstDecl<X, V>;
+
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(Id) -> X,
+    {
+        let InstDecl {
+            name,
+            tipo,
+            pred,
+            defs,
+        } = self;
+        let name = f.apply(name);
+        let tipo = tipo.map_fst(f);
+        let pred = pred.map_fst(f);
+        let defs = defs.map_fst(f);
+        InstDecl {
+            name,
+            tipo,
+            pred,
+            defs,
+        }
+    }
+}
+
+impl<Id, V, X> MapSnd<V, X> for InstDecl<Id, V> {
+    type WrapSnd = InstDecl<Id, X>;
+
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(V) -> X,
+    {
+        let InstDecl {
+            name,
+            tipo,
+            pred,
+            defs,
+        } = self;
+        let tipo = tipo.map_snd(f);
+        let pred = pred.map_snd(f);
+        let defs = defs.map_snd(f);
+        InstDecl {
+            name,
+            tipo,
+            pred,
+            defs,
+        }
+    }
+}
+
+impl<Id, V> InstDecl<Id, V> {
     pub fn item_names(&self) -> impl Iterator<Item = &Id> + '_ {
-        self.defs.iter().map(|Binding { name, .. }| name)
+        self.defs_iter().map(|Binding { name, .. }| name)
     }
-    pub fn get_ctxt(&self, id: &Id) -> Option<&Context<Id, T>>
+    pub fn get_pred(&self, id: &Id) -> Option<&Predicate<Id, V>>
     where
         Id: PartialEq,
     {
-        self.ctxt.iter().find(|ctx| ctx.class == *id)
+        self.pred_iter().find(|ctx| &ctx.class == id)
     }
 
-    pub fn get_def(&self, id: &Id) -> Option<&Binding<Id, T>>
+    pub fn get_def(&self, id: &Id) -> Option<&Binding<Id, V>>
     where
         Id: PartialEq,
     {
-        self.defs.iter().find(|b| b.name == *id)
+        self.defs_iter().find(|b| b.name == *id)
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FnDecl<Id = Ident, T = Ident> {
+pub struct FnDecl<Id = Ident, V = Ident> {
     pub name: Id,
-    pub sign: Option<Signature<Id, T>>,
-    pub defs: Vec<Match<Id, T>>,
+    pub sign: Signature<Id, V>,
+    pub defs: Vec<Match<Id, V>>,
 }
 
 wy_common::struct_field_iters! {
-    |Id, T| FnDecl<Id, T>
-    | defs => defs_iter :: Match<Id, T>
+    |Id, V| FnDecl<Id, V>
+    | defs => defs_iter :: Match<Id, V>
 }
 
-impl<Id, T> FnDecl<Id, T> {
+impl<Id, V, X> MapFst<Id, X> for FnDecl<Id, V> {
+    type WrapFst = FnDecl<X, V>;
+
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(Id) -> X,
+    {
+        let FnDecl { name, sign, defs } = self;
+        let name = f.apply(name);
+        let sign = sign.map_fst(f);
+        let defs = defs.map_fst(f);
+        FnDecl { name, sign, defs }
+    }
+}
+
+impl<Id, V, X> MapSnd<V, X> for FnDecl<Id, V> {
+    type WrapSnd = FnDecl<Id, X>;
+
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(V) -> X,
+    {
+        let FnDecl { name, sign, defs } = self;
+        let sign = sign.map_snd(f);
+        let defs = defs.map_snd(f);
+        FnDecl { name, sign, defs }
+    }
+}
+
+impl<Id, V> FnDecl<Id, V> {
     pub fn has_tysig(&self) -> bool {
-        self.sign.is_some()
-    }
-
-    pub fn sign_iter(&self) -> std::option::Iter<'_, Signature<Id, T>> {
-        self.sign.iter()
+        !self.sign.is_implicit()
     }
 }
 
-/// Equivalent to a subset of a `MethodDef` instance, flattening all data
-/// structures, i.e., moving fields from `Signature` directly to `Interface`
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Interface<Id = Ident, T = Id> {
+pub enum MethodBody<Id = Ident, V = Ident> {
+    Unimplemented,
+    Default(Vec<Match<Id, V>>),
+}
+
+impl<Id, V, X> MapFst<Id, X> for MethodBody<Id, V> {
+    type WrapFst = MethodBody<X, V>;
+
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(Id) -> X,
+    {
+        match self {
+            MethodBody::Unimplemented => MethodBody::Unimplemented,
+            MethodBody::Default(arms) => MethodBody::Default(arms.map_fst(f)),
+        }
+    }
+}
+
+impl<Id, V, X> MapSnd<V, X> for MethodBody<Id, V> {
+    type WrapSnd = MethodBody<Id, X>;
+
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(V) -> X,
+    {
+        match self {
+            MethodBody::Unimplemented => MethodBody::Unimplemented,
+            MethodBody::Default(arms) => MethodBody::Default(arms.map_snd(f)),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MethodDef<Id = Ident, V = Ident> {
     pub name: Id,
-    pub each: Vec<T>,
-    pub ctxt: Vec<Context<Id, T>>,
-    pub tipo: Type<Id, T>,
+    pub annt: Annotation<Id, V>,
+    pub body: MethodBody<Id, V>,
 }
 
-wy_common::struct_field_iters! {
-    |Id, T| Interface<Id, T>
-    | each => quant_iter :: T
-    | ctxt => ctxt_iter :: Context<Id, T>
+// wy_common::struct_field_iters! {
+//     |Id, V| MethodDef<Id, V>
+//     | body => body_iter :: Match<Id, V>
+// }
+
+impl<Id, V, X> MapFst<Id, X> for MethodDef<Id, V> {
+    type WrapFst = MethodDef<X, V>;
+
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(Id) -> X,
+    {
+        let MethodDef { name, annt, body } = self;
+        let name = f.apply(name);
+        let annt = annt.map_fst(f);
+        let body = body.map_fst(f);
+        MethodDef { name, annt, body }
+    }
 }
 
-impl<Id, T> From<MethodDef<Id, T>> for (Interface<Id, T>, Vec<Match<Id, T>>) {
-    fn from(method: MethodDef<Id, T>) -> Self {
-        (
-            Interface {
-                name: method.name,
-                each: method.sign.each,
-                ctxt: method.sign.ctxt,
-                tipo: method.sign.tipo,
-            },
-            method.body,
-        )
+impl<Id, V, X> MapSnd<V, X> for MethodDef<Id, V> {
+    type WrapSnd = MethodDef<Id, X>;
+
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(V) -> X,
+    {
+        let MethodDef { name, annt, body } = self;
+        let annt = annt.map_snd(f);
+        let body = body.map_snd(f);
+        MethodDef { name, annt, body }
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MethodDef<Id = Ident, T = Ident> {
-    pub name: Id,
-    pub sign: Signature<Id, T>,
-    pub body: Vec<Match<Id, T>>,
-}
-
-wy_common::struct_field_iters! {
-    |Id, T| MethodDef<Id, T>
-    | body => body_iter :: Match<Id, T>
-    | sign.ctxt => context_iter :: Context<Id, T>
-}
-
-impl<Id, T> MethodDef<Id, T> {
-    pub fn context_iter_mut(&mut self) -> std::slice::IterMut<'_, Context<Id, T>> {
-        self.sign.ctxt_iter_mut()
-    }
-
-    pub fn into_method(self) -> Method<Id, T> {
-        Method::Sig(self.name, self.sign)
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MethodImpl<Id = Ident, T = Ident>(pub Binding<Id, T>);
-impl<Id, T> MethodImpl<Id, T> {
-    pub fn new(binding: Binding<Id, T>) -> Self {
+pub struct MethodImpl<Id = Ident, V = Ident>(pub Binding<Id, V>);
+impl<Id, V> MethodImpl<Id, V> {
+    pub fn new(binding: Binding<Id, V>) -> Self {
         Self(binding)
     }
     pub fn name(&self) -> &Id {
         &self.0.name
     }
-    pub fn arms(&self) -> &[Match<Id, T>] {
+    pub fn arms(&self) -> &[Match<Id, V>] {
         &self.0.arms[..]
     }
-    pub fn arms_iter(&self) -> std::slice::Iter<'_, Match<Id, T>> {
+    pub fn arms_iter(&self) -> std::slice::Iter<'_, Match<Id, V>> {
         self.0.arms.iter()
     }
-    pub fn arms_iter_mut(&mut self) -> std::slice::IterMut<'_, Match<Id, T>> {
+    pub fn arms_iter_mut(&mut self) -> std::slice::IterMut<'_, Match<Id, V>> {
         self.0.arms.iter_mut()
     }
-    pub fn signature(&self) -> Option<&Signature<Id, T>> {
-        self.0.tipo.as_ref()
-    }
-    pub fn into_method(self) -> Method<Id, T> {
-        Method::Impl(self.0)
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Method<Id = Ident, T = Ident> {
-    Sig(Id, Signature<Id, T>),
-    Impl(Binding<Id, T>),
-}
-
-wy_common::variant_preds! {
-    Method
-    | is_sig => Sig(..)
-    | is_impl => Impl(_)
-}
-
-impl<Id, T> Method<Id, T> {
-    #[inline]
-    pub fn is_signature(&self) -> bool {
-        matches!(self, Self::Sig(..))
-    }
-
-    #[inline]
-    pub fn name(&self) -> &Id {
-        match self {
-            Method::Sig(id, _) | Method::Impl(Binding { name: id, .. }) => id,
-        }
+    pub fn signature(&self) -> &Signature<Id, V> {
+        &self.0.tsig
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Declaration<Id = Ident, T = Ident> {
-    Data(DataDecl<Id, T>),
-    Alias(AliasDecl<Id, T>),
+pub enum Declaration<Id = Ident, V = Ident> {
+    Data(DataDecl<Id, V>),
+    Alias(AliasDecl<Id, V>),
     Fixity(FixityDecl<Id>),
-    Class(ClassDecl<Id, T>),
-    Instance(InstDecl<Id, T>),
-    Function(FnDecl<Id, T>),
-    Newtype(NewtypeDecl<Id, T>),
-    Attribute(Attribute<Id, T>),
+    Class(ClassDecl<Id, V>),
+    Instance(InstDecl<Id, V>),
+    Function(FnDecl<Id, V>),
+    Newtype(NewtypeDecl<Id, V>),
+    Attribute(Attribute<Id, V>),
 }
 
 wy_common::variant_preds! {
@@ -836,17 +811,57 @@ wy_common::variant_preds! {
     | is_attribute => Attribute(_)
 }
 
-impl<Id, T> Declaration<Id, T> {
+impl<Id, V> Declaration<Id, V> {
     pub fn name(&self) -> &Id {
         match self {
-            Declaration::Data(d) => &d.name,
-            Declaration::Alias(a) => &a.name,
+            Declaration::Data(d) => &d.tdef.con(),
+            Declaration::Alias(a) => &a.ldef.con(),
             Declaration::Fixity(f) => &f.infixes[0],
-            Declaration::Class(c) => &c.name,
+            Declaration::Class(c) => c.cdef.con(),
             Declaration::Instance(i) => &i.name,
             Declaration::Function(f) => &f.name,
-            Declaration::Newtype(n) => &n.name,
+            Declaration::Newtype(n) => n.tdef.con(),
             Declaration::Attribute(a) => a.name(),
+        }
+    }
+}
+
+impl<Id, V, X> MapFst<Id, X> for Declaration<Id, V> {
+    type WrapFst = Declaration<X, V>;
+
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(Id) -> X,
+    {
+        match self {
+            Declaration::Data(d) => Declaration::Data(d.map_fst(f)),
+            Declaration::Alias(d) => Declaration::Alias(d.map_fst(f)),
+            Declaration::Fixity(d) => Declaration::Fixity(d.mapf(f)),
+            Declaration::Class(d) => Declaration::Class(d.map_fst(f)),
+            Declaration::Instance(d) => Declaration::Instance(d.map_fst(f)),
+            Declaration::Function(d) => Declaration::Function(d.map_fst(f)),
+            Declaration::Newtype(d) => Declaration::Newtype(d.map_fst(f)),
+            Declaration::Attribute(d) => Declaration::Attribute(d.map_fst(f)),
+        }
+    }
+}
+
+impl<Id, V, X> MapSnd<V, X> for Declaration<Id, V> {
+    type WrapSnd = Declaration<Id, X>;
+
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(V) -> X,
+    {
+        match self {
+            Declaration::Data(d) => Declaration::Data(d.map_snd(f)),
+            Declaration::Alias(d) => Declaration::Alias(d.map_snd(f)),
+            Declaration::Fixity(d) => Declaration::Fixity(d),
+            Declaration::Class(d) => Declaration::Class(d.map_snd(f)),
+            Declaration::Instance(d) => Declaration::Instance(d.map_snd(f)),
+            Declaration::Function(d) => Declaration::Function(d.map_snd(f)),
+            Declaration::Newtype(d) => Declaration::Newtype(d.map_snd(f)),
+            Declaration::Attribute(d) => Declaration::Attribute(d.map_snd(f)),
         }
     }
 }
