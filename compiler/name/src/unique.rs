@@ -24,6 +24,11 @@ impl Unique {
             String::new()
         }
     }
+
+    /// Shortcut for interning an identifier chain
+    pub fn from_chain(chain: Chain<Ident>) -> Self {
+        intern_chain(chain)
+    }
 }
 
 impl std::fmt::Debug for Unique {
