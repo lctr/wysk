@@ -9,16 +9,14 @@ use wy_name::ident::Ident;
 use wy_span::WithLoc;
 use wy_syntax::record::Field;
 use wy_syntax::record::Record;
-use wy_syntax::tipo::Con;
-use wy_syntax::tipo::Context;
-use wy_syntax::tipo::Signature;
-use wy_syntax::tipo::Type;
+use wy_syntax::tipo::{Annotation, Type};
+use wy_syntax::tipo::{Con, Quantified, Signature};
+use wy_syntax::tipo::{Parameter, Predicate};
+use wy_syntax::tipo::{Qualified, SimpleType};
 
 use crate::error::*;
 use crate::stream::*;
 
-// TYPES TODO: refactor to differentiate between TYPEs (type only) and
-// SIGNATURES (context + type)
 type TypeParser<'t> = Parser<'t>;
 impl<'t> TypeParser<'t> {
     /// This method parses a total type signature, i.e., everythin on the
@@ -29,62 +27,95 @@ impl<'t> TypeParser<'t> {
     /// signature of function declarations). It is illegal for a type to contain
     /// any type constraints in a cast expression or in data declaration
     /// constructor arguments.
-    pub(crate) fn total_signature(&mut self) -> Parsed<Signature> {
-        Ok(Signature {
-            each: self.maybe_quantified()?,
-            ctxt: self.ty_contexts()?,
-            tipo: self.ty_node()?,
+    pub(crate) fn ty_signature(&mut self) -> Parsed<Signature> {
+        Ok(if self.bump_on(Lexeme::Colon2) {
+            Signature::Explicit(self.ty_annotation()?)
+        } else {
+            Signature::Implicit
         })
     }
 
-    fn maybe_quantified(&mut self) -> Parsed<Vec<Ident>> {
+    pub(crate) fn ty_annotation(&mut self) -> Parsed<Annotation> {
+        let quant = self.maybe_quantified()?;
+        let qual = self.maybe_qualified()?;
+        Ok(Annotation { quant, qual })
+    }
+
+    pub(crate) fn maybe_quantified(&mut self) -> Parsed<Quantified<Ident, Ident>> {
         let mut quants = vec![];
         if self.bump_on(Keyword::Forall) {
             quants = self.many_while_on(Lexeme::is_lower, Self::expect_lower)?;
             self.eat(Lexeme::Dot)?;
         }
-        Ok(quants)
+        Ok(quants.into_iter().map(|id| (id, id)).collect())
     }
 
-    pub(crate) fn ty_contexts(&mut self) -> Parsed<Vec<Context>> {
+    pub(crate) fn maybe_qualified(&mut self) -> Parsed<Qualified<Ident, Ident>> {
+        let pred = self.ty_predicates()?;
+        let tipo = self.ty_node()?;
+        Ok(Qualified { pred, tipo })
+    }
+
+    pub(crate) fn ty_predicates(&mut self) -> Parsed<Vec<Predicate>> {
         use Lexeme::{Comma, Pipe};
 
         let mut ctxts = vec![];
         if self.peek_on(Pipe) {
-            ctxts = self.delimited([Pipe, Comma, Pipe], Self::ty_constraint)?;
+            ctxts = self
+                .delimited([Pipe, Comma, Pipe], Self::ty_predicates_sugared)?
+                .into_iter()
+                .flatten()
+                .collect();
         }
         Ok(ctxts)
     }
 
-    /// A context is syntactically simple, yet restrictive, as it must be of the
-    /// form `Lexeme::Upper Lexeme::Lower`, where the underlying `u32` value
-    /// contained by the lowercase identifier is shared into a `Tv`. This is
-    /// because typeclass constraints only accept (free) type variables! The
-    /// only case in which a typeclass may precede a non-type variable is in
-    /// instance declarations, which are *not* syntactically considered
-    /// "contexts".
-    ///
-    /// Note that this has the effect of mangling the name of the constrained
-    /// type variable (as well as that of any lowercase identifiers in the
-    /// `Type`), and is therefore motivation for *normalizing* the type
-    /// variables of a given type signature prior to finalization.
-    ///
-    /// For example, suppose the lowercase identifier `car` corresponds to a
-    /// `Symbol` wrapping the (for this example, arbitrarily chosen) integer
-    /// `11`. When displayed, the `Symbol(11)` is printed as `car`. However, the
-    /// type variable `Tv(11)` containing the same value would be rendered as
-    /// `k`. Since all lowercase identifiers *must* be type variables in a
-    /// `Type` signature, then there is no issue in re-interpreting the `Symbol`
-    /// as a `Tv`. However, this proves to be an *one-way transformation*, as
-    /// `Symbol`s cannot be reconstructed (as they are *only* produced by the
-    /// string interner). In order to simplify type variable representation --
-    /// and since the *actual* string representation of a type variable is
-    /// itself irrelevant -- a type is *normalized* upon completion, such that a
-    /// type `(uvw, xyz)` has its type variables remaped to `(a, b)`.
-    pub(crate) fn ty_constraint(&mut self) -> Parsed<Context> {
+    #[allow(unused)]
+    fn ty_predicate(&mut self) -> Parsed<Predicate> {
         let class = self.expect_upper()?;
-        let head = self.expect_lower()?;
-        Ok(Context { class, head })
+        let head = self.predicate_parameter()?;
+        Ok(Predicate { class, head })
+    }
+
+    fn predicate_parameter(&mut self) -> Parsed<Parameter> {
+        Ok(if self.bump_on(Lexeme::ParenL) {
+            let con = self.expect_lower()?;
+            let tail = self.many_while_on(Lexeme::is_lower, Self::expect_lower)?;
+            Parameter(con, tail)
+        } else {
+            Parameter(self.expect_lower()?, vec![])
+        })
+    }
+
+    /// Experimental syntax sugar for parsing predicates.
+    /// A predicate of the form `|A x1, A x2, ..., A xn|` may be
+    /// written in the more compact form `|A {x1, x2, ..., xn}|`.
+    ///
+    /// Thus it follows that this method returns a vector of
+    /// predicates, all of which are to be flattened together.
+    fn ty_predicates_sugared(&mut self) -> Parsed<Vec<Predicate>> {
+        let class = self.expect_upper()?;
+        if self.peek_on(Lexeme::CurlyL) {
+            self.delimited(
+                [Lexeme::CurlyL, Lexeme::Comma, Lexeme::CurlyR],
+                Self::predicate_parameter,
+            )
+            .map(|parameters| {
+                parameters
+                    .into_iter()
+                    .map(|head| Predicate { class, head })
+                    .collect()
+            })
+        } else {
+            self.predicate_parameter()
+                .map(|head| vec![Predicate { class, head }])
+        }
+    }
+
+    pub(crate) fn ty_simple(&mut self) -> Parsed<SimpleType> {
+        let con = self.expect_upper()?;
+        let vars = self.many_while_on(Lexeme::is_lower, Self::expect_lower)?;
+        Ok(SimpleType(con, vars))
     }
 
     pub(crate) fn ty_node(&mut self) -> Parsed<Type> {
@@ -109,14 +140,14 @@ impl<'t> TypeParser<'t> {
                     if id.is_lower() {
                         Type::Var(id)
                     } else {
-                        Type::Con(Con::Data(id), vec![])
+                        Type::Con(Con::Named(id), vec![])
                     }
                 } else {
                     Type::Con(
                         if id.is_lower() {
                             Con::Free(id)
                         } else {
-                            Con::Data(id)
+                            Con::Named(id)
                         },
                         args,
                     )
@@ -140,7 +171,7 @@ impl<'t> TypeParser<'t> {
             Some(t) if t.is_lower() => self.expect_lower().map(Type::Var),
             Some(t) if t.is_upper() => self
                 .expect_upper()
-                .map(|con| Type::Con(Con::Data(con), vec![])),
+                .map(|con| Type::Con(Con::Named(con), vec![])),
             Some(t) if t.is_brack_l() => self.brack_ty(),
             // Some(t) if t.is_curly_l()  => self.curly_ty(),
             Some(t) if t.is_paren_l() => self.paren_ty(),
@@ -166,19 +197,35 @@ impl<'t> TypeParser<'t> {
     }
 
     fn paren_ty(&mut self) -> Parsed<Type> {
-        use Lexeme::{ParenL, ParenR};
+        use Lexeme::{Comma, ParenL, ParenR};
         self.eat(ParenL)?;
 
         if self.bump_on(ParenR) {
             return Ok(Type::UNIT);
         }
 
+        // check if we are on `(,···,)` where `···` represents
+        // arbitrarily many commas
+        if self.peek_on(Comma) {
+            let mut ct = 0;
+            while self.bump_on(Comma) {
+                ct += 1;
+            }
+            self.eat(ParenR)?;
+            // TODO LATER: ensure in type checking that the number of
+            // type atoms is AT MOST one more than the comma count
+            // `ct` above
+            return self
+                .many_while_on(Lexeme::begins_ty, Self::ty_atom)
+                .map(|args| Type::Con(Con::Tuple(ct), args));
+        }
+
         let mut ty = self.ty_atom()?;
 
         let mut args = vec![];
         match ty {
-            Type::Var(n) | Type::Con(Con::Data(n) | Con::Free(n), _)
-                if self.peek_on(Lexeme::begins_pat) =>
+            Type::Var(n) | Type::Con(Con::Named(n) | Con::Free(n), _)
+                if self.peek_on(Lexeme::begins_ty) =>
             {
                 while !(self.is_done() || lexpat!(self on [parenR]|[,]|[->])) {
                     if !self.peek_on(Lexeme::begins_ty) {
@@ -191,7 +238,7 @@ impl<'t> TypeParser<'t> {
                     };
                     args.push(self.ty_atom()?);
                 }
-                ty = Type::Con(Con::Data(n), args)
+                ty = Type::Con(Con::Named(n), args)
             }
             _ => (),
         }
@@ -226,8 +273,17 @@ impl<'t> TypeParser<'t> {
     fn brack_ty(&mut self) -> Parsed<Type> {
         self.eat(Lexeme::BrackL)?;
         if self.bump_on(Lexeme::BrackR) {
-            let var = Type::Var(Ident::Lower(Symbol::from_str("a")));
-            Ok(Type::Vec(Box::new(var)))
+            if self.peek_on(Lexeme::begins_ty) {
+                let of = self.ty_atom()?;
+                if self.peek_on(Lexeme::begins_ty) {
+                    Err(self.custom_error("invalid type application of `[]`! The type constructor `[]` expects only one type argument, but a second argument was found"))
+                } else {
+                    Ok(Type::Con(Con::List, vec![of]))
+                }
+            } else {
+                let var = Type::Var(Ident::Lower(Symbol::from_str("a")));
+                Ok(Type::Vec(Box::new(var)))
+            }
         } else {
             let tipo = self.ty_node()?;
             self.eat(Lexeme::BrackR)?;
@@ -258,81 +314,144 @@ impl<'t> TypeParser<'t> {
 
 #[cfg(test)]
 mod test {
+    use wy_syntax::tipo::Var;
+
     use super::*;
+
+    const LOWER: fn(Symbol) -> Ident = Ident::Lower;
+    const UPPER: fn(Symbol) -> Ident = Ident::Upper;
+    const VAR_T: fn(Symbol) -> Type<Ident, Ident> = |id| Type::Var(LOWER(id));
+
+    #[test]
+    fn test_tuple_prefix_form() {
+        let [a, b, c, b00l] = wy_intern::intern_many(["a", "b", "c", "Bool"]);
+        let bool_tycon = Con::Named(UPPER(b00l));
+        for (src, expected) in [
+            (
+                "(,,,) a b c Bool",
+                Type::Con(
+                    Con::Tuple(3),
+                    vec![VAR_T(a), VAR_T(b), VAR_T(c), Type::Con(bool_tycon, vec![])],
+                ),
+            ),
+            (
+                "(,,,) ((,,) a b c) ((,) a Bool) ((,) b Bool) ((,) c Bool)",
+                Type::Con(
+                    Con::Tuple(3),
+                    vec![
+                        Type::Con(Con::Tuple(2), vec![VAR_T(a), VAR_T(b), VAR_T(c)]),
+                        Type::Con(Con::Tuple(1), vec![VAR_T(a), Type::Con(bool_tycon, vec![])]),
+                        Type::Con(Con::Tuple(1), vec![VAR_T(b), Type::Con(bool_tycon, vec![])]),
+                        Type::Con(Con::Tuple(1), vec![VAR_T(c), Type::Con(bool_tycon, vec![])]),
+                    ],
+                ),
+            ),
+        ] {
+            Parser::from_str(src)
+                .ty_node()
+                .map(|result| assert_eq!(result, expected))
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn test_list_prefix_form() {
+        let a = Symbol::intern("a");
+        for (src, expected) in [
+            ("[] a", Type::Con(Con::List, vec![VAR_T(a)])),
+            (
+                "[] ([] a)",
+                Type::Con(Con::List, vec![Type::Con(Con::List, vec![VAR_T(a)])]),
+            ),
+            (
+                "[] ((,,) a)",
+                Type::Con(Con::List, vec![Type::Con(Con::Tuple(2), vec![VAR_T(a)])]),
+            ),
+        ] {
+            Parser::from_str(src)
+                .ty_node()
+                .map(|result| assert_eq!(result, expected))
+                .unwrap();
+        }
+    }
 
     #[test]
     fn test_type_app() {
         let src = "Foo x y z -> Bar (z, y) x";
         let result = Parser::from_str(src).ty_node().unwrap();
-        println!("{}", &result);
-        let var = Ident::Lower;
         let [foo_ty, x, y, z, bar_ty] = wy_intern::intern_many(["Foo", "x", "y", "z", "Bar"]);
         assert_eq!(
             result,
             Type::Fun(
                 Box::new(Type::Con(
-                    Con::Data(Ident::Upper(foo_ty)),
-                    vec![Type::Var(var(x)), Type::Var(var(y)), Type::Var(var(z))],
+                    Con::Named(UPPER(foo_ty)),
+                    vec![VAR_T(x), VAR_T(y), VAR_T(z)],
                 )),
                 Box::new(Type::Con(
-                    Con::Data(Ident::Upper(bar_ty)),
-                    vec![
-                        Type::Tup(vec![Type::Var(var(z)), Type::Var(var(y)),]),
-                        Type::Var(var(x))
-                    ]
+                    Con::Named(UPPER(bar_ty)),
+                    vec![Type::Tup(vec![VAR_T(z), VAR_T(y),]), VAR_T(x)]
                 ))
             )
         )
     }
 
     #[test]
-    fn test_arrow_ty_assoc() {
+    fn test_parse_arrow_type() {
         let src = "a -> b -> c -> d";
         let result = Parser::from_str(src).ty_node().unwrap();
         println!("{}", &result);
         let [a, b, c, d] = wy_intern::intern_many(["a", "b", "c", "d"]);
         let expected = Type::Fun(
-            Box::new(Type::Var(Ident::Lower(a))),
+            Box::new(VAR_T(a)),
             Box::new(Type::Fun(
-                Box::new(Type::Var(Ident::Lower(b))),
-                Box::new(Type::Fun(
-                    Box::new(Type::Var(Ident::Lower(c))),
-                    Box::new(Type::Var(Ident::Lower(d))),
-                )),
+                Box::new(VAR_T(b)),
+                Box::new(Type::Fun(Box::new(VAR_T(c)), Box::new(VAR_T(d)))),
             )),
         );
         assert_eq!(result, expected)
     }
 
     #[test]
-    fn test_ty_sigs() {
-        let src = r#"forall a b. m a -> (a -> m b) -> m b"#;
-        let sig = Parser::from_str(src).total_signature().unwrap();
-        let [a, b, m] = wy_intern::intern_many(["a", "b", "m"]);
-        let expected = Signature {
-            each: vec![Ident::Lower(a), Ident::Lower(b)],
-            ctxt: vec![],
-            tipo: Type::Fun(
-                Box::new(Type::Con(
-                    Con::Free(Ident::Lower(m)),
-                    vec![Type::Var(Ident::Lower(a))],
-                )),
-                Box::new(Type::Fun(
+    fn test_parse_predicate_syntax_sugar() {
+        let one = ":: |A a, A b, A c| (a, b, c)";
+        let two = ":: |A {a, b, c}| (a, b, c)";
+        assert_eq!(
+            Parser::from_str(one).ty_signature().unwrap(),
+            Parser::from_str(two).ty_signature().unwrap()
+        )
+    }
+
+    #[test]
+    fn test_parse_type_signature() {
+        let src = r#":: forall a b. |A a, B b| m a -> (a -> m b) -> m b"#;
+        let sig = Parser::from_str(src).ty_signature().unwrap();
+        let [a, b, m] = wy_intern::intern_many_with(["a", "b", "m"], Ident::Lower);
+        let [class_a, class_b] = wy_intern::intern_many_with(["A", "B"], UPPER);
+        let expected = Signature::Explicit(Annotation {
+            quant: Quantified(vec![Var(a, a), Var(b, b)]),
+            qual: Qualified {
+                pred: vec![
+                    Predicate {
+                        class: class_a,
+                        head: Parameter(a, vec![]),
+                    },
+                    Predicate {
+                        class: class_b,
+                        head: Parameter(b, vec![]),
+                    },
+                ],
+                tipo: Type::Fun(
+                    Box::new(Type::Con(Con::Free(m), vec![Type::Var(a)])),
                     Box::new(Type::Fun(
-                        Box::new(Type::Var(Ident::Lower(a))),
-                        Box::new(Type::Con(
-                            Con::Free(Ident::Lower(m)),
-                            vec![Type::Var(Ident::Lower(b))],
+                        Box::new(Type::Fun(
+                            Box::new(Type::Var(a)),
+                            Box::new(Type::Con(Con::Free(m), vec![Type::Var(b)])),
                         )),
+                        Box::new(Type::Con(Con::Free(m), vec![Type::Var(b)])),
                     )),
-                    Box::new(Type::Con(
-                        Con::Free(Ident::Lower(m)),
-                        vec![Type::Var(Ident::Lower(b))],
-                    )),
-                )),
-            ),
-        };
-        println!("showing ty sigs: {:#?}\n{}", &sig, &sig.tipo);
+                ),
+            },
+        });
         assert_eq!(expected, sig)
     }
 }

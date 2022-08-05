@@ -1,5 +1,4 @@
 use token::*;
-
 use wy_lexer::*;
 use wy_name::ident::Ident;
 use wy_syntax::{
@@ -69,8 +68,8 @@ pub fn parse_type_node(src: &str) -> Parsed<Type> {
 }
 
 /// Parsing a type signature in an isolated context
-pub fn parse_type_signature(src: &str) -> Parsed<Signature> {
-    Parser::from_str(src).total_signature()
+pub fn parse_type_signature(src: &str) -> Parsed<Signature<Ident, Ident>> {
+    Parser::from_str(src).ty_signature()
 }
 
 /// Parsing en expression in an isolated context

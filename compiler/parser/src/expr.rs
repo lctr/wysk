@@ -7,7 +7,7 @@ use wy_span::WithLoc;
 use wy_syntax::expr::{RawExpression, Section};
 use wy_syntax::pattern::RawPattern;
 use wy_syntax::record::{Field, Record};
-use wy_syntax::stmt::{RawAlternative, RawBinding, RawMatch, RawStatement};
+use wy_syntax::stmt::{Binding, RawAlternative, RawBinding, RawMatch, RawStatement};
 use wy_syntax::tipo::Signature;
 
 use crate::error::*;
@@ -337,7 +337,7 @@ impl<'t> ExprParser<'t> {
         }
     }
 
-    fn binding_lhs(&mut self) -> Parsed<(Vec<RawPattern>, Option<RawExpression>)> {
+    pub(crate) fn binding_lhs(&mut self) -> Parsed<(Vec<RawPattern>, Option<RawExpression>)> {
         use Keyword::If;
         use Lexeme::Pipe;
         self.ignore(Pipe);
@@ -357,37 +357,27 @@ impl<'t> ExprParser<'t> {
         Ok((body, wher))
     }
 
-    fn caf_binding(&mut self, name: Ident, tipo: Option<Signature>) -> Parsed<RawBinding> {
-        self.binding_rhs().map(|(body, wher)| RawBinding {
+    fn caf_binding(&mut self, name: Ident, tsig: Signature) -> Parsed<RawBinding> {
+        self.binding_rhs().map(|(body, wher)| Binding {
             name,
-            tipo,
+            tsig,
             arms: vec![RawMatch::caf(body, wher)],
         })
     }
 
     pub(crate) fn binding(&mut self) -> Parsed<RawBinding> {
         let name = self.binder_name()?;
+        let tsig = self.ty_signature()?;
 
         match self.peek() {
-            Some(t) if t.begins_pat() || t.is_pipe() => Ok(RawBinding {
+            Some(t) if t.begins_pat() || t.is_pipe() => Ok(Binding {
                 name,
-                tipo: None,
+                tsig,
                 arms: self.match_arms()?,
             }),
-            lexpat!(~[::]) => {
-                self.bump();
-                let tipo = self.total_signature().map(Some)?;
-                self.ignore(Lexeme::Comma);
-                if self.bump_on([Lexeme::Equal, Lexeme::FatArrow]) {
-                    self.caf_binding(name, tipo)
-                } else {
-                    self.match_arms()
-                        .map(|arms| RawBinding { name, arms, tipo })
-                }
-            }
             lexpat!(~[=>]) => {
                 self.bump();
-                self.caf_binding(name, None)
+                self.caf_binding(name, tsig)
             }
             lexpat!(~[=]) => {
                 self.bump();
@@ -395,17 +385,13 @@ impl<'t> ExprParser<'t> {
                 let arms = iter::once(RawMatch::caf(body, wher))
                     .chain(self.match_arms()?)
                     .collect();
-                Ok(RawBinding {
-                    name,
-                    tipo: None,
-                    arms,
-                })
+                Ok(RawBinding { name, tsig, arms })
             }
             _ => self.custom_error("after binder name").err(),
         }
     }
 
-    fn match_arms(&mut self) -> Parsed<Vec<RawMatch>> {
+    pub(crate) fn match_arms(&mut self) -> Parsed<Vec<RawMatch>> {
         use Lexeme::Pipe;
         self.many_while(
             |this| {
@@ -432,7 +418,7 @@ impl<'t> ExprParser<'t> {
 
         Ok(RawMatch {
             args,
-            pred,
+            cond: pred,
             body,
             wher,
         })
@@ -481,7 +467,7 @@ impl<'t> ExprParser<'t> {
     fn case_alt(&mut self) -> Parsed<RawAlternative> {
         Ok(RawAlternative {
             pat: self.maybe_at_pattern()?,
-            pred: if self.bump_on(Keyword::If) {
+            cond: if self.bump_on(Keyword::If) {
                 Some(self.subexpression()?)
             } else {
                 None
@@ -634,13 +620,13 @@ y -> y;
             vec![
                 Alternative {
                     pat: Pattern::Dat(Ident::Upper(a), vec![Pattern::Var(Ident::Lower(c))]),
-                    pred: None,
+                    cond: None,
                     body: Expression::Ident(Ident::Lower(c)),
                     wher: vec![],
                 },
                 Alternative {
                     pat: Pattern::Dat(Ident::Upper(b), vec![Pattern::Var(Ident::Lower(d))]),
-                    pred: Some(Expression::App(
+                    cond: Some(Expression::App(
                         Box::new(Expression::Ident(Ident::Lower(c))),
                         Box::new(Expression::Ident(Ident::Lower(d))),
                     )),
@@ -649,7 +635,7 @@ y -> y;
                 },
                 Alternative {
                     pat: Pattern::Var(Ident::Lower(y)),
-                    pred: None,
+                    cond: None,
                     body: Expression::Ident(Ident::Lower(y)),
                     wher: vec![],
                 },

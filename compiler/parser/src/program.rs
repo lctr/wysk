@@ -1,5 +1,5 @@
 use wy_lexer::{Keyword, Lexeme};
-use wy_name::ident::Chain;
+use wy_name::Chain;
 use wy_syntax::decl::Declaration;
 use wy_syntax::{Import, ImportSpec, Module, Program, RawModule, RawProgram};
 

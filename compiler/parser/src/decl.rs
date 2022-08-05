@@ -6,12 +6,14 @@ use wy_lexer::meta::Placement;
 use wy_lexer::token::*;
 use wy_name::ident::Ident;
 use wy_syntax::attr::Attribute;
+use wy_syntax::decl::MethodBody;
+use wy_syntax::decl::Selector;
+use wy_syntax::decl::TypeArgs;
 use wy_syntax::decl::{
-    AliasDecl, Arity, ClassDecl, DataDecl, Declaration, FixityDecl, FnDecl, InstDecl, Method,
-    MethodDef, NewtypeArg, NewtypeDecl, Tag, Variant,
+    AliasDecl, ClassDecl, DataDecl, Declaration, FixityDecl, FnDecl, InstDecl, MethodDef,
+    NewtypeDecl, TypeArg, Variant,
 };
 use wy_syntax::fixity::Fixity;
-use wy_syntax::stmt::RawBinding;
 
 type DeclParser<'t> = Parser<'t>;
 // DECLARATIONS
@@ -80,51 +82,45 @@ impl<'t> DeclParser<'t> {
     }
 
     fn data_decl(&mut self) -> Parsed<DataDecl<Ident, Ident>> {
-        use Keyword::{Data, With};
-        use Lexeme::{Comma, Equal, Kw, ParenL, ParenR, Pipe, Semi};
+        use Keyword::Data;
+        use Lexeme::{Equal, Semi};
 
-        self.eat(Kw(Data))?;
-
-        let ctxt = if self.peek_on(Pipe) {
-            self.delimited([Pipe, Comma, Pipe], Self::ty_constraint)?
+        self.eat(Data)?;
+        // (<pipe> <upper> <lower> (<comma> <upper> <lower>)* <pipe>)?
+        let pred = self.ty_predicates()?;
+        // <tycon> <tyvar>*
+        let tdef = self.ty_simple()?;
+        let (vnts, with) = if self.peek_on(Semi) {
+            (vec![], vec![])
         } else {
-            vec![]
+            self.eat(Equal)?;
+            (self.data_variants()?, self.with_clause()?)
         };
-        let name = self.expect_upper()?;
-        let poly = self.many_while_on(Not([Equal, Semi]), |p| p.expect_lower())?;
-        let mut decl = DataDecl {
-            name,
-            ctxt,
-            poly,
-            vnts: vec![],
-            with: vec![],
-        };
+        Ok(DataDecl {
+            tdef,
+            pred,
+            vnts,
+            with,
+        })
+    }
 
-        if self.peek_on(Semi) {
-            return Ok(decl);
-        }
-
-        self.eat(Equal)?;
-
-        decl.vnts = self.many_while(
-            |p| p.bump_on(Pipe) || p.peek_on(Lexeme::is_upper),
-            Self::data_variant,
-        )?;
-
-        if self.bump_on(Kw(With)) {
-            decl.with = if self.peek_on(ParenL) {
-                self.delimited([ParenL, Comma, ParenR], Self::expect_upper)?
+    fn with_clause(&mut self) -> Parsed<Vec<Ident>> {
+        use Keyword::With;
+        use Lexeme::{Comma, ParenL, ParenR};
+        let mut with = vec![];
+        if self.bump_on(With) {
+            if self.peek_on(ParenL) {
+                with = self.delimited([ParenL, Comma, ParenR], Self::expect_upper)?
             } else {
-                vec![self.expect_upper()?]
+                with.push(self.expect_upper()?);
             }
-        };
-
-        Ok(decl.enumer_tags())
+        }
+        Ok(with)
     }
 
     fn function_decl(&mut self) -> Parsed<FnDecl> {
         use Keyword::Fn;
-        use Lexeme::{Colon2, ParenL, ParenR, Pipe};
+        use Lexeme::{ParenL, ParenR, Pipe};
 
         self.eat(Fn)?;
 
@@ -136,14 +132,8 @@ impl<'t> DeclParser<'t> {
             self.expect_lower()?
         };
 
-        let sign = if self.bump_on(Colon2) {
-            self.total_signature().map(Some)?
-        } else {
-            None
-        };
-
+        let sign = self.ty_signature()?;
         self.ignore(Pipe);
-
         let mut defs = vec![self.match_arm()?];
 
         while self.bump_on(Pipe) {
@@ -157,59 +147,37 @@ impl<'t> DeclParser<'t> {
         use Keyword::Type;
         use Lexeme::Equal;
         self.eat(Type)?;
-        let name = self.expect_upper()?;
-        let poly = self.many_while_on(Not(Equal), |p| p.expect_lower())?;
+        let ldef = self.ty_simple()?;
         self.eat(Equal)?;
-        let sign = self.total_signature()?;
-        Ok(AliasDecl { name, poly, sign })
+        let sign = self.ty_node()?;
+        Ok(AliasDecl { ldef, tipo: sign })
     }
 
     fn class_decl(&mut self) -> Parsed<ClassDecl> {
         self.eat(Keyword::Class)?;
-        let ctxt = self.ty_contexts()?;
-        let name = self.expect_upper()?;
-        let poly = self.many_while_on(Lexeme::is_lower, |p| p.expect_lower())?;
+        let pred = self.ty_predicates()?;
+        let cdef = self.ty_simple()?;
         self.eat(Lexeme::CurlyL)?;
         let mut defs = vec![];
         while !self.peek_on(Lexeme::CurlyR) {
             self.ignore(Keyword::Def);
-            if let RawBinding {
-                name,
-                arms,
-                tipo: Some(sign),
-            } = self.binding()?
-            {
-                defs.push(MethodDef {
-                    name,
-                    sign,
-                    body: arms,
-                })
+            let name = self.binder_name()?;
+            let annt = self.ty_annotation()?;
+            let body = if self.peek_on([Lexeme::Semi, Lexeme::Comma]) {
+                MethodBody::Unimplemented
             } else {
-                return Err(self.custom_error("class method definition without type signature"));
+                MethodBody::Default(self.match_arms()?)
             };
-            self.ignore(Lexeme::Semi);
+            defs.push(MethodDef { name, annt, body });
+            self.ignore([Lexeme::Semi, Lexeme::Comma]);
         }
         self.eat(Lexeme::CurlyR)?;
-        Ok(ClassDecl {
-            name,
-            poly,
-            ctxt,
-            defs,
-        })
-    }
-
-    #[allow(unused)]
-    fn method_signature(&mut self) -> Parsed<Method> {
-        self.eat(Lexeme::Kw(Keyword::Def))?;
-        let name = self.binder_name()?;
-        self.eat(Lexeme::Colon2)?;
-        let tipo = self.total_signature()?;
-        Ok(Method::Sig(name, tipo))
+        Ok(ClassDecl { cdef, pred, defs })
     }
 
     fn inst_decl(&mut self) -> Parsed<InstDecl> {
         self.eat(Keyword::Impl)?;
-        let ctxt = self.ty_contexts()?;
+        let pred = self.ty_predicates()?;
         let name = self.expect_upper()?;
         let tipo = self.ty_atom()?;
         self.ignore([Keyword::With, Keyword::Where]);
@@ -222,34 +190,31 @@ impl<'t> DeclParser<'t> {
         self.eat(Lexeme::CurlyR)?;
         Ok(InstDecl {
             name,
-            ctxt,
+            pred,
             defs,
             tipo,
         })
     }
 
-    fn newtype_decl(&mut self) -> Parsed<NewtypeDecl> {
+    fn newtype_decl(&mut self) -> Parsed<NewtypeDecl<Ident, Ident>> {
         use Keyword::{Newtype, With};
-        use Lexeme::{Colon2, Comma, CurlyL, CurlyR, Equal, ParenL, ParenR};
-
-        fn until_semi_kw(parser: &mut Parser) -> bool {
-            !lexpat!(parser on [;] | [kw])
-        }
+        use Lexeme::{Comma, CurlyL, CurlyR, Equal, ParenL, ParenR};
 
         self.eat(Newtype)?;
-        let name = self.expect_upper()?;
-        let poly = self.many_while_on(Lexeme::is_lower, Self::expect_lower)?;
+        let tdef = self.ty_simple()?;
         self.eat(Equal)?;
         let ctor = self.expect_upper()?;
         let narg = if self.bump_on(CurlyL) {
-            let label = self.expect_lower()?;
-            self.eat(Colon2)?;
-            let tysig = self.total_signature()?;
+            let sel = self.selector()?;
             self.eat(CurlyR)?;
-            NewtypeArg::Record(label, tysig)
+            TypeArg::Selector(sel)
         } else {
-            self.many_while(until_semi_kw, Self::ty_node)
-                .map(NewtypeArg::Stacked)?
+            let ty = self.ty_node().map(TypeArg::Type)?;
+            if self.peek_on(Lexeme::begins_ty) {
+                return Err(self.custom_error("newtypes are allowed only a single type argument"));
+            } else {
+                ty
+            }
         };
         let with = if self.bump_on(With) {
             if self.peek_on(ParenL) {
@@ -261,41 +226,101 @@ impl<'t> DeclParser<'t> {
             vec![]
         };
         Ok(NewtypeDecl {
-            name,
-            poly,
+            tdef,
             ctor,
             narg,
             with,
         })
     }
 
+    fn data_variants(&mut self) -> Parsed<Vec<Variant>> {
+        self.many_while(
+            |p| p.bump_or_peek_on(Lexeme::Pipe, Lexeme::is_upper),
+            Self::data_variant,
+        )
+    }
+
     fn data_variant(&mut self) -> Parsed<Variant> {
         self.ignore(Lexeme::Pipe);
-        // constructor name
         let name = self.expect_upper()?;
-        let mut args = vec![];
-        while !(self.is_done() || lexpat!(self on [;] | [|] | [kw])) {
-            args.push(if lexpat!(self on [curlyL]) {
-                self.curly_ty()
-            } else {
-                self.ty_atom()
-            }?);
-        }
-        let arity = Arity::new(args.len());
-        Ok(Variant {
-            name,
-            args,
-            arity,
-            tag: Tag(0),
-        })
+        let args = if self.peek_on(Lexeme::CurlyL) {
+            self.delimited(
+                [Lexeme::CurlyL, Lexeme::Comma, Lexeme::CurlyR],
+                Self::selector,
+            )
+            .map(TypeArgs::Record)?
+        } else {
+            self.many_while_on(Lexeme::begins_ty, Self::ty_atom)
+                .map(TypeArgs::Curried)?
+        };
+        Ok(Variant { name, args })
+    }
+
+    fn selector(&mut self) -> Parsed<Selector> {
+        let name = self.binder_name()?;
+        self.eat(Lexeme::Colon2)?;
+        let tipo = self.ty_node()?;
+        Ok(Selector { name, tipo })
     }
 }
 
 #[cfg(test)]
 mod test {
-    use wy_syntax::tipo::{Con, Signature, Type};
+    use wy_lexer::Literal;
+    use wy_syntax::{
+        expr::Expression,
+        pattern::Pattern,
+        record::{Field, Record},
+        stmt::{Binding, Match},
+        tipo::{Con, Parameter, Predicate, Signature, SimpleType, Type},
+    };
 
     use super::*;
+
+    #[test]
+    fn test_data_decl() {
+        let src =
+            "data Foo a b = Foo a b | Bar a (Foo a b) | Baz { foo_a :: a, foo_b :: b } with Eq";
+        let decl = Parser::from_str(src).data_decl().unwrap();
+        let [a, b, foo_a, foo_b] =
+            wy_intern::intern_many_with(["a", "b", "foo_a", "foo_b"], Ident::Lower);
+        let [foo, bar, baz, eq] =
+            wy_intern::intern_many_with(["Foo", "Bar", "Baz", "Eq"], Ident::Upper);
+        let expected = {
+            DataDecl {
+                tdef: SimpleType(foo, vec![a, b]),
+                pred: vec![],
+                vnts: vec![
+                    Variant {
+                        name: foo,
+                        args: TypeArgs::Curried(vec![Type::Var(a), Type::Var(b)]),
+                    },
+                    Variant {
+                        name: bar,
+                        args: TypeArgs::Curried(vec![
+                            Type::Var(a),
+                            Type::Con(Con::Named(foo), vec![Type::Var(a), Type::Var(b)]),
+                        ]),
+                    },
+                    Variant {
+                        name: baz,
+                        args: TypeArgs::Record(vec![
+                            Selector {
+                                name: foo_a,
+                                tipo: Type::Var(a),
+                            },
+                            Selector {
+                                name: foo_b,
+                                tipo: Type::Var(b),
+                            },
+                        ]),
+                    },
+                ],
+                with: vec![eq],
+            }
+        };
+        assert_eq!(decl, expected)
+    }
 
     #[test]
     fn test_inst_decl() {
@@ -307,8 +332,62 @@ impl |Eq a| Eq [a] {
     | _ _ = False
 }
 "#;
-        let program = Parser::from_str(src).inst_decl();
-        println!("showing inst decl: {:#?}", program);
+        let [a, x, xs, y, ys] =
+            wy_intern::intern_many_with(["a", "x", "xs", "y", "ys"], Ident::Lower);
+        let [cl_eq, con_true, con_false] =
+            wy_intern::intern_many_with(["Eq", "True", "False"], Ident::Upper);
+        let [eq2, amper2] = wy_intern::intern_many_with(["==", "&&"], Ident::Infix);
+        let actual = Parser::from_str(src).inst_decl().unwrap();
+        let expected = {
+            InstDecl {
+                name: cl_eq,
+                tipo: Type::Vec(Box::new(Type::Var(a))),
+                pred: vec![Predicate {
+                    class: cl_eq,
+                    head: Parameter(a, vec![]),
+                }],
+                defs: vec![Binding {
+                    name: eq2,
+                    tsig: Signature::Implicit,
+                    arms: vec![
+                        Match {
+                            args: vec![Pattern::NULL, Pattern::NULL],
+                            cond: None,
+                            body: Expression::Ident(con_true),
+                            wher: vec![],
+                        },
+                        Match {
+                            args: vec![
+                                Pattern::Lnk(Box::new(Pattern::Var(x)), Box::new(Pattern::Var(xs))),
+                                Pattern::Lnk(Box::new(Pattern::Var(y)), Box::new(Pattern::Var(ys))),
+                            ],
+                            cond: None,
+                            body: Expression::Infix {
+                                infix: amper2,
+                                left: Box::new(Expression::Group(Box::new(Expression::Infix {
+                                    infix: eq2,
+                                    left: Box::new(Expression::Ident(x)),
+                                    right: Box::new(Expression::Ident(y)),
+                                }))),
+                                right: Box::new(Expression::Group(Box::new(Expression::Infix {
+                                    infix: eq2,
+                                    left: Box::new(Expression::Ident(xs)),
+                                    right: Box::new(Expression::Ident(ys)),
+                                }))),
+                            },
+                            wher: vec![],
+                        },
+                        Match {
+                            args: vec![Pattern::Wild, Pattern::Wild],
+                            cond: None,
+                            body: Expression::Ident(con_false),
+                            wher: vec![],
+                        },
+                    ],
+                }],
+            }
+        };
+        assert_eq!(actual, expected)
     }
 
     #[test]
@@ -318,23 +397,18 @@ impl |Eq a| Eq [a] {
         let [parser_ty, a, parse, string_ty] =
             wy_intern::intern_many(["Parser", "a", "parse", "String"]);
         let expected = NewtypeDecl {
-            name: Ident::Upper(parser_ty),
-            poly: vec![Ident::Lower(a)],
+            tdef: SimpleType(Ident::Upper(parser_ty), vec![Ident::Lower(a)]),
             ctor: Ident::Upper(parser_ty),
-            narg: NewtypeArg::Record(
-                Ident::Lower(parse),
-                Signature {
-                    each: vec![],
-                    ctxt: vec![],
-                    tipo: Type::mk_fun(
-                        Type::Con(Con::Data(Ident::Upper(string_ty)), vec![]),
-                        Type::Tup(vec![
-                            Type::Var(Ident::Lower(a)),
-                            Type::Con(Con::Data(Ident::Upper(string_ty)), vec![]),
-                        ]),
-                    ),
-                },
-            ),
+            narg: TypeArg::Selector(Selector {
+                name: Ident::Lower(parse),
+                tipo: Type::mk_fun(
+                    Type::Con(Con::Named(Ident::Upper(string_ty)), vec![]),
+                    Type::Tup(vec![
+                        Type::Var(Ident::Lower(a)),
+                        Type::Con(Con::Named(Ident::Upper(string_ty)), vec![]),
+                    ]),
+                ),
+            }),
             with: vec![],
         };
         assert_eq!(parsed, expected)
@@ -372,7 +446,7 @@ impl |Eq a| Eq [a] {
     }
 
     #[test]
-    fn test_record_expr() {
+    fn test_record_fn() {
         let src = "
 fn some_record_function 
     | a @ A { b, c } = a { 
@@ -384,6 +458,87 @@ fn some_record_function
         c = c a 3 
     }
 ";
-        println!("{:?}", Parser::from_str(src).function_decl())
+        let [a, b, c, some_record_function] =
+            wy_intern::intern_many_with(["a", "b", "c", "some_record_function"], Ident::Lower);
+        let [con_a] = wy_intern::intern_many_with(["A"], Ident::Upper);
+        let [plus] = wy_intern::intern_many_with(["+"], Ident::Infix);
+        let actual = Parser::from_str(src).function_decl().unwrap();
+        let expected = FnDecl {
+            name: some_record_function,
+            sign: Signature::Implicit,
+            defs: vec![
+                Match {
+                    args: vec![Pattern::At(
+                        a,
+                        Box::new(Pattern::Rec(Record::Data(
+                            con_a,
+                            vec![Field::Key(b), Field::Key(c)],
+                        ))),
+                    )],
+                    cond: None,
+                    body: Expression::Dict(Record::Data(
+                        a,
+                        vec![
+                            Field::Entry(
+                                b,
+                                Expression::Infix {
+                                    infix: plus,
+                                    left: Box::new(Expression::Ident(b)),
+                                    right: Box::new(Expression::Lit(Literal::Int(2))),
+                                },
+                            ),
+                            Field::Entry(
+                                c,
+                                Expression::App(
+                                    Box::new(Expression::App(
+                                        Box::new(Expression::Ident(c)),
+                                        Box::new(Expression::Ident(a)),
+                                    )),
+                                    Box::new(Expression::Lit(Literal::Int(3))),
+                                ),
+                            ),
+                        ],
+                    )),
+                    wher: vec![],
+                },
+                Match {
+                    args: vec![Pattern::At(
+                        a,
+                        Box::new(Pattern::Rec(Record::Data(
+                            con_a,
+                            vec![
+                                Field::Entry(
+                                    b,
+                                    Pattern::Or(vec![
+                                        Pattern::Lit(Literal::Int(1)),
+                                        Pattern::Lit(Literal::Int(2)),
+                                    ]),
+                                ),
+                                Field::Key(c),
+                            ],
+                        ))),
+                    )],
+                    cond: None,
+                    body: Expression::Dict(Record::Data(
+                        a,
+                        vec![
+                            Field::Key(b),
+                            Field::Entry(
+                                c,
+                                Expression::App(
+                                    Box::new(Expression::App(
+                                        Box::new(Expression::Ident(c)),
+                                        Box::new(Expression::Ident(a)),
+                                    )),
+                                    Box::new(Expression::Lit(Literal::Int(3))),
+                                ),
+                            ),
+                        ],
+                    )),
+                    wher: vec![],
+                },
+            ],
+        };
+        assert_eq!(actual, expected)
     }
 }
