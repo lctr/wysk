@@ -1,8 +1,11 @@
 use serde::{Deserialize, Serialize};
-use wy_common::Set;
+use wy_common::{
+    functor::{MapFst, MapSnd},
+    Set,
+};
 use wy_name::ident::Ident;
 
-use crate::{decl::Arity, expr::Expression, pattern::Pattern, tipo::Signature};
+use crate::{expr::Expression, pattern::Pattern, tipo::Signature};
 
 /// ```wysk
 ///     fn foo :: Int -> Int -> Bool
@@ -11,7 +14,7 @@ use crate::{decl::Arity, expr::Expression, pattern::Pattern, tipo::Signature};
 /// ~~|   vvv
 ///     | x y if x > y = True
 /// ~~:       ^^^^^^^^   ^^^^
-/// ~~:        `pred`   `body`
+/// ~~:        `cond`   `body`
 /// ~~> Match[1]
 /// ~~|  `args`
 /// ~~|   vvv
@@ -20,46 +23,43 @@ use crate::{decl::Arity, expr::Expression, pattern::Pattern, tipo::Signature};
 /// ~~: `args`    `body`         `wher[0]`
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Match<Id, T> {
-    pub args: Vec<Pattern<Id, T>>,
-    pub pred: Option<Expression<Id, T>>,
-    pub body: Expression<Id, T>,
-    pub wher: Vec<Binding<Id, T>>,
+pub struct Match<Id, V> {
+    pub args: Vec<Pattern<Id, V>>,
+    pub cond: Option<Expression<Id, V>>,
+    pub body: Expression<Id, V>,
+    pub wher: Vec<Binding<Id, V>>,
 }
 
 pub type RawMatch = Match<Ident, Ident>;
 
 wy_common::struct_field_iters! {
-    |Id, T| Match<Id, T>
-    | args => args_iter :: Pattern<Id, T>
-    | wher => wher_iter :: Binding<Id, T>
+    |Id, V| Match<Id, V>
+    | args => args_iter :: Pattern<Id, V>
+    | wher => wher_iter :: Binding<Id, V>
 }
 
-impl<Id, T> Match<Id, T> {
+impl<Id, V> Match<Id, V> {
     /// A trivial match consists of only an expression, with the `args` and
-    /// `where` fields empty vectors and `pred` a default `None`.
-    pub fn trivial(body: Expression<Id, T>) -> Self {
+    /// `where` fields empty vectors and `cond` a default `None`.
+    pub fn trivial(body: Expression<Id, V>) -> Self {
         Self {
             args: vec![],
-            pred: None,
+            cond: None,
             body,
             wher: vec![],
         }
     }
-    pub fn caf(body: Expression<Id, T>, wher: Vec<Binding<Id, T>>) -> Self {
+    pub fn caf(body: Expression<Id, V>, wher: Vec<Binding<Id, V>>) -> Self {
         Self {
             args: vec![],
-            pred: None,
+            cond: None,
             body,
             wher,
         }
     }
-    pub fn arity(&self) -> Arity {
-        Arity(self.args.len())
-    }
 
-    pub fn pred_iter(&self) -> std::option::Iter<Expression<Id, T>> {
-        self.pred.iter()
+    pub fn cond_iter(&self) -> std::option::Iter<Expression<Id, V>> {
+        self.cond.iter()
     }
 
     pub fn bound_vars(&self) -> Set<&Id>
@@ -68,30 +68,62 @@ impl<Id, T> Match<Id, T> {
     {
         let mut ids = Set::new();
         self.args_iter().for_each(|pat| ids.extend(pat.binders()));
-        self.pred_iter().for_each(|x| ids.extend(x.bound_vars()));
+        self.cond_iter().for_each(|x| ids.extend(x.bound_vars()));
         ids.extend(self.body.bound_vars());
         self.wher_iter().for_each(|b| ids.extend(b.bound_vars()));
         ids
     }
+}
 
-    pub fn free_vars(&self) -> Set<&Id>
+impl<Id, V, X> MapFst<Id, X> for Match<Id, V> {
+    type WrapFst = Match<X, V>;
+
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
     where
-        Id: Eq + std::hash::Hash,
+        F: FnMut(Id) -> X,
     {
-        let mut vars = Set::new();
-        vars.extend(self.body.free_vars());
-        if let Some(pred) = &self.pred {
-            vars.extend(pred.free_vars());
+        let Match {
+            args,
+            cond,
+            body,
+            wher,
+        } = self;
+        let args = args.map_fst(f);
+        let cond = cond.map_fst(f);
+        let body = body.map_fst(f);
+        let wher = wher.map_fst(f);
+        Match {
+            args,
+            cond,
+            body,
+            wher,
         }
-        self.wher_iter().for_each(|binding| {
-            vars.extend(binding.free_vars());
-        });
-        self.args_iter().for_each(|pat| {
-            pat.idents().into_iter().for_each(|id| {
-                vars.remove(id);
-            })
-        });
-        vars
+    }
+}
+
+impl<Id, V, X> MapSnd<V, X> for Match<Id, V> {
+    type WrapSnd = Match<Id, X>;
+
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(V) -> X,
+    {
+        let Match {
+            args,
+            cond,
+            body,
+            wher,
+        } = self;
+        let args = args.map_snd(f);
+        let cond = cond.map_snd(f);
+        let body = body.map_snd(f);
+        let wher = wher.map_snd(f);
+        Match {
+            args,
+            cond,
+            body,
+            wher,
+        }
     }
 }
 
@@ -111,7 +143,7 @@ impl<Id, T> Match<Id, T> {
 ///     | [] -> True
 /// ~~> Alternative[1]
 /// ~~|  `pat`
-/// ~~|   |  `pred`      `body`
+/// ~~|   |  `cond`      `body`
 /// ~~|   v vvvvvvvvv    vvvvv
 ///     | _ if t || u -> False
 ///         where t = True;
@@ -120,23 +152,23 @@ impl<Id, T> Match<Id, T> {
 /// ~~:           ^^^^^^^^^ `wher[1]`
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Alternative<Id, T> {
-    pub pat: Pattern<Id, T>,
-    pub pred: Option<Expression<Id, T>>,
-    pub body: Expression<Id, T>,
-    pub wher: Vec<Binding<Id, T>>,
+pub struct Alternative<Id, V> {
+    pub pat: Pattern<Id, V>,
+    pub cond: Option<Expression<Id, V>>,
+    pub body: Expression<Id, V>,
+    pub wher: Vec<Binding<Id, V>>,
 }
 
 pub type RawAlternative = Alternative<Ident, Ident>;
 
 wy_common::struct_field_iters! {
-    |Id, T| Alternative<Id, T>
-    | wher => wher_iter :: Binding<Id, T>
+    |Id, V| Alternative<Id, V>
+    | wher => wher_iter :: Binding<Id, V>
 }
 
-impl<Id, T> Alternative<Id, T> {
-    pub fn pred_iter(&self) -> std::option::Iter<Expression<Id, T>> {
-        self.pred.iter()
+impl<Id, V> Alternative<Id, V> {
+    pub fn cond_iter(&self) -> std::option::Iter<Expression<Id, V>> {
+        self.cond.iter()
     }
 
     pub fn where_binder_names(&self) -> impl Iterator<Item = &Id> + '_ {
@@ -159,7 +191,7 @@ impl<Id, T> Alternative<Id, T> {
         self.pat
             .idents()
             .into_iter()
-            .chain(self.pred.as_ref().into_iter().flat_map(Expression::idents))
+            .chain(self.cond.as_ref().into_iter().flat_map(Expression::idents))
             .chain(self.body.idents())
             .chain(self.wher_iter().flat_map(Binding::idents))
             .collect()
@@ -170,8 +202,8 @@ impl<Id, T> Alternative<Id, T> {
         Id: Eq + std::hash::Hash,
     {
         let mut vars = self.body.free_vars();
-        if let Some(pred) = &self.pred {
-            vars.extend(pred.free_vars());
+        if let Some(cond) = &self.cond {
+            vars.extend(cond.free_vars());
         }
         self.wher_iter().for_each(|binding| {
             vars.insert(binding.get_name());
@@ -181,6 +213,58 @@ impl<Id, T> Alternative<Id, T> {
             vars.remove(id);
         });
         vars
+    }
+}
+
+impl<Id, V, X> MapFst<Id, X> for Alternative<Id, V> {
+    type WrapFst = Alternative<X, V>;
+
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(Id) -> X,
+    {
+        let Alternative {
+            pat,
+            cond,
+            body,
+            wher,
+        } = self;
+        let pat = pat.map_fst(f);
+        let cond = cond.map_fst(f);
+        let body = body.map_fst(f);
+        let wher = wher.map_fst(f);
+        Alternative {
+            pat,
+            cond,
+            body,
+            wher,
+        }
+    }
+}
+
+impl<Id, V, X> MapSnd<V, X> for Alternative<Id, V> {
+    type WrapSnd = Alternative<Id, X>;
+
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(V) -> X,
+    {
+        let Alternative {
+            pat,
+            cond,
+            body,
+            wher,
+        } = self;
+        let pat = pat.map_snd(f);
+        let cond = cond.map_snd(f);
+        let body = body.map_snd(f);
+        let wher = wher.map_snd(f);
+        Alternative {
+            pat,
+            cond,
+            body,
+            wher,
+        }
     }
 }
 
@@ -194,65 +278,23 @@ impl<Id, T> Alternative<Id, T> {
 /// ~~: ^^^^^^^^^^^^^^ `arms[0]`
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Binding<Id, T> {
+pub struct Binding<Id, V> {
     pub name: Id,
-    pub arms: Vec<Match<Id, T>>,
-    pub tipo: Option<Signature<Id, T>>,
+    pub tsig: Signature<Id, V>,
+    pub arms: Vec<Match<Id, V>>,
 }
 
 pub type RawBinding = Binding<Ident, Ident>;
 
 wy_common::struct_field_iters! {
-    |Id, T| Binding<Id, T>
-    | arms => arms_iter :: Match<Id, T>
+    |Id, V| Binding<Id, V>
+    | arms => arms_iter :: Match<Id, V>
 }
 
-impl<Id, T> Binding<Id, T> {
+impl<Id, V> Binding<Id, V> {
     /// Returns a reference to the `name` of the binding.
     pub fn get_name(&self) -> &Id {
         &self.name
-    }
-
-    /// A simple binding is one with a single 0-arity `Match` arm (i.e, no
-    /// argument patterns).
-    /// Note that it is an error for a `Binding` to have more than one
-    /// zero-arity match arms!
-    pub fn is_simple(&self) -> bool {
-        self.arms.len() == 1 && self.arms[0].arity().is_zero()
-    }
-
-    /// Returns the arity of a binding if all of its match arms contain the same
-    /// number of patterns.
-    ///
-    /// Every match arm should contain the SAME number of OUTER patterns. For
-    /// example, the following function declaration has 3 match arms, each with
-    /// 2 *outer* patterns and thus would satisfy what this method checks for.
-    ///
-    /// ```wysk
-    /// fn filter :: (a -> Bool) -> [a] -> [a]
-    /// | f [] = []
-    /// ~~ pattern match and apply predicate to head
-    /// ~~ notice that we have TWO external patterns
-    /// ~~ the 2nd pattern has 2 subpatterns and that's fine
-    /// | f (x:xs) if f x = x : filter f xs
-    /// ~~ otherwise we know `f x` is `False` so we move on
-    /// | f (_:xs) = filter f xs
-    /// ```
-    ///
-    /// The following has match arms with varying outer patterns. This is
-    /// treated as a syntax -- and hence compile-time -- error.
-    pub fn maybe_arity(&self) -> Option<Arity> {
-        // all bindings must have at least *one* match arm! the parser *should*
-        // reject empty bindings, but we add this assertion here anyway.
-        assert!(self.arms.len() > 0, "binding has no match arms");
-        // since we **must** have a non-zero number of arms, calling reduce
-        // should always return a `Some` variant!
-        self.arms_iter()
-            .map(|m| Some(m.arity()))
-            .reduce(|acc, curr| {
-                acc.and_then(|a| curr.and_then(|c| if a == c { Some(a) } else { None }))
-            })
-            .unwrap()
     }
 
     /// Returns a vector of references to the identifiers bound by the binding's
@@ -284,8 +326,8 @@ impl<Id, T> Binding<Id, T> {
         idents.insert(self.get_name());
         self.arms_iter().for_each(|m| {
             m.args_iter().for_each(|pat| idents.extend(pat.idents()));
-            if let Some(pred) = &m.pred {
-                idents.extend(pred.idents())
+            if let Some(cond) = &m.cond {
+                idents.extend(cond.idents())
             }
             idents.extend(m.body.idents());
             m.wher_iter().for_each(|b| idents.extend(b.idents()))
@@ -310,8 +352,8 @@ impl<Id, T> Binding<Id, T> {
         let mut vars = Set::new();
         self.arms_iter().for_each(|m| {
             let mut fvs = m.body.free_vars();
-            if let Some(pred) = &m.pred {
-                fvs.extend(pred.free_vars());
+            if let Some(cond) = &m.cond {
+                fvs.extend(cond.free_vars());
             }
             m.args_iter().for_each(|pat| {
                 pat.idents().iter().for_each(|id| {
@@ -325,20 +367,49 @@ impl<Id, T> Binding<Id, T> {
     }
 }
 
+impl<Id, V, X> MapFst<Id, X> for Binding<Id, V> {
+    type WrapFst = Binding<X, V>;
+
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(Id) -> X,
+    {
+        let Binding { name, tsig, arms } = self;
+        let name = f.apply(name);
+        let tsig = tsig.map_fst(f);
+        let arms = arms.map_fst(f);
+        Binding { name, arms, tsig }
+    }
+}
+
+impl<Id, V, X> MapSnd<V, X> for Binding<Id, V> {
+    type WrapSnd = Binding<Id, X>;
+
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(V) -> X,
+    {
+        let Binding { name, tsig, arms } = self;
+        let tsig = tsig.map_snd(f);
+        let arms = arms.map_snd(f);
+        Binding { name, arms, tsig }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Statement<Id, T> {
+pub enum Statement<Id, V> {
     // <PAT> <- <EXPR>
-    Generator(Pattern<Id, T>, Expression<Id, T>),
+    Generator(Pattern<Id, V>, Expression<Id, V>),
     // <EXPR>
-    Predicate(Expression<Id, T>),
+    Predicate(Expression<Id, V>),
     // `let` without the `in`;
     // let (<ID> <PAT>* = <EXPR>)+
-    JustLet(Vec<Binding<Id, T>>),
+    JustLet(Vec<Binding<Id, V>>),
 }
 
 pub type RawStatement = Statement<Ident, Ident>;
 
-impl<Id, T> Statement<Id, T> {
+impl<Id, V> Statement<Id, V> {
     /// Returns a set of references to all the identifiers referenced within the
     /// statement.
     pub fn idents(&self) -> Set<&Id>
@@ -389,6 +460,36 @@ impl<Id, T> Statement<Id, T> {
             Statement::JustLet(bindings) => {
                 bindings.into_iter().flat_map(Binding::binders).collect()
             }
+        }
+    }
+}
+
+impl<Id, V, X> MapFst<Id, X> for Statement<Id, V> {
+    type WrapFst = Statement<X, V>;
+
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(Id) -> X,
+    {
+        match self {
+            Statement::Generator(pat, ex) => Statement::Generator(pat.map_fst(f), ex.map_fst(f)),
+            Statement::Predicate(ex) => Statement::Predicate(ex.map_fst(f)),
+            Statement::JustLet(binds) => Statement::JustLet(binds.map_fst(f)),
+        }
+    }
+}
+
+impl<Id, V, X> MapSnd<V, X> for Statement<Id, V> {
+    type WrapSnd = Statement<Id, X>;
+
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(V) -> X,
+    {
+        match self {
+            Statement::Generator(pat, ex) => Statement::Generator(pat.map_snd(f), ex.map_snd(f)),
+            Statement::Predicate(ex) => Statement::Predicate(ex.map_snd(f)),
+            Statement::JustLet(binds) => Statement::JustLet(binds.map_snd(f)),
         }
     }
 }
