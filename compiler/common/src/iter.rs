@@ -16,6 +16,7 @@ where
         Self(IndexMap::new())
     }
 
+    #[inline]
     pub fn with_capacity(n: usize) -> Self {
         Map(IndexMap::with_capacity(n))
     }
@@ -37,10 +38,12 @@ where
             .collect()
     }
 
+    #[inline]
     pub fn len(&self) -> usize {
         self.0.len()
     }
 
+    #[inline]
     pub fn iter(&self) -> indexmap::map::Iter<K, V> {
         self.0.iter()
     }
@@ -49,8 +52,29 @@ where
         self.0.into_iter()
     }
 
+    #[inline]
     pub fn iter_mut(&mut self) -> indexmap::map::IterMut<K, V> {
         self.0.iter_mut()
+    }
+
+    #[inline]
+    pub fn inner(&self) -> &IndexMap<K, V> {
+        &self.0
+    }
+
+    #[inline]
+    pub fn inner_mut(&mut self) -> &mut IndexMap<K, V> {
+        &mut self.0
+    }
+
+    #[inline]
+    pub fn get(&self, key: &K) -> Option<&V> {
+        self.0.get(key)
+    }
+
+    #[inline]
+    pub fn insert(&mut self, key: K, value: V) -> Option<V> {
+        self.0.insert(key, value)
     }
 }
 
@@ -119,6 +143,29 @@ where
     }
 }
 
+impl<K, V> std::ops::Index<&K> for Map<K, V>
+where
+    K: Eq + Hash,
+{
+    type Output = V;
+
+    fn index(&self, index: &K) -> &Self::Output {
+        self.get(index).expect("Map: nonexistent key used as index")
+    }
+}
+
+#[test]
+fn test_indexmap_idx() {
+    #[derive(Clone, PartialEq, Eq, Hash)]
+    struct It<X>(X);
+
+    let mut map = Map::new();
+    map.insert(It('z'), 16);
+    map.insert(It('y'), 51);
+    assert_eq!(&map[&It('z')], &16);
+    assert_eq!(&map[&It('y')], &51);
+}
+
 /// A thin wrapper around an `IndexSet`.
 pub struct Set<K>(IndexSet<K>);
 
@@ -127,19 +174,34 @@ impl<K> Set<K> {
         Self(IndexSet::new())
     }
 
+    #[inline]
     pub fn with_capacity(n: usize) -> Self {
         Self(IndexSet::with_capacity(n))
     }
 
+    #[inline]
     pub fn len(&self) -> usize {
         self.0.len()
     }
 
+    #[inline]
     pub fn iter(&self) -> indexmap::set::Iter<K> {
         self.0.iter()
     }
+
+    #[inline]
     pub fn into_iter(self) -> indexmap::set::IntoIter<K> {
         self.0.into_iter()
+    }
+
+    #[inline]
+    pub fn inner(&self) -> &IndexSet<K> {
+        &self.0
+    }
+
+    #[inline]
+    pub fn inner_mut(&mut self) -> &mut IndexSet<K> {
+        &mut self.0
     }
 }
 
