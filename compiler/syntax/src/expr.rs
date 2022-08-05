@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
-use wy_common::{deque, variant_preds, Deque, Set};
+use wy_common::{
+    deque,
+    functor::{Functor, MapFst, MapSnd},
+    variant_preds, Deque, Set,
+};
 use wy_lexer::Literal;
 use wy_name::ident::{Ident, Identifier};
 
@@ -8,28 +12,28 @@ use crate::{decl::Arity, record::Record, stmt::Alternative, tipo::Type, Binding}
 use super::{Pattern, Statement};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Section<Id = Ident, T = Id> {
+pub enum Section<Id = Ident, V = Id> {
     Prefix {
         prefix: Id,
-        right: Box<Expression<Id, T>>,
+        right: Box<Expression<Id, V>>,
     },
     Suffix {
-        left: Box<Expression<Id, T>>,
+        left: Box<Expression<Id, V>>,
         suffix: Id,
     },
 }
 
 variant_preds! {
-    |Id, T| Section[Id, T]
+    |Id, V| Section[Id, V]
     | is_prefix => Prefix {..}
     | is_suffix => Suffix {..}
 }
 
-impl<Id, T> Section<Id, T> {
+impl<Id, V> Section<Id, V> {
     /// Given a prefix, returns a closure expecting an Expression with which it
     /// will construct a `Section::Prefix` variant.
     #[inline]
-    pub fn with_prefix(prefix: Id) -> impl FnMut(Expression<Id, T>) -> Self
+    pub fn with_prefix(prefix: Id) -> impl FnMut(Expression<Id, V>) -> Self
     where
         Id: Copy,
     {
@@ -42,7 +46,7 @@ impl<Id, T> Section<Id, T> {
     /// Given a suffix, returns a closure expecting an Expression with which it
     /// will construct a `Section::Suffix` variant.
     #[inline]
-    pub fn with_suffix(suffix: Id) -> impl FnMut(Expression<Id, T>) -> Self
+    pub fn with_suffix(suffix: Id) -> impl FnMut(Expression<Id, V>) -> Self
     where
         Id: Copy,
     {
@@ -52,7 +56,7 @@ impl<Id, T> Section<Id, T> {
         }
     }
 
-    pub fn as_lambda(self, fresh_var: Id) -> (Pattern<Id, T>, Expression<Id, T>)
+    pub fn as_lambda(self, fresh_var: Id) -> (Pattern<Id, V>, Expression<Id, V>)
     where
         Id: Copy,
     {
@@ -79,37 +83,37 @@ impl<Id, T> Section<Id, T> {
             Section::Prefix { prefix: id, .. } | Section::Suffix { suffix: id, .. } => affix == id,
         }
     }
-    pub fn as_tuple(self) -> (Id, Expression<Id, T>) {
+    pub fn as_tuple(self) -> (Id, Expression<Id, V>) {
         match self {
             Section::Prefix { prefix, right } => (prefix, *right),
             Section::Suffix { left, suffix } => (suffix, *left),
         }
     }
-    pub fn as_tuple_ref(&self) -> (&Id, &Expression<Id, T>) {
+    pub fn as_tuple_ref(&self) -> (&Id, &Expression<Id, V>) {
         match self {
             Section::Prefix { prefix, right } => (prefix, right.as_ref()),
             Section::Suffix { left, suffix } => (suffix, left.as_ref()),
         }
     }
     #[inline]
-    pub fn into_expression(self) -> Expression<Id, T> {
+    pub fn into_expression(self) -> Expression<Id, V> {
         Expression::Section(self)
     }
-    pub fn expr(&self) -> &Expression<Id, T> {
+    pub fn expr(&self) -> &Expression<Id, V> {
         match self {
             Section::Prefix { right: expr, .. } | Section::Suffix { left: expr, .. } => {
                 expr.as_ref()
             }
         }
     }
-    pub fn expr_mut(&mut self) -> &mut Expression<Id, T> {
+    pub fn expr_mut(&mut self) -> &mut Expression<Id, V> {
         match self {
             Section::Prefix { right: expr, .. } | Section::Suffix { left: expr, .. } => {
                 expr.as_mut()
             }
         }
     }
-    pub fn expression(self) -> Expression<Id, T> {
+    pub fn expression(self) -> Expression<Id, V> {
         match self {
             Section::Prefix { right: expr, .. } | Section::Suffix { left: expr, .. } => *expr,
         }
@@ -131,11 +135,51 @@ impl<Id, T> Section<Id, T> {
     }
 }
 
+impl<Id, V, X> MapFst<Id, X> for Section<Id, V> {
+    type WrapFst = Section<X, V>;
+
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(Id) -> X,
+    {
+        match self {
+            Section::Prefix { prefix, right } => Section::Prefix {
+                prefix: f.apply(prefix),
+                right: Box::new(right.map_fst(f)),
+            },
+            Section::Suffix { left, suffix } => Section::Suffix {
+                suffix: f.apply(suffix),
+                left: Box::new(left.map_fst(f)),
+            },
+        }
+    }
+}
+
+impl<Id, V, X> MapSnd<V, X> for Section<Id, V> {
+    type WrapSnd = Section<Id, X>;
+
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(V) -> X,
+    {
+        match self {
+            Section::Prefix { prefix, right } => Section::Prefix {
+                prefix,
+                right: Box::new(right.map_snd(f)),
+            },
+            Section::Suffix { left, suffix } => Section::Suffix {
+                suffix,
+                left: Box::new(left.map_snd(f)),
+            },
+        }
+    }
+}
+
 pub type RawExpression = Expression<Ident, Ident>;
-pub type Expr<T> = Expression<Ident, T>;
+pub type Expr<V> = Expression<Ident, V>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Expression<Id, T> {
+pub enum Expression<Id, V> {
     /// Identifier expressions; these can contain either *lowercase*-initial
     /// identifiers (corresponding to values), *uppercase*-initial identifiers
     /// (correstpondingo constructors), OR infix identifiers (corresponding to
@@ -162,15 +206,15 @@ pub enum Expression<Id, T> {
     ///   equivalent to the call `r f`
     Path(Id, Vec<Id>),
     Lit(Literal),
-    Neg(Box<Expression<Id, T>>),
+    Neg(Box<Expression<Id, V>>),
     Infix {
         infix: Id,
-        left: Box<Expression<Id, T>>,
-        right: Box<Expression<Id, T>>,
+        left: Box<Expression<Id, V>>,
+        right: Box<Expression<Id, V>>,
     },
-    Section(Section<Id, T>),
-    Tuple(Vec<Expression<Id, T>>),
-    Array(Vec<Expression<Id, T>>),
+    Section(Section<Id, V>),
+    Tuple(Vec<Expression<Id, V>>),
+    Array(Vec<Expression<Id, V>>),
     /// List comprehensions contain an expression and a list of statements
     /// consisting of *generators* and *predicates*.
     ///
@@ -199,21 +243,21 @@ pub enum Expression<Id, T> {
     ///     | (a:as) -> h as
     /// in ...
     /// ```
-    List(Box<Expression<Id, T>>, Vec<Statement<Id, T>>),
-    Dict(Record<Id, Expression<Id, T>>),
-    Lambda(Pattern<Id, T>, Box<Expression<Id, T>>),
-    Let(Vec<Binding<Id, T>>, Box<Expression<Id, T>>),
-    App(Box<Expression<Id, T>>, Box<Expression<Id, T>>),
-    Cond(Box<[Expression<Id, T>; 3]>),
-    Case(Box<Expression<Id, T>>, Vec<Alternative<Id, T>>),
-    Cast(Box<Expression<Id, T>>, Type<Id, T>),
-    Do(Vec<Statement<Id, T>>, Box<Expression<Id, T>>),
-    Range(Box<Expression<Id, T>>, Option<Box<Expression<Id, T>>>),
-    Group(Box<Expression<Id, T>>),
+    List(Box<Expression<Id, V>>, Vec<Statement<Id, V>>),
+    Dict(Record<Id, Expression<Id, V>>),
+    Lambda(Pattern<Id, V>, Box<Expression<Id, V>>),
+    Let(Vec<Binding<Id, V>>, Box<Expression<Id, V>>),
+    App(Box<Expression<Id, V>>, Box<Expression<Id, V>>),
+    Cond(Box<[Expression<Id, V>; 3]>),
+    Case(Box<Expression<Id, V>>, Vec<Alternative<Id, V>>),
+    Cast(Box<Expression<Id, V>>, Type<Id, V>),
+    Do(Vec<Statement<Id, V>>, Box<Expression<Id, V>>),
+    Range(Box<Expression<Id, V>>, Option<Box<Expression<Id, V>>>),
+    Group(Box<Expression<Id, V>>),
 }
 
 variant_preds! {
-    |Id, T| Expression[Id, T]
+    |Id, V| Expression[Id, V]
     | is_unit => Tuple (vs) [if vs.is_empty()]
     | is_nil => Array (vs) [if vs.is_empty()]
     | is_void => Dict (Record::Anon(fls)
@@ -249,12 +293,110 @@ variant_preds! {
     | is_simple_do => Do (stmts, _) [if stmts.is_empty()]
 }
 
-variant_preds! { |T| Expression[Ident, T]
+variant_preds! { |V| Expression[Ident, V]
     | is_list_cons => Infix { infix, ..} [if infix.is_cons_sign()]
 
 }
 
-impl<Id, T> Expression<Id, T> {
+impl<Id, V, X> MapFst<Id, X> for Expression<Id, V> {
+    type WrapFst = Expression<X, V>;
+
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(Id) -> X,
+    {
+        match self {
+            Expression::Ident(id) => Expression::Ident(f.apply(id)),
+            Expression::Path(head, tail) => Expression::Path(f.apply(head), Functor::fmap(tail, f)),
+            Expression::Lit(lit) => Expression::Lit(lit),
+            Expression::Neg(exp) => Expression::Neg(Box::new(exp.map_fst(f))),
+            Expression::Infix { infix, left, right } => Expression::Infix {
+                infix: f.apply(infix),
+                left: Box::new(left.map_fst(f)),
+                right: Box::new(right.map_fst(f)),
+            },
+            Expression::Section(sec) => Expression::Section(sec.map_fst(f)),
+            Expression::Tuple(xs) => Expression::Tuple(xs.map_fst(f)),
+            Expression::Array(xs) => Expression::Tuple(xs.map_fst(f)),
+            Expression::List(x, stmts) => {
+                Expression::List(Box::new(x.map_fst(f)), stmts.map_fst(f))
+            }
+            Expression::Dict(rec) => Expression::Dict(rec.map_fst(f)),
+            Expression::Lambda(pat, body) => {
+                Expression::Lambda(pat.map_fst(f), Box::new(body.map_fst(f)))
+            }
+            Expression::Let(bs, body) => Expression::Let(bs.map_fst(f), Box::new(body.map_fst(f))),
+            Expression::App(fun, arg) => {
+                Expression::App(Box::new(fun.map_fst(f)), Box::new(arg.map_fst(f)))
+            }
+            Expression::Cond(xyz) => {
+                let [x, y, z] = *xyz;
+                let x = x.map_fst(f);
+                let y = y.map_fst(f);
+                let z = z.map_fst(f);
+                Expression::Cond(Box::new([x, y, z]))
+            }
+            Expression::Case(e, a) => Expression::Case(Box::new(e.map_fst(f)), a.map_fst(f)),
+            Expression::Cast(e, ty) => Expression::Cast(Box::new(e.map_fst(f)), ty.map_fst(f)),
+            Expression::Do(stmts, e) => Expression::Do(stmts.map_fst(f), Box::new(e.map_fst(f))),
+            Expression::Range(a, b) => {
+                Expression::Range(Box::new(a.map_fst(f)), b.map(|x| Box::new(x.map_fst(f))))
+            }
+            Expression::Group(e) => Expression::Group(Box::new(e.map_fst(f))),
+        }
+    }
+}
+
+impl<Id, V, X> MapSnd<V, X> for Expression<Id, V> {
+    type WrapSnd = Expression<Id, X>;
+
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(V) -> X,
+    {
+        match self {
+            Expression::Ident(id) => Expression::Ident(id),
+            Expression::Path(head, tail) => Expression::Path(head, tail),
+            Expression::Lit(lit) => Expression::Lit(lit),
+            Expression::Neg(exp) => Expression::Neg(Box::new(exp.map_snd(f))),
+            Expression::Infix { infix, left, right } => Expression::Infix {
+                infix,
+                left: Box::new(left.map_snd(f)),
+                right: Box::new(right.map_snd(f)),
+            },
+            Expression::Section(sec) => Expression::Section(sec.map_snd(f)),
+            Expression::Tuple(xs) => Expression::Tuple(xs.map_snd(f)),
+            Expression::Array(xs) => Expression::Tuple(xs.map_snd(f)),
+            Expression::List(x, stmts) => {
+                Expression::List(Box::new(x.map_snd(f)), stmts.map_snd(f))
+            }
+            Expression::Dict(rec) => Expression::Dict(rec.map_snd(f)),
+            Expression::Lambda(pat, body) => {
+                Expression::Lambda(pat.map_snd(f), Box::new(body.map_snd(f)))
+            }
+            Expression::Let(bs, body) => Expression::Let(bs.map_snd(f), Box::new(body.map_snd(f))),
+            Expression::App(fun, arg) => {
+                Expression::App(Box::new(fun.map_snd(f)), Box::new(arg.map_snd(f)))
+            }
+            Expression::Cond(xyz) => {
+                let [x, y, z] = *xyz;
+                let x = x.map_snd(f);
+                let y = y.map_snd(f);
+                let z = z.map_snd(f);
+                Expression::Cond(Box::new([x, y, z]))
+            }
+            Expression::Case(e, a) => Expression::Case(Box::new(e.map_snd(f)), a.map_snd(f)),
+            Expression::Cast(e, ty) => Expression::Cast(Box::new(e.map_snd(f)), ty.map_snd(f)),
+            Expression::Do(stmts, e) => Expression::Do(stmts.map_snd(f), Box::new(e.map_snd(f))),
+            Expression::Range(a, b) => {
+                Expression::Range(Box::new(a.map_snd(f)), b.map(|x| Box::new(x.map_snd(f))))
+            }
+            Expression::Group(e) => Expression::Group(Box::new(e.map_snd(f))),
+        }
+    }
+}
+
+impl<Id, V> Expression<Id, V> {
     pub const UNIT: Self = Self::Tuple(vec![]);
     pub const NULL: Self = Self::Array(vec![]);
 
@@ -276,14 +418,14 @@ impl<Id, T> Expression<Id, T> {
         }
     }
 
-    pub fn get_lambda_arg(&self) -> Option<&Pattern<Id, T>> {
+    pub fn get_lambda_arg(&self) -> Option<&Pattern<Id, V>> {
         match self {
             Self::Lambda(pat, _) => Some(pat),
             _ => None,
         }
     }
 
-    pub fn get_lambda_args(&self) -> impl Iterator<Item = &Pattern<Id, T>> + '_ {
+    pub fn get_lambda_args(&self) -> impl Iterator<Item = &Pattern<Id, V>> + '_ {
         let mut tmp = self;
         std::iter::from_fn(move || match tmp {
             Self::Lambda(pat, rhs) => {
@@ -635,7 +777,7 @@ impl<Id, T> Expression<Id, T> {
         vars
     }
 
-    pub fn app_iter(&self) -> impl Iterator<Item = &Expression<Id, T>> + '_ {
+    pub fn app_iter(&self) -> impl Iterator<Item = &Expression<Id, V>> + '_ {
         let mut tmp = self;
         std::iter::from_fn(move || {
             if let Self::App(x, y) = tmp {
@@ -647,7 +789,7 @@ impl<Id, T> Expression<Id, T> {
         })
     }
 
-    pub fn iter_lambda_args(&self) -> impl Iterator<Item = &Pattern<Id, T>> + '_ {
+    pub fn iter_lambda_args(&self) -> impl Iterator<Item = &Pattern<Id, V>> + '_ {
         let mut tmp = self;
         std::iter::from_fn(move || {
             if let Self::Lambda(arg, body) = tmp {
@@ -660,7 +802,7 @@ impl<Id, T> Expression<Id, T> {
     }
 }
 
-pub fn try_expr_into_pat<Id: Identifier, T>(expr: Expression<Id, T>) -> Option<Pattern<Id, T>> {
+pub fn try_expr_into_pat<Id: Identifier, V>(expr: Expression<Id, V>) -> Option<Pattern<Id, V>> {
     fn iters<A: Identifier, B>(exprs: Vec<Expression<A, B>>) -> Option<Vec<Pattern<A, B>>> {
         exprs.into_iter().fold(Some(vec![]), |a, c| match a {
             Some(mut acc) => try_expr_into_pat(c).map(|pat| {
@@ -733,7 +875,7 @@ pub fn try_expr_into_pat<Id: Identifier, T>(expr: Expression<Id, T>) -> Option<P
     }
 }
 
-impl<T> Expression<Ident, T> {
+impl<V> Expression<Ident, V> {
     pub fn max_fresh_val(&self) -> Option<u32> {
         wy_name::ident::max_fresh_value(self.idents().into_iter())
     }

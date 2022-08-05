@@ -1,17 +1,21 @@
 use serde::{Deserialize, Serialize};
-use wy_common::{iter::Hashable, HashMap, Set};
+use wy_common::{
+    functor::{MapFst, MapSnd},
+    iter::Hashable,
+    HashMap, Set,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Record<Id, T> {
+pub enum Record<Id, V> {
     /// Anonymous records don't have a *constructor* and are hence *extensible*,
     /// but less type-safe
-    Anon(Vec<Field<Id, T>>),
+    Anon(Vec<Field<Id, V>>),
     /// Records associated with a given *constructor* and hence are statially
     /// associated with that constructor's type.
-    Data(Id, Vec<Field<Id, T>>),
+    Data(Id, Vec<Field<Id, V>>),
 }
 
-impl<Id, T> Record<Id, T> {
+impl<Id, V> Record<Id, V> {
     pub const VOID: Self = Self::Anon(vec![]);
     /// Returns `true` if the record contains no fields, *regardless* of
     /// `Record` variant. This is equivalent to calling `Record::len` and
@@ -41,7 +45,7 @@ impl<Id, T> Record<Id, T> {
         }
     }
 
-    pub fn to_pairs(self) -> Vec<(Id, T)> {
+    pub fn to_pairs(self) -> Vec<(Id, V)> {
         match self {
             Record::Anon(kvs) | Record::Data(_, kvs) => kvs
                 .into_iter()
@@ -58,7 +62,7 @@ impl<Id, T> Record<Id, T> {
 
     /// Returns a slice of all the `Field`s contained by this `Record`. Note
     /// that this method *makes no distinction* regarding its *constructor*.
-    pub fn fields(&self) -> &[Field<Id, T>] {
+    pub fn fields(&self) -> &[Field<Id, V>] {
         match self {
             Record::Anon(fields) | Record::Data(_, fields) => fields.as_slice(),
         }
@@ -72,7 +76,7 @@ impl<Id, T> Record<Id, T> {
         })
     }
 
-    pub fn values(&self) -> impl Iterator<Item = &T> + '_ {
+    pub fn values(&self) -> impl Iterator<Item = &V> + '_ {
         self.fields().iter().filter_map(|field| match field {
             Field::Rest | Field::Key(_) => None,
             Field::Entry(_, v) => Some(v),
@@ -94,7 +98,7 @@ impl<Id, T> Record<Id, T> {
         self.keys().any(|id| id == key)
     }
 
-    pub fn get(&self, key: &Id) -> Option<&T>
+    pub fn get(&self, key: &Id) -> Option<&V>
     where
         Id: PartialEq,
     {
@@ -105,15 +109,15 @@ impl<Id, T> Record<Id, T> {
         })
     }
 
-    pub fn find(&self, pred: impl FnMut(&&Field<Id, T>) -> bool) -> Option<&Field<Id, T>>
+    pub fn find(&self, pred: impl FnMut(&&Field<Id, V>) -> bool) -> Option<&Field<Id, V>>
     where
         Id: PartialEq,
-        T: PartialEq,
+        V: PartialEq,
     {
         self.fields().into_iter().find(pred)
     }
 
-    pub fn into_hashmap(self) -> HashMap<Id, T>
+    pub fn into_hashmap(self) -> HashMap<Id, V>
     where
         Id: Hashable,
     {
@@ -126,9 +130,9 @@ impl<Id, T> Record<Id, T> {
     /// component of the tuple returned by the closure contains a `Some` variant
     /// or not. This means that it is possible to map from an `Record::Anon`
     /// variant to a `Record::Data` variant and vice-versa.
-    pub fn map<F, U, V>(self, mut f: F) -> Record<U, V>
+    pub fn map<F, A, B>(self, mut f: F) -> Record<A, B>
     where
-        F: FnMut((Option<Id>, Vec<Field<Id, T>>)) -> (Option<U>, Vec<Field<U, V>>),
+        F: FnMut((Option<Id>, Vec<Field<Id, V>>)) -> (Option<A>, Vec<Field<A, B>>),
     {
         match self {
             Record::Anon(fields) => {
@@ -145,101 +149,44 @@ impl<Id, T> Record<Id, T> {
             }
         }
     }
+}
 
-    pub fn map_ref<U, V>(
-        &self,
-        f: &mut impl FnMut(Option<&Id>, &Vec<Field<Id, T>>) -> (Option<U>, Vec<Field<U, V>>),
-    ) -> Record<U, V> {
-        let (k, vs) = match self {
-            Record::Anon(fields) => f(None, fields),
-            Record::Data(k, v) => f(Some(k), v),
-        };
-        if let Some(con) = k {
-            Record::Data(con, vs)
-        } else {
-            Record::Anon(vs)
-        }
-    }
+impl<Id, X, V> MapFst<Id, X> for Record<Id, V>
+where
+    V: MapFst<Id, X>,
+{
+    type WrapFst = Record<X, V::WrapFst>;
 
-    pub fn map_id<X>(self, mut f: impl FnMut(Id) -> X) -> Record<X, T> {
-        match self {
-            Record::Anon(fs) => {
-                Record::Anon(fs.into_iter().map(|fld| fld.map_id(|id| f(id))).collect())
-            }
-            Record::Data(k, vs) => Record::Data(
-                f(k),
-                vs.into_iter().map(|fld| fld.map_id(|id| f(id))).collect(),
-            ),
-        }
-    }
-
-    pub fn map_id_ref<X>(&self, f: &mut impl FnMut(&Id) -> X) -> Record<X, T>
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
     where
-        T: Copy,
+        F: FnMut(Id) -> X,
     {
         match self {
-            Record::Anon(fs) => Record::Anon(fs.iter().map(|fld| fld.map_id_ref(f)).collect()),
-            Record::Data(k, vs) => {
-                Record::Data(f(k), vs.iter().map(|fld| fld.map_id_ref(f)).collect())
-            }
-        }
-    }
-
-    pub fn map_t<U>(self, mut f: impl FnMut(T) -> U) -> Record<Id, U> {
-        let mut entries = vec![];
-        if let Record::Anon(es) = self {
-            for field in es {
-                match field {
-                    Field::Rest => entries.push(Field::Rest),
-                    Field::Key(k) => entries.push(Field::Key(k)),
-                    Field::Entry(k, v) => entries.push(Field::Entry(k, f(v))),
-                };
-            }
-            return Record::Anon(entries);
-        } else if let Record::Data(k, vs) = self {
-            for field in vs {
-                match field {
-                    Field::Rest => entries.push(Field::Rest),
-                    Field::Key(k) => entries.push(Field::Key(k)),
-                    Field::Entry(k, v) => entries.push(Field::Entry(k, f(v))),
-                };
-            }
-            return Record::Data(k, entries);
-        } else {
-            unreachable!()
-        }
-    }
-
-    pub fn map_t_ref<F, U>(&self, mut f: F) -> Record<Id, U>
-    where
-        F: FnMut(&T) -> U,
-        Id: Clone,
-    {
-        match self {
-            Record::Anon(es) => Record::Anon(iter_map_t_ref_field(&es[..], &mut |t| f(t))),
-            Record::Data(k, v) => {
-                Record::Data(k.clone(), iter_map_t_ref_field(&v[..], &mut |t| f(t)))
-            }
+            Record::Anon(fields) => Record::Anon(fields.map_fst(f)),
+            Record::Data(con, fields) => Record::Data(f.apply(con), fields.map_fst(f)),
         }
     }
 }
 
-fn iter_map_t_ref_field<X, Y, Z>(
-    fields: &[Field<X, Y>],
-    mut f: &mut impl FnMut(&Y) -> Z,
-) -> Vec<Field<X, Z>>
+impl<Id, X, V, T> MapSnd<T, X> for Record<Id, V>
 where
-    X: Clone,
+    V: MapSnd<T, X>,
 {
-    let mut fs = vec![];
-    for field in fields {
-        fs.push(field.map_t_ref(&mut f))
+    type WrapSnd = Record<Id, V::WrapSnd>;
+
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(T) -> X,
+    {
+        match self {
+            Record::Anon(fields) => Record::Anon(fields.map_snd(f)),
+            Record::Data(con, fields) => Record::Data(con, fields.map_snd(f)),
+        }
     }
-    fs
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Field<Id, T> {
+pub enum Field<Id, V> {
     /// Primarily used in partial records to indicate that a given record's list
     /// of fields is incomplete. Note that it is a syntactic error for this
     /// field to *not* be the last field in record's list of fields.
@@ -247,15 +194,15 @@ pub enum Field<Id, T> {
     /// A `Field` containing only a key. Depending on the syntactic context,
     /// this may correspond to "punning" of field labels, where the field
     /// `Field::Key(x)` is interpreted as an `Field::Entry(x, x')`, with `x'`
-    /// being the result of some simple mapping `f :: Id -> T` applied to `x`.
+    /// being the result of some simple mapping `f :: Id -> V` applied to `x`.
     /// For *expressions*, this `f` is equivalent to `Expression::Ident`, while
     /// for *patterns* it corresponds to `Pattern::Var`.
     Key(Id),
-    /// A (record) `Field` corresponding to a key-value pair of type `(Id, T)`.
-    Entry(Id, T),
+    /// A (record) `Field` corresponding to a key-value pair of type `(Id, V)`.
+    Entry(Id, V),
 }
 
-impl<Id, T> Field<Id, T> {
+impl<Id, V> Field<Id, V> {
     pub fn is_rest(&self) -> bool {
         matches!(self, Self::Rest)
     }
@@ -272,7 +219,7 @@ impl<Id, T> Field<Id, T> {
     /// If the `Field` is an `Entry` variant, then this returns a reference to
     /// the held value, wrapped in `Option::Some`. Otherwise, this returns
     /// `None`.
-    pub fn get_value(&self) -> Option<&T> {
+    pub fn get_value(&self) -> Option<&V> {
         match self {
             Field::Rest | Field::Key(_) => None,
             Field::Entry(_, v) => Some(v),
@@ -284,7 +231,7 @@ impl<Id, T> Field<Id, T> {
     ///
     /// Since field types are generic, a function lifting the key into a value
     /// type must be provided.
-    pub fn expand_key_shorthand(self, f: impl Fn(Id) -> T) -> Self
+    pub fn expand_key_shorthand(self, f: impl FnOnce(Id) -> V) -> Self
     where
         Id: Clone,
     {
@@ -295,18 +242,9 @@ impl<Id, T> Field<Id, T> {
         }
     }
 
-    /// Returns `None` unless both lhs and rhs are present.
-    pub fn as_pair(&self) -> Option<(&Id, &T)> {
-        match self {
-            Field::Rest => None,
-            Field::Key(_) => None,
-            Field::Entry(k, v) => Some((k, v)),
-        }
-    }
-
-    pub fn map<F, U, X>(self, mut f: F) -> Field<U, X>
+    pub fn map<F, A, B>(self, mut f: F) -> Field<A, B>
     where
-        F: FnMut((Id, Option<T>)) -> (U, Option<X>),
+        F: FnMut((Id, Option<V>)) -> (A, Option<B>),
     {
         match self {
             Field::Rest => Field::Rest,
@@ -320,60 +258,58 @@ impl<Id, T> Field<Id, T> {
             },
         }
     }
+}
 
-    pub fn map_ref<U, X>(
-        &self,
-        f: &mut impl FnMut((&Id, Option<&T>)) -> (U, Option<X>),
-    ) -> Field<U, X> {
-        match self {
-            Field::Rest => Field::Rest,
-            Field::Key(k) => Field::Key(f((k, None)).0),
-            Field::Entry(k, v) => match f((k, Some(v))) {
-                (key, None) => Field::Key(key),
-                (key, Some(val)) => Field::Entry(key, val),
-            },
-        }
-    }
+impl<Id, V, X> MapFst<Id, X> for Field<Id, V>
+where
+    V: MapFst<Id, X>,
+{
+    type WrapFst = Field<X, V::WrapFst>;
 
-    pub fn map_id<X>(self, mut f: impl FnMut(Id) -> X) -> Field<X, T> {
-        match self {
-            Field::Rest => Field::Rest,
-            Field::Key(k) => Field::Key(f(k)),
-            Field::Entry(k, v) => Field::Entry(f(k), v),
-        }
-    }
-
-    pub fn map_id_ref<X>(&self, f: &mut impl FnMut(&Id) -> X) -> Field<X, T>
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
     where
-        T: Copy,
+        F: FnMut(Id) -> X,
     {
         match self {
             Field::Rest => Field::Rest,
-            Field::Key(k) => Field::Key(f(k)),
-            Field::Entry(k, v) => Field::Entry(f(k), *v),
+            Field::Key(k) => Field::Key(f.apply(k)),
+            Field::Entry(k, v) => Field::Entry(f.apply(k), v.map_fst(f)),
         }
     }
+}
 
-    pub fn map_t<F, U>(self, mut f: F) -> Field<Id, U>
+impl<'a, Id, V, X> MapFst<&'a Id, X> for &'a Field<Id, V>
+where
+    &'a V: MapFst<&'a Id, X>,
+{
+    type WrapFst = Field<X, <&'a V as MapFst<&'a Id, X>>::WrapFst>;
+
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
     where
-        F: FnMut(T) -> U,
+        F: FnMut(&'a Id) -> X,
     {
         match self {
             Field::Rest => Field::Rest,
-            Field::Key(k) => Field::Key(k),
-            Field::Entry(k, v) => Field::Entry(k, f(v)),
+            Field::Key(id) => Field::Key(f.apply(id)),
+            Field::Entry(id, val) => Field::Entry(f.apply(id), val.map_fst(f)),
         }
     }
+}
 
-    pub fn map_t_ref<F, U>(&self, mut f: F) -> Field<Id, U>
+impl<Id, V, X, T> MapSnd<T, X> for Field<Id, V>
+where
+    V: MapSnd<T, X>,
+{
+    type WrapSnd = Field<Id, V::WrapSnd>;
+
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
     where
-        F: FnMut(&T) -> U,
-        Id: Clone,
+        F: FnMut(T) -> X,
     {
         match self {
             Field::Rest => Field::Rest,
-            Field::Key(k) => Field::Key(k.clone()),
-            Field::Entry(k, v) => Field::Entry(k.clone(), f(v)),
+            Field::Key(id) => Field::Key(id),
+            Field::Entry(id, v) => Field::Entry(id, v.map_snd(f)),
         }
     }
 }

@@ -1,11 +1,14 @@
 use super::tipo::Type;
 use crate::record::Record;
 use serde::{Deserialize, Serialize};
-use wy_common::{variant_preds, Set};
+use wy_common::{
+    functor::{MapFst, MapSnd},
+    variant_preds, Set,
+};
 use wy_lexer::literal::Literal;
 use wy_name::ident::Ident;
 
-variant_preds! { |Id, T| Pattern[Id, T]
+variant_preds! { |Id, V| Pattern[Id, V]
     | is_wild => Wild
     | is_var => Var (_)
     | is_unit => Tup (vs) [if vs.is_empty()]
@@ -21,7 +24,7 @@ variant_preds! { |Id, T| Pattern[Id, T]
 pub type RawPattern = Pattern<Ident, Ident>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Pattern<Id, T> {
+pub enum Pattern<Id, V> {
     /// Describes the wildcard pattern and is written `_`. Since it is a
     /// wildcard pattern, it matches against *any* pattern.
     Wild,
@@ -37,23 +40,23 @@ pub enum Pattern<Id, T> {
     /// Describes the pattern formed by a data constructor and its arguments
     /// (data). In particular, the data constructor *must* be an
     /// uppercase-initial identifier.
-    Dat(Id, Vec<Pattern<Id, T>>),
-    Tup(Vec<Pattern<Id, T>>),
+    Dat(Id, Vec<Pattern<Id, V>>),
+    Tup(Vec<Pattern<Id, V>>),
     /// Describes a list formed with array-like bracket syntax, e.g.,
     /// `[a, b, c]`. Syntactic sugar for lists.
-    Vec(Vec<Pattern<Id, T>>),
+    Vec(Vec<Pattern<Id, V>>),
     /// Describes a list formed with cons operator infix syntax, e.g.,
     /// `(a:b:c)`. Note that *as a pattern*, this *must* occur within
     /// parentheses, as *operator fixities are not observed in patterns*.
-    Lnk(Box<Pattern<Id, T>>, Box<Pattern<Id, T>>),
-    At(Id, Box<Pattern<Id, T>>),
-    Or(Vec<Pattern<Id, T>>),
-    Rec(Record<Id, Pattern<Id, T>>),
-    Cast(Box<Pattern<Id, T>>, Type<Id, T>),
-    Rng(Box<Pattern<Id, T>>, Option<Box<Pattern<Id, T>>>),
+    Lnk(Box<Pattern<Id, V>>, Box<Pattern<Id, V>>),
+    At(Id, Box<Pattern<Id, V>>),
+    Or(Vec<Pattern<Id, V>>),
+    Rec(Record<Id, Pattern<Id, V>>),
+    Cast(Box<Pattern<Id, V>>, Type<Id, V>),
+    Rng(Box<Pattern<Id, V>>, Option<Box<Pattern<Id, V>>>),
 }
 
-impl<Id, T> Pattern<Id, T> {
+impl<Id, V> Pattern<Id, V> {
     pub const UNIT: Self = Self::Tup(vec![]);
     pub const NULL: Self = Self::Vec(vec![]);
 
@@ -339,6 +342,74 @@ impl<Id, T> Pattern<Id, T> {
             Pattern::Cast(pat, _) => pat.valid_expr(),
             Pattern::Rng(a, b) => {
                 a.valid_expr() && b.as_ref().map(|p| p.valid_expr()).unwrap_or_else(|| true)
+            }
+        }
+    }
+}
+
+impl<Id, V, X> MapFst<Id, X> for Pattern<Id, V> {
+    type WrapFst = Pattern<X, V>;
+
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(Id) -> X,
+    {
+        match self {
+            Pattern::Wild => Pattern::Wild,
+            Pattern::Var(id) => Pattern::Var(f.apply(id)),
+            Pattern::Lit(lit) => Pattern::Lit(lit),
+            Pattern::Dat(id, args) => Pattern::Dat(f.apply(id), args.map_fst(f)),
+            Pattern::Tup(pats) => Pattern::Tup(pats.map_fst(f)),
+            Pattern::Vec(pats) => Pattern::Vec(pats.map_fst(f)),
+            Pattern::Lnk(head, tail) => {
+                let head = head.map_fst(f);
+                let tail = tail.map_fst(f);
+                Pattern::Lnk(Box::new(head), Box::new(tail))
+            }
+            Pattern::At(id, pat) => {
+                let id = f.apply(id);
+                let pat = pat.map_fst(f);
+                Pattern::At(id, Box::new(pat))
+            }
+            Pattern::Or(pats) => Pattern::Or(pats.map_fst(f)),
+            Pattern::Rec(rec) => Pattern::Rec(rec.map_fst(f)),
+            Pattern::Cast(pat, ty) => Pattern::Cast(Box::new(pat.map_fst(f)), ty.map_fst(f)),
+            Pattern::Rng(a, b) => {
+                let a = Box::new(a.map_fst(f));
+                let b = b.map(|p| Box::new(p.map_fst(f)));
+                Pattern::Rng(a, b)
+            }
+        }
+    }
+}
+
+impl<Id, V, X> MapSnd<V, X> for Pattern<Id, V> {
+    type WrapSnd = Pattern<Id, X>;
+
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(V) -> X,
+    {
+        match self {
+            Pattern::Wild => Pattern::Wild,
+            Pattern::Var(id) => Pattern::Var(id),
+            Pattern::Lit(lit) => Pattern::Lit(lit),
+            Pattern::Dat(id, args) => Pattern::Dat(id, args.map_snd(f)),
+            Pattern::Tup(pats) => Pattern::Tup(pats.map_snd(f)),
+            Pattern::Vec(pats) => Pattern::Vec(pats.map_snd(f)),
+            Pattern::Lnk(head, tail) => {
+                let head = head.map_snd(f);
+                let tail = tail.map_snd(f);
+                Pattern::Lnk(Box::new(head), Box::new(tail))
+            }
+            Pattern::At(id, pat) => Pattern::At(id, Box::new(pat.map_snd(f))),
+            Pattern::Or(pats) => Pattern::Or(pats.map_snd(f)),
+            Pattern::Rec(rec) => Pattern::Rec(rec.map_snd(f)),
+            Pattern::Cast(pat, ty) => Pattern::Cast(Box::new(pat.map_snd(f)), ty.map_snd(f)),
+            Pattern::Rng(a, b) => {
+                let a = Box::new(a.map_snd(f));
+                let b = b.map(|p| Box::new(p.map_snd(f)));
+                Pattern::Rng(a, b)
             }
         }
     }
