@@ -1,6 +1,9 @@
+use std::fmt;
 use std::{fmt::Write, hash::Hash};
 
 use serde::{Deserialize, Serialize};
+use wy_common::functor::{MapFst, MapSnd};
+use wy_common::Set;
 use wy_common::{either::Either, push_if_absent, Map, Mappable};
 use wy_intern::{Symbol, Symbolic};
 use wy_name::ident::{Ident, Identifier};
@@ -17,11 +20,8 @@ use crate::record::{Field, Record};
 pub struct Tv(pub u32);
 
 impl Tv {
-    pub fn get(&self) -> u32 {
+    pub fn as_u32(&self) -> u32 {
         self.0
-    }
-    pub fn tick(&self) -> Self {
-        Self(self.0 + 1)
     }
 
     pub fn display(&self) -> String {
@@ -34,6 +34,18 @@ impl Tv {
 
     pub fn symbol(&self) -> Symbol {
         Symbol::intern(self.display())
+    }
+
+    // If a character is an ASCII lowercase character, i.e., in the
+    // range U+0061 'a' ..= U+007A 'z', then directly creates the
+    // corresponding `Tv` instance. Otherwise it will interpret the
+    // character byte as a regular usize/u32 generated Tv.
+    pub fn from_ascii_lowercase(c: char) -> Tv {
+        if c.is_ascii_lowercase() {
+            Tv((c as u8 - 0x61) as u32)
+        } else {
+            Tv(c as u8 as u32)
+        }
     }
 
     /// Lossfully coerces an identifier into a type variable.
@@ -72,49 +84,30 @@ impl PartialEq<Tv> for Ident {
     }
 }
 
-impl std::fmt::Debug for Tv {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for Tv {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Tv({})", self.0)
     }
 }
 
-impl std::fmt::Display for Tv {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for Tv {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.display())
     }
 }
 
-impl From<&Ident> for Tv {
-    fn from(id: &Ident) -> Self {
-        Tv(id.get_symbol().as_u32())
-    }
-}
-
-impl From<Ident> for Tv {
-    fn from(id: Ident) -> Self {
-        Tv(id.get_symbol().as_u32())
-    }
-}
-
-impl From<Tv> for Ident {
-    fn from(tv: Tv) -> Self {
-        Ident::Fresh(tv.get())
-    }
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Var<Id>(pub Id, pub Tv);
-impl<Id> Var<Id> {
+pub struct Var<Id, V = Tv>(pub Id, pub V);
+
+pub type TVar = Var<Ident>;
+
+impl<Id, V> Var<Id, V> {
     pub fn new(id: Id) -> Var<Id> {
         Var(id, Tv(0))
     }
 
-    pub fn from_pair((id, tv): (Id, Tv)) -> Self {
+    pub fn from_pair((id, tv): (Id, V)) -> Self {
         Self(id, tv)
-    }
-
-    pub fn from_iter(iter: impl Iterator<Item = Id>) -> impl Iterator<Item = Var<Id>> {
-        iter.zip(0u32..).map(|(id, n)| Var(id, Tv(n)))
     }
 
     pub fn from_enumerated(
@@ -128,28 +121,32 @@ impl<Id> Var<Id> {
         self.0
     }
 
+    pub fn head_ref(&self) -> &Id {
+        &self.0
+    }
+
+    pub fn head_mut(&mut self) -> &mut Id {
+        &mut self.0
+    }
+
     #[inline]
-    pub fn tv(&self) -> Tv {
+    pub fn tail(self) -> V {
         self.1
     }
 
-    pub fn as_pair(self) -> (Id, Tv) {
+    pub fn tail_ref(&self) -> &V {
+        &self.1
+    }
+
+    pub fn tail_mut(&mut self) -> &mut V {
+        &mut self.1
+    }
+
+    pub fn as_pair(self) -> (Id, V) {
         (self.0, self.1)
     }
 
-    pub fn map<X>(self, mut f: impl FnMut(Id) -> X) -> Var<X> {
-        Var(f(self.0), self.1)
-    }
-
-    pub fn map_ref<X>(&self, mut f: impl FnMut(&Id) -> X) -> Var<X> {
-        Var(f(&self.0), self.1)
-    }
-
-    pub fn with_ref(&self) -> Var<&Id> {
-        Var(&self.0, self.1)
-    }
-
-    pub fn replace_var(&mut self, tv: Tv) -> Tv {
+    pub fn replace_tail(&mut self, tv: V) -> V {
         std::mem::replace(&mut self.1, tv)
     }
 
@@ -157,18 +154,47 @@ impl<Id> Var<Id> {
         std::mem::replace(&mut self.0, id)
     }
 }
-impl<Id: std::fmt::Debug> std::fmt::Debug for Var<Id> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Var({:?}, {})", &self.0, &self.1)
+
+impl<Id, V, X> MapFst<Id, X> for Var<Id, V> {
+    type WrapFst = Var<X, V>;
+
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(Id) -> X,
+    {
+        Var(f.apply(self.0), self.1)
     }
 }
-impl<Id: std::fmt::Display> std::fmt::Display for Var<Id> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+
+impl<Id, V, X> MapSnd<V, X> for Var<Id, V> {
+    type WrapSnd = Var<Id, X>;
+
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(V) -> X,
+    {
+        Var(self.0, f.apply(self.1))
+    }
+}
+
+impl<Id: fmt::Debug, V> fmt::Debug for Var<Id, V>
+where
+    V: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Var({:?}, {:?})", &self.0, &self.1)
+    }
+}
+impl<Id: fmt::Display, V> fmt::Display for Var<Id, V>
+where
+    V: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}.[{}]", &self.0, &self.1)
     }
 }
 
-impl<T> std::ops::Deref for Var<T> {
+impl<V> std::ops::Deref for Var<V> {
     type Target = Tv;
 
     fn deref(&self) -> &Self::Target {
@@ -176,8 +202,26 @@ impl<T> std::ops::Deref for Var<T> {
     }
 }
 
-impl<T> From<(T, Tv)> for Var<T> {
-    fn from((t, tv): (T, Tv)) -> Self {
+impl<Id> std::borrow::Borrow<Tv> for Var<Id> {
+    fn borrow(&self) -> &Tv {
+        self.tail_ref()
+    }
+}
+
+impl<Id> std::borrow::BorrowMut<Tv> for Var<Id> {
+    fn borrow_mut(&mut self) -> &mut Tv {
+        self.tail_mut()
+    }
+}
+
+impl std::borrow::Borrow<Kind> for Var<Kind> {
+    fn borrow(&self) -> &Kind {
+        self.kind()
+    }
+}
+
+impl<V> From<(V, Tv)> for Var<V> {
+    fn from((t, tv): (V, Tv)) -> Self {
         Var(t, tv)
     }
 }
@@ -211,19 +255,19 @@ impl Var<Kind> {
     }
 }
 
-impl<T> Extend<Var<T>> for Map<T, Tv>
+impl<X, V> Extend<Var<X, V>> for Map<X, V>
 where
-    T: Eq + Hash,
+    X: Eq + Hash,
 {
-    fn extend<I: IntoIterator<Item = Var<T>>>(&mut self, iter: I) {
+    fn extend<I: IntoIterator<Item = Var<X, V>>>(&mut self, iter: I) {
         for Var(t, tv) in iter {
             self.insert(t, tv);
         }
     }
 }
 
-impl<T> Extend<Var<T>> for Vec<(T, Tv)> {
-    fn extend<I: IntoIterator<Item = Var<T>>>(&mut self, iter: I) {
+impl<X, V> Extend<Var<X, V>> for Vec<(X, V)> {
+    fn extend<I: IntoIterator<Item = Var<X, V>>>(&mut self, iter: I) {
         for Var(t, tv) in iter {
             self.push((t, tv));
         }
@@ -231,7 +275,7 @@ impl<T> Extend<Var<T>> for Vec<(T, Tv)> {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub enum Con<Id = Ident, T = Id> {
+pub enum Con<Id = Ident, V = Ident> {
     /// List constructor `[]`; arity = 1
     List,
     /// Tuple constructor(s) of provided arity. A value of 0 is taken to refer
@@ -240,11 +284,95 @@ pub enum Con<Id = Ident, T = Id> {
     /// Function constructor `(->)`; arity = 2
     Arrow,
     /// User-defined type constructor
-    Data(Id),
-    Free(T),
+    Named(Id),
+    Free(V),
     /// Type constructor aliases, used to superficially preserve type aliases
     /// within an environment where the alias can be resolved
     Alias(Id),
+}
+
+impl<Id, V, X> MapFst<Id, X> for Con<Id, V> {
+    type WrapFst = Con<X, V>;
+
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(Id) -> X,
+    {
+        match self {
+            Con::List => Con::List,
+            Con::Tuple(n) => Con::Tuple(n),
+            Con::Arrow => Con::Arrow,
+            Con::Named(id) => Con::Named(f.apply(id)),
+            Con::Free(v) => Con::Free(v),
+            Con::Alias(id) => Con::Alias(f.apply(id)),
+        }
+    }
+}
+
+impl<Id, V, X> MapSnd<V, X> for Con<Id, V> {
+    type WrapSnd = Con<Id, X>;
+
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(V) -> X,
+    {
+        match self {
+            Con::List => Con::List,
+            Con::Tuple(n) => Con::Tuple(n),
+            Con::Arrow => Con::Arrow,
+            Con::Named(id) => Con::Named(id),
+            Con::Free(v) => Con::Free(f.apply(v)),
+            Con::Alias(id) => Con::Alias(id),
+        }
+    }
+}
+
+impl<Id, V> Con<Id, V> {
+    pub fn map_id<U>(self, f: impl FnOnce(Id) -> U) -> Con<U, V> {
+        match self {
+            Con::List => Con::List,
+            Con::Tuple(n) => Con::Tuple(n),
+            Con::Arrow => Con::Arrow,
+            Con::Named(id) => Con::Named(f(id)),
+            Con::Free(t) => Con::Free(t),
+            Con::Alias(id) => Con::Alias(f(id)),
+        }
+    }
+
+    pub fn map_t<W>(self, f: impl FnOnce(V) -> W) -> Con<Id, W> {
+        match self {
+            Con::List => Con::List,
+            Con::Tuple(n) => Con::Tuple(n),
+            Con::Arrow => Con::Arrow,
+            Con::Named(id) => Con::Named(id),
+            Con::Free(t) => Con::Free(f(t)),
+            Con::Alias(id) => Con::Alias(id),
+        }
+    }
+
+    pub fn map_t_ref<W>(&self, f: impl FnOnce(&V) -> W) -> Con<Id, W>
+    where
+        Id: Clone,
+    {
+        match self {
+            Con::List => Con::List,
+            Con::Tuple(n) => Con::Tuple(*n),
+            Con::Arrow => Con::Arrow,
+            Con::Named(id) => Con::Named(id.clone()),
+            Con::Free(t) => Con::Free(f(t)),
+            Con::Alias(id) => Con::Alias(id.clone()),
+        }
+    }
+    pub fn as_ref(&self) -> Con<&Id, &V> {
+        match self {
+            Con::List => Con::List,
+            Con::Tuple(n) => Con::Tuple(*n),
+            Con::Arrow => Con::Arrow,
+            Con::Named(id) => Con::Named(id),
+            Con::Free(v) => Con::Free(v),
+            Con::Alias(id) => Con::Alias(id),
+        }
+    }
 }
 
 impl<Id: Symbolic> Symbolic for Con<Id, Tv> {
@@ -256,7 +384,7 @@ impl<Id: Symbolic> Symbolic for Con<Id, Tv> {
                 wy_intern::intern_once(&*s)
             }
             Con::Arrow => wy_intern::ARROW,
-            Con::Data(s) => s.get_symbol(),
+            Con::Named(s) => s.get_symbol(),
             Con::Free(t) => wy_intern::intern_once(&*t.display()),
             Con::Alias(s) => s.get_symbol(),
         }
@@ -264,12 +392,12 @@ impl<Id: Symbolic> Symbolic for Con<Id, Tv> {
 }
 
 wy_common::variant_preds! {
-    |Id, T| Con[Id, T]
+    |Id, V| Con[Id, V]
     | is_list => List
     | is_tuple => Tuple(_)
     | is_unit => Tuple(xs) [if *xs == 0]
     | is_arrow => Arrow
-    | is_data => Data(_)
+    | is_data => Named(_)
     | is_free => Free(_)
     | is_alias => Alias(_)
 }
@@ -280,7 +408,7 @@ impl<S: Identifier + Symbolic> PartialEq<S> for Con<Ident, Tv> {
             (Con::List, c) => c.get_symbol() == wy_intern::COLON,
             (Con::Tuple(n), c) => c.get_symbol() == Ident::mk_tuple_commas(*n).get_symbol(),
             (Con::Arrow, c) => c.get_symbol() == wy_intern::ARROW,
-            (Con::Data(c) | Con::Alias(c), id) => id.get_symbol() == c.get_symbol(),
+            (Con::Named(c) | Con::Alias(c), id) => id.get_symbol() == c.get_symbol(),
             (Con::Free(t), s) if s.is_fresh() || s.is_lower() => {
                 s.get_symbol() == Symbol::intern(t.display())
             }
@@ -291,7 +419,7 @@ impl<S: Identifier + Symbolic> PartialEq<S> for Con<Ident, Tv> {
 
 impl Con<Ident, Tv> {
     const fn mk_data(symbol: Symbol) -> Con<Ident, Tv> {
-        Con::Data(Ident::Upper(symbol))
+        Con::Named(Ident::Upper(symbol))
     }
 
     pub fn from_ident(ident: Ident) -> Self {
@@ -304,7 +432,7 @@ impl Con<Ident, Tv> {
         } else if ident.is_arrow() {
             Con::ARROW
         } else {
-            Con::Data(ident)
+            Con::Named(ident)
         }
     }
 
@@ -321,33 +449,33 @@ impl Con<Ident, Tv> {
     pub const HOLE: Self = Self::mk_data(wy_intern::WILD);
 }
 
-impl<Id: std::fmt::Debug, T: std::fmt::Debug> std::fmt::Debug for Con<Id, T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<Id: fmt::Debug, V: fmt::Debug> fmt::Debug for Con<Id, V> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::List => write!(f, "[]"),
             Self::Tuple(n) => (0..=*n)
                 .fold(write!(f, "("), |a, _| a.and(write!(f, ",")))
                 .and(write!(f, ")")),
             Self::Arrow => write!(f, "(->)"),
-            Self::Data(con) | Self::Alias(con) => Id::fmt(con, f),
-            Self::Free(var) => T::fmt(var, f),
+            Self::Named(con) | Self::Alias(con) => Id::fmt(con, f),
+            Self::Free(var) => V::fmt(var, f),
         }
     }
 }
 
-impl<Id: std::fmt::Display, T: std::fmt::Display> std::fmt::Display for Con<Id, T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<Id: fmt::Display, V: fmt::Display> fmt::Display for Con<Id, V> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Con::List => write!(f, "[]"),
             Con::Tuple(ns) => {
                 f.write_char('(')?;
-                for _ in 0..(*ns + 1) {
+                for _ in 0..(*ns) {
                     f.write_char(',')?;
                 }
                 f.write_char(')')
             }
             Con::Arrow => f.write_str("(->)"),
-            Con::Data(id) | Con::Alias(id) => write!(f, "{}", id),
+            Con::Named(id) | Con::Alias(id) => write!(f, "{}", id),
             Con::Free(v) => write!(f, "{}", v),
         }
     }
@@ -364,12 +492,12 @@ impl<Id: std::fmt::Display, T: std::fmt::Display> std::fmt::Display for Con<Id, 
 /// * `[a]` desugars into `(:) a` The above desugared forms correspond to the
 /// `Con` variant. Note: this does not hold for record types!
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Type<Id = Ident, T = Id> {
+pub enum Type<Id = Ident, V = Ident> {
     /// Type variables. These use their own special inner type `Tv`, which is a
     /// newtype wrapper around a `u32`.
-    Var(T),
+    Var(V),
     /// Type constructor applications.
-    Con(Con<Id, T>, Vec<Type<Id, T>>),
+    Con(Con<Id, V>, Vec<Type<Id, V>>),
     /// Function type. The type `a -> b` describes a function whose argument is
     /// of type `a` and whose return value is of type `b`. Functions are *all*
     /// curried, hence a multi-argument function type is a function type whose
@@ -387,14 +515,14 @@ pub enum Type<Id = Ident, T = Id> {
     /// the type `a -> (b -> c) -> d`, which is read as `a -> ((b -> c) -> d)`,
     /// where the first argument is of type `a` and the second is of type `b ->
     /// c`.
-    Fun(Box<Type<Id, T>>, Box<Type<Id, T>>),
-    Tup(Vec<Type<Id, T>>),
-    Vec(Box<Type<Id, T>>),
-    Rec(Record<Id, Type<Id, T>>),
+    Fun(Box<Type<Id, V>>, Box<Type<Id, V>>),
+    Tup(Vec<Type<Id, V>>),
+    Vec(Box<Type<Id, V>>),
+    Rec(Record<Id, Type<Id, V>>),
 }
 
 wy_common::variant_preds! {
-    |Id, T| Type[Id, T]
+    |Id, V| Type[Id, V]
     | is_var => Var(_)
     | is_fun => Fun(..)
     | is_con => Con(..)
@@ -407,11 +535,51 @@ wy_common::variant_preds! {
     | is_list_con_form => Con(Con::List, _)
     | is_arrow_con_form => Con(Con::Arrow, _)
     | is_con_var => Con(Con::Free(_), _)
-    | is_concrete_con => Con(Con::Data(_), _)
+    | is_concrete_con => Con(Con::Named(_), _)
     | is_alias_con => Con(Con::Alias(_), _)
 }
 
-impl<Id, T> Type<Id, T> {
+impl<Id, V, X> MapFst<Id, X> for Type<Id, V> {
+    type WrapFst = Type<X, V>;
+
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(Id) -> X,
+    {
+        match self {
+            Type::Var(v) => Type::Var(v),
+            Type::Con(con, args) => Type::Con(con.map_fst(f), args.map_fst(f)),
+            Type::Fun(t1, t2) => {
+                let t1 = Box::new(t1.map_fst(f));
+                let t2 = Box::new(t2.map_fst(f));
+                Type::Fun(t1, t2)
+            }
+            Type::Tup(ts) => Type::Tup(ts.map_fst(f)),
+            Type::Vec(t) => Type::Vec(Box::new(t.map_fst(f))),
+            Type::Rec(rec) => Type::Rec(rec.map_fst(f)),
+        }
+    }
+}
+
+impl<Id, V, X> MapSnd<V, X> for Type<Id, V> {
+    type WrapSnd = Type<Id, X>;
+
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(V) -> X,
+    {
+        match self {
+            Type::Var(v) => Type::Var(f.apply(v)),
+            Type::Con(con, args) => Type::Con(con.map_snd(f), args.map_snd(f)),
+            Type::Fun(t1, t2) => Type::Fun(Box::new(t1.map_snd(f)), Box::new(t2.map_snd(f))),
+            Type::Tup(ts) => Type::Tup(ts.map_snd(f)),
+            Type::Vec(t) => Type::Vec(Box::new(t.map_snd(f))),
+            Type::Rec(rec) => Type::Rec(rec.map_snd(f)),
+        }
+    }
+}
+
+impl<Id, V> Type<Id, V> {
     pub const UNIT: Self = Self::Tup(vec![]);
 
     #[inline]
@@ -433,12 +601,7 @@ impl<Id, T> Type<Id, T> {
     }
 
     #[inline]
-    pub fn mk_var_tyapp(con_var: T, args: impl IntoIterator<Item = Self>) -> Self {
-        Self::Con(Con::Free(con_var), args.into_iter().collect())
-    }
-
-    #[inline]
-    pub fn mk_app(ty_con: Con<Id, T>, ty_args: impl IntoIterator<Item = Self>) -> Self {
+    pub fn mk_app(ty_con: Con<Id, V>, ty_args: impl IntoIterator<Item = Self>) -> Self {
         Self::Con(ty_con, ty_args.into_iter().collect())
     }
 
@@ -453,7 +616,7 @@ impl<Id, T> Type<Id, T> {
     }
 
     #[inline]
-    pub fn mk_var(tyvar: T) -> Self {
+    pub fn mk_var(tyvar: V) -> Self {
         Self::Var(tyvar)
     }
 
@@ -466,16 +629,16 @@ impl<Id, T> Type<Id, T> {
     pub fn clone_to_list(&self) -> Self
     where
         Id: Clone,
-        T: Copy,
+        V: Copy,
     {
         Self::mk_list(self.clone())
     }
 
     #[inline]
-    pub fn get_con(&self) -> Option<Con<Id, T>>
+    pub fn get_con(&self) -> Option<Con<Id, V>>
     where
         Id: Clone,
-        T: Copy,
+        V: Copy,
     {
         match self {
             Type::Var(_) => None,
@@ -485,11 +648,11 @@ impl<Id, T> Type<Id, T> {
                 if ts.is_empty() {
                     None
                 } else {
-                    Some(Con::Tuple(ts.len()))
+                    Some(Con::Tuple(ts.len() - 1))
                 }
             }
             Type::Vec(_) => Some(Con::List),
-            Type::Rec(r) => r.ctor().map(|id| Con::Data(id.clone())),
+            Type::Rec(r) => r.ctor().map(|id| Con::Named(id.clone())),
         }
     }
 
@@ -612,11 +775,10 @@ impl<Id, T> Type<Id, T> {
     /// |`[(a, b)]` | `m a b`    | ???   | mismatched kind for `[] ((,) a b)`
     pub fn compatible(&self, other: &Self) -> bool
     where
-        T: Copy + PartialEq,
+        V: Copy + PartialEq,
         Id: Clone + PartialEq,
     {
         use Con as C;
-        use Type as T;
         fn zips<A: Clone + PartialEq, B: Copy + PartialEq>(
             xs: &Vec<Type<A, B>>,
             ys: &Vec<Type<A, B>>,
@@ -632,25 +794,25 @@ impl<Id, T> Type<Id, T> {
         match (self, other) {
             // both being variables means we know nothing about the types'
             // structures
-            (T::Var(_), T::Var(_)) => true,
+            (Self::Var(_), Self::Var(_)) => true,
 
-            (T::Var(a), t) | (t, T::Var(a)) => !t.depends_on(a),
+            (Self::Var(a), t) | (t, Self::Var(a)) => !t.depends_on(a),
 
             // built-in differences in kind
-            (T::Vec(_), T::Tup(_)) | (T::Tup(_), T::Vec(_)) => false,
+            (Self::Vec(_), Self::Tup(_)) | (Self::Tup(_), Self::Vec(_)) => false,
 
             // unit is a special case when it comes to being represented by a
             // tuple constructor
-            (T::Tup(xs) | T::Con(C::Tuple(0), xs), T::Tup(ys) | T::Con(C::Tuple(0), ys))
-                if xs.is_empty() && ys.is_empty() =>
-            {
-                true
-            }
+            (
+                Self::Tup(xs) | Self::Con(C::Tuple(0), xs),
+                Self::Tup(ys) | Self::Con(C::Tuple(0), ys),
+            ) if xs.is_empty() && ys.is_empty() => true,
 
-            (T::Tup(xs), T::Tup(ys)) if xs.len() == ys.len() => zips(xs, ys),
+            (Self::Tup(xs), Self::Tup(ys)) if xs.len() == ys.len() => zips(xs, ys),
 
             // (1, 2) ~ (,) 1 2
-            (T::Tup(xs), T::Con(C::Tuple(n), ys)) | (T::Con(C::Tuple(n), xs), T::Tup(ys))
+            (Self::Tup(xs), Self::Con(C::Tuple(n), ys))
+            | (Self::Con(C::Tuple(n), xs), Self::Tup(ys))
                 if *n > 1 && {
                     let m = *n - 1;
                     xs.len() == m && ys.len() == m
@@ -658,7 +820,7 @@ impl<Id, T> Type<Id, T> {
             {
                 zips(xs, ys)
             }
-            (T::Vec(x), T::Con(C::List, ys)) | (T::Con(C::List, ys), T::Vec(x))
+            (Self::Vec(x), Self::Con(C::List, ys)) | (Self::Con(C::List, ys), Self::Vec(x))
                 if ys.len() == 1 =>
             {
                 let y = &ys[0];
@@ -687,21 +849,21 @@ impl<Id, T> Type<Id, T> {
     /// * `(Char, Int, [a])` => `(,,) Char Int ([] a)`
     /// * `(a -> b) -> m a -> m b` => `(->) ((->) a b) ((->) (m a) (m b)) `
     ///
-    pub fn simplify(self) -> Self {
+    pub fn pre_simplify(self) -> Self {
         match self {
             a @ Type::Var(_) => a,
-            Type::Con(con, args) => Type::Con(con, args.fmap(|ty| ty.simplify())),
-            Type::Fun(t1, t2) => Type::Con(Con::Arrow, vec![t1.simplify(), t2.simplify()]),
-            Type::Tup(ts) => Type::Con(Con::Tuple(ts.len()), ts.fmap(|t| t.simplify())),
-            Type::Vec(t) => Type::Con(Con::List, vec![t.simplify()]),
+            Type::Con(con, args) => Type::Con(con, args.fmap(|ty| ty.pre_simplify())),
+            Type::Fun(t1, t2) => Type::Con(Con::Arrow, vec![t1.pre_simplify(), t2.pre_simplify()]),
+            Type::Tup(ts) => Type::Con(Con::Tuple(ts.len() - 1), ts.fmap(|t| t.pre_simplify())),
+            Type::Vec(t) => Type::Con(Con::List, vec![t.pre_simplify()]),
             Type::Rec(_) => todo!(),
         }
     }
 
-    pub fn contains_constructor(&self, con: &Con<Id, T>) -> bool
+    pub fn contains_constructor(&self, con: &Con<Id, V>) -> bool
     where
         Id: PartialEq,
-        T: PartialEq,
+        V: PartialEq,
     {
         match self {
             Type::Var(_) => false,
@@ -729,10 +891,10 @@ impl<Id, T> Type<Id, T> {
 
     /// Identifies whether this `Type` is polymorphic over the given type
     /// variable. Equivalently, this method tests for containment of the given
-    /// variable of type `T`.
-    pub fn depends_on(&self, var: &T) -> bool
+    /// variable of type `V`.
+    pub fn depends_on(&self, var: &V) -> bool
     where
-        T: PartialEq,
+        V: PartialEq,
     {
         match self {
             Type::Var(t) => var == t,
@@ -747,10 +909,10 @@ impl<Id, T> Type<Id, T> {
     }
 
     /// Tests whether a given type contains another type.
-    pub fn contains(&self, subty: &Type<Id, T>) -> bool
+    pub fn contains(&self, subty: &Type<Id, V>) -> bool
     where
         Id: PartialEq,
-        T: PartialEq,
+        V: PartialEq,
     {
         match self {
             ty @ Type::Var(_) => ty == subty,
@@ -768,98 +930,95 @@ impl<Id, T> Type<Id, T> {
     /// the identifier represemting the nullary type constructor.
     pub fn id_if_nullary(&self) -> Option<&Id> {
         match self {
-            Type::Con(Con::Data(id), args) if args.is_empty() => Some(id),
+            Type::Con(Con::Named(id), args) if args.is_empty() => Some(id),
             _ => None,
         }
     }
 
-    /// Returns a list of all the free variables in the order in which they
-    /// appear
-    pub fn vars(&self) -> Vec<T>
-    where
-        T: Copy,
-    {
+    /// Returns a list of references to all the free variables in the order in which they
+    /// appear with duplicates included.
+    pub fn vars(&self) -> Vec<&V> {
         let mut vars = vec![];
         match self {
-            Type::Var(v) => vars.push(*v),
+            Type::Var(v) => vars.push(v),
             Type::Con(Con::Free(v), args) => {
-                vars.push(*v);
-                args.into_iter().for_each(|ty| vars.extend(ty.vars()));
+                vars.push(v.clone());
+                args.into_iter().for_each(|ty| vars.append(&mut ty.vars()));
             }
-            Type::Con(_, args) => args.into_iter().for_each(|ty| vars.extend(ty.vars())),
+            Type::Con(_, args) => args.into_iter().for_each(|ty| vars.append(&mut ty.vars())),
             Type::Fun(x, y) => {
-                vars.extend(x.vars());
-                vars.extend(y.vars());
+                vars.append(&mut x.vars());
+                vars.append(&mut y.vars());
             }
-            Type::Tup(args) => args.into_iter().for_each(|ty| vars.extend(ty.vars())),
-            Type::Vec(t) => vars.extend(t.vars()),
+            Type::Tup(args) => args.into_iter().for_each(|ty| vars.append(&mut ty.vars())),
+            Type::Vec(t) => vars.append(&mut t.vars()),
             Type::Rec(rec) => rec.fields().into_iter().for_each(|fld| {
                 if let Some(v) = fld.get_value() {
-                    vars.extend(v.vars())
+                    vars.append(&mut v.vars())
                 }
             }),
         };
         vars
     }
 
-    /// Returns a vector containing all type variables in a given type in order.
-    /// For example, this method applied to the type `(a, Int, a -> b -> c)`
-    /// returns the vector `[a, b, c]`. Note that duplicates are *not* included!
-    pub fn fv(&self) -> Vec<T>
+    /// Returns a list (= vector) of references to all type variables
+    /// in the order they were encountered without repetition. This
+    /// method is slower than the method `fv` as it doesn't rely on
+    /// `O(1)` lookup type afforded by hashing.
+    pub fn vs(&self) -> Vec<&V>
     where
-        T: Copy + PartialEq,
+        V: PartialEq,
     {
-        let mut fvs = vec![];
+        use wy_common::push_if_absent as push_unique;
+        match self {
+            Type::Var(t) => vec![t],
+            Type::Con(_, args) => args
+                .into_iter()
+                .flat_map(Self::vs)
+                .fold(vec![], push_unique),
+            Type::Fun(x, y) => x.vs().into_iter().chain(y.vs()).fold(vec![], push_unique),
+            Type::Tup(ts) => ts.into_iter().flat_map(Self::vs).fold(vec![], push_unique),
+            Type::Vec(t) => t.vs(),
+            Type::Rec(rec) => rec.values().flat_map(Self::vs).fold(vec![], push_unique),
+        }
+    }
+
+    /// Returns a set containing all type variables in a given type in
+    /// order without repetition as an `IndexSet`.
+    /// For example, this method applied to the type `(a, Int, a -> b -> c)`
+    /// returns the vector `{a, b, c}`.
+    pub fn fv(&self) -> Set<V>
+    where
+        V: Clone + Eq + std::hash::Hash,
+    {
+        let mut fvs = Set::new();
         match self {
             Type::Var(a) => {
-                if !fvs.contains(a) {
-                    fvs.push(*a)
-                }
+                fvs.insert(a.clone());
             }
             Type::Con(Con::Free(t), ts) => {
-                if !fvs.contains(t) {
-                    fvs.push(*t);
-                }
+                // is `m` in `m a` a type variable since it's also a
+                // constructor? or is it simply generic?
+                fvs.insert(t.clone());
                 ts.into_iter().flat_map(|ty| ty.fv()).for_each(|tv| {
-                    if !fvs.contains(&tv) {
-                        fvs.push(tv);
-                    }
+                    fvs.insert(tv);
                 })
             }
             Type::Con(_, ts) | Type::Tup(ts) => {
                 ts.into_iter().flat_map(|ty| ty.fv()).for_each(|tv| {
-                    if !fvs.contains(&tv) {
-                        fvs.push(tv);
-                    }
+                    fvs.insert(tv);
                 });
             }
             Type::Fun(ta, tb) => {
-                for t in ta.fv().into_iter().chain(tb.fv()) {
-                    if !fvs.contains(&t) {
-                        fvs.push(t);
-                    }
-                }
+                fvs.extend(ta.fv());
+                fvs.extend(tb.fv());
             }
             Type::Vec(ty) => {
-                for t in ty.fv() {
-                    if !fvs.contains(&t) {
-                        fvs.push(t);
-                    }
-                }
+                fvs.extend(ty.fv());
             }
-            Type::Rec(rec) => match rec {
-                Record::Anon(fields) | Record::Data(_, fields) => fields
-                    .iter()
-                    .flat_map(|field| match field {
-                        Field::Rest | Field::Key(_) => vec![],
-                        Field::Entry(_, ty) => ty.fv(),
-                    })
-                    .for_each(|t| {
-                        if !fvs.contains(&t) {
-                            fvs.push(t);
-                        }
-                    }),
-            },
+            Type::Rec(rec) => {
+                fvs.extend(rec.values().flat_map(|ty| ty.fv()));
+            }
         };
         fvs
     }
@@ -877,58 +1036,117 @@ impl<Id, T> Type<Id, T> {
     /// possible to derive a mapping from one set of type variables to a new
     /// one, facilitating the process of *normalizing* the type variables within
     /// a given type.
-    pub fn enumerate(&self) -> impl Iterator<Item = Var<T>>
+    pub fn enumerate(&self) -> impl Iterator<Item = Var<V>>
     where
-        T: Copy + Eq,
+        V: Clone + Eq + std::hash::Hash,
     {
-        let mut vars = self.fv();
-        vars.dedup();
-        vars.into_iter().zip(0..).map(|(t, var)| Var(t, Tv(var)))
+        let vars = self.fv();
+        // vars.dedup();
+        vars.into_iter().zip(0..).map(|(v, n)| Var(v, Tv(n)))
     }
 
-    pub fn ty_str(&self, prec: usize) -> TypeStr<'_, Id, T> {
-        TypeStr(self, prec)
+    /// If the second type parameter implements `Symbolic`, and `Id`
+    /// is `Copy`, returns a new copy of the type where the second
+    /// type parameter becomes a `Symbol`. This establishes a common
+    /// type amongst possible parametrizations; when aiming to convert
+    /// the second type parameter `V` to the standard `Tv`, we first
+    /// map to `Symbol`s since `Symbol`s and `Tv`s are both newtypes
+    /// around 32-bit integers. While a `Symbol` can *not* be
+    /// constructed manually, its internal `u32` value is accessible
+    /// and `Tv`s can be generated from said integer value.
+    ///
+    /// Leaving it at this step is fine, but visually will present
+    /// some odd textual representations of the newly generated `Tv`
+    /// type variable; thus, after mapping from `V` -> `Symbol` ->
+    /// `Tv`, we (re)-enumerate the type variables `Tv` to generate a
+    /// key-value pair (of `Tv`s to `Tv`s) -- the iterator for which
+    /// can be partially generated using the `enumerate` method --
+    /// with the old `Tv`s as keys and newly reordered/generated `Tv`s
+    /// as values.
+    ///
+    /// Lastly, the top-most structure that's *not* a type (like a
+    /// `Signature`, `Quantified`, or `Qualified` struct) **MUST** be
+    /// the entry point for this: *all* type variable key-value pairs
+    /// *must* exist in the map, otherwise a type variable is not
+    /// substituted and our surjection fails -- statically enforced
+    /// not by unwrapping map lookup results but by instead relying on
+    /// the use of `std::ops::Index<Tv>` for `Map<Tv, Tv>` lookups;
+    /// additionally, the top-level structure containing type
+    /// variables of its own (shared by the type) must also update its
+    /// paramterized type variable representation to match (otherwise
+    /// we'd have, say, type variables in a predicate that used to
+    /// exist within the type but no longer match!).
+    ///
+    /// This workflow spans across the methods `var_to_sym`,
+    /// `enumerate`, `fv` (via `enumerate`), and `rename_vars`.
+    pub fn var_to_sym(&self) -> Type<Id, Symbol>
+    where
+        Id: Copy,
+        V: Symbolic,
+    {
+        match self {
+            Type::Var(tv) => Type::Var(tv.get_symbol()),
+            Type::Con(con, args) => {
+                let con = match con {
+                    Con::List => Con::List,
+                    Con::Tuple(n) => Con::Tuple(*n),
+                    Con::Arrow => Con::Arrow,
+                    Con::Named(id) => Con::Named(*id),
+                    Con::Free(v) => Con::Free(v.get_symbol()),
+                    Con::Alias(id) => Con::Alias(*id),
+                };
+                let args = args.into_iter().map(Self::var_to_sym).collect();
+                Type::Con(con, args)
+            }
+            Type::Fun(x, y) => Type::Fun(Box::new(x.var_to_sym()), Box::new(y.var_to_sym())),
+            Type::Tup(ts) => Type::Tup(ts.into_iter().map(Self::var_to_sym).collect()),
+            Type::Vec(t) => Type::Vec(Box::new(t.var_to_sym())),
+            Type::Rec(rec) => Type::Rec({
+                let (ctor, fields) = match rec {
+                    Record::Anon(fields) => (None, fields),
+                    Record::Data(ctor, fields) => (Some(ctor), fields),
+                };
+                let fields = fields
+                    .into_iter()
+                    .map(|field| match field {
+                        Field::Rest => Field::Rest,
+                        Field::Key(k) => Field::Key(*k),
+                        Field::Entry(k, v) => Field::Entry(*k, v.var_to_sym()),
+                    })
+                    .collect();
+                if let Some(recon) = ctor {
+                    Record::Data(*recon, fields)
+                } else {
+                    Record::Anon(fields)
+                }
+            }),
+        }
     }
-}
 
-pub fn poly_vars<'a, Id>(poly: impl IntoIterator<Item = &'a Tv>) -> Vec<Type<Id, Tv>> {
-    poly.into_iter().copied().map(Tv::as_type).collect()
-}
-
-pub struct TypeStr<'t, Id, T>(&'t Type<Id, T>, usize);
-impl<'t, Id, T> std::fmt::Debug for TypeStr<'t, Id, T>
-where
-    Id: 't + std::fmt::Display,
-    T: 't + std::fmt::Display,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+    pub fn normalize(self, subst: &Map<V, Tv>) -> Type<Id, Tv>
+    where
+        Id: Copy,
+        V: Eq + Hash,
+    {
+        match self {
+            Type::Var(ref tv) => Type::Var(subst[tv]),
+            Type::Con(con, args) => Type::Con(
+                con.map_t(|ref t| subst[t]),
+                args.fmap(|ty| ty.normalize(subst)),
+            ),
+            Type::Fun(x, y) => {
+                Type::Fun(Box::new(x.normalize(subst)), Box::new(y.normalize(subst)))
+            }
+            Type::Tup(ts) => Type::Tup(ts.fmap(|ty| ty.normalize(subst))),
+            Type::Vec(t) => Type::Vec(t.fmap(|ty| ty.normalize(subst))),
+            Type::Rec(rec) => Type::Rec(rec.map(|(ctor, fields)| {
+                (
+                    ctor,
+                    fields.fmap(|field| field.map(|(k, v)| (k, v.map(|ty| ty.normalize(subst))))),
+                )
+            })),
+        }
     }
-}
-
-/// Takes a type constructor and its type arguments, of the form `C t1 t2 ...
-/// tn` and returns the function type `t1 -> t2 -> ... -> tn -> C t1 t2 ... tn`.
-///
-/// Note that this is NOT necessarily the function type used by every
-/// construction: consider the following snippet of code:
-/// ```wysk
-/// data Foo a = Foo' a a a
-/// ~~ Foo' :: a -> a -> a -> Foo a
-/// foo :: [a] -> Int -> Foo Int
-///     | xs y = let m = length xs in Foo' (m - y) (m + y) (m * y)
-/// ```
-/// We see that the type constructor `Foo` is parametrized over one single type,
-/// yet the *data constructor* `Foo'`, as well as the function `foo` -- both of
-/// which return a `Foo` type -- has more than 1 argument.
-pub fn guess_tycon_fun_ty<Id, T>(con: Con<Id, T>, args: Vec<Type<Id, T>>) -> Type<Id, T>
-where
-    Id: Clone,
-    T: Copy,
-{
-    args.clone()
-        .into_iter()
-        .rev()
-        .fold(Type::Con(con, args), |a, c| Type::mk_fun(a, c))
 }
 
 impl Type<Ident, Tv> {
@@ -943,30 +1161,6 @@ impl Type<Ident, Tv> {
 
     pub const fn mk_nullary(con: Con<Ident, Tv>) -> Self {
         Self::Con(con, vec![])
-    }
-
-    pub fn replace(self, map: &Map<Type<Ident, Tv>, Type<Ident, Tv>>) -> Type<Ident, Tv> {
-        if let Some(ty) = map.get(&self) {
-            return ty.clone();
-        }
-        match self {
-            Type::Var(_) => self,
-            Type::Con(con, tys) => Type::Con(con, tys.fmap(|ty| ty.replace(map))),
-            Type::Fun(x, y) => {
-                let (a, b) = (x, y).fmap(|ty| ty.replace(map));
-                Type::Fun(a, b)
-            }
-            Type::Tup(ts) => Type::Tup(ts.fmap(|ty| ty.replace(map))),
-            Type::Vec(t) => Type::Vec(t.fmap(|ty| ty.replace(map))),
-            Type::Rec(rec) => Type::Rec(rec.map(|(con, fields)| {
-                (
-                    con,
-                    fields.fmap(|field| {
-                        field.map(|(lhs, rhs)| (lhs, rhs.fmap(|ty| ty.replace(map))))
-                    }),
-                )
-            })),
-        }
     }
 
     /// Returns a tuple type with `n` components, each component a
@@ -989,148 +1183,74 @@ impl Type<Ident, Tv> {
     }
 }
 
-/// A `Context` always appears as an element in a sequence of other `Context`s
-/// preceding a `=>` and a type signature, and encodes what *type constraints* a
-/// given *type variable* must adhere to in the following type signature.
-///
-/// For example, the following type signature contains *two* `Context`s
-/// corresponding to two type variables `a` and `b`, where, for some given
-/// typeclasses `A` and `B`, `a` is constrained (= required to be a member of)
-/// the typeclass `A`, and `b` is constrained to `B`.
-/// ```wysk
-/// ~~> Context 1
-/// ~~|  vvv
-///     |A a, B b| => (a, b)
-/// ~~:       ^^^  
-/// ~~:  Context 2
-/// ~~: ^--------^
-/// ~~: Context 1 and Context 2, surrounded by `|` and followed by `=>`
-/// ```
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Context<Id = Ident, T = Ident> {
-    /// The name of the type class for which this holds
-    pub class: Id,
-    /// Defaults to `Tv`, but is parametrized in order to allow for simple
-    /// (lowercase) identifiers to be used during parsing (which should then be
-    /// *normalized* once the RHS is available so that `T` directly matches any
-    /// type variables from the RHS).
-    pub head: T,
-}
-
-pub type Predicate<Id, T> = Context<Id, Type<Id, T>>;
-
-impl<Id, T> Context<Id, T> {
-    pub fn class_id(&self) -> &Id {
-        &self.class
-    }
-    pub fn head(&self) -> &T {
-        &self.head
-    }
-
-    pub fn unzip(contexts: &[Self]) -> Vec<(Id, T)>
+impl<Id> Type<Id, Tv> {
+    /// Like the method `simplify`, this reduces a type in terms of type
+    /// variables and type application, but represented with a `Ty` instance
+    /// instead of as a `Self` type.
+    pub fn desugar(&self) -> Ty
     where
-        Id: Clone,
-        T: Clone,
+        Id: Copy + Symbolic,
     {
-        contexts
-            .into_iter()
-            .map(|ctx| (ctx.class.clone(), ctx.head.clone()))
-            .collect()
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Signature<Id = Ident, T = Ident> {
-    /// quantified type variables -- should this be here or a separate struct or
-    /// type variant?
-    pub each: Vec<T>,
-    pub ctxt: Vec<Context<Id, T>>,
-    pub tipo: Type<Id, T>,
-}
-
-wy_common::struct_field_iters! {
-    |Id, T| Signature<Id, T>
-    | each => each_iter :: T
-    | ctxt => ctxt_iter :: Context<Id, T>
-}
-
-impl<Id, T> Signature<Id, T> {
-    /// Checks whether all type variables in the type signature's contexts
-    /// appear in the type annotation. It is valid for the type to contain type
-    /// variables not covered by the contexts, *however* all type variables
-    /// within the contexts *must* be used in the type!
-    ///
-    /// For example, the signature `|Foo a, Bar b| a -> b` is valid, but the
-    /// signature `|Foo a, Bar b, Baz c| a -> b` is not as the type `a -> b`
-    /// does not include the type variable `c`.
-    pub fn no_unused_ctx_tyvars(&self) -> bool
-    where
-        T: Copy + PartialEq,
-    {
-        let tyvars = self.tipo.fv();
-        self.ctxt.iter().all(|ctxt| tyvars.contains(&ctxt.head))
-    }
-
-    pub fn ctxt_iter_mut(&mut self) -> std::slice::IterMut<'_, Context<Id, T>> {
-        self.ctxt.iter_mut()
-    }
-}
-
-/// Equivalent to `Option<Signature<Id, T>>`, expressing whether a
-/// type annotation has been provided (in which case the `Explicit`
-/// variant is used) or omitted (in which case the `Implicit` variant
-/// is used).
-///
-/// A benefit to using a custom type over `Option` is that it allows
-/// for further extension to the type system. Universal quantification
-/// is currently (superficially) recorded in the `Signature` type, but
-/// will be offloaded to `Contract`s, allowing for `Signature`s to
-/// specialize in gluing together class constraints with type nodes.
-///
-/// An explicit contract corresponds to the type signature found in
-/// source code and is never overwritten (only isomorphically modified
-/// in terms of representation), but rather used as a reference with
-/// which type inference and checking is unified in later phases.
-///
-/// Note that whether a contract is implicit or explicit does not
-/// affect whether the item to which it is tied has its type inferred.
-/// For example, the type of a binding is still inferred regardless as
-/// whether it was explicitly annotated with a type. However, after
-/// inference, explicit contracts are unified against the inferred
-/// types in addition to the inference-generated constraints.
-///
-/// For example, during type inference every binding has a type
-/// inferred along with a set of type constraints. Type checking fails
-/// if the inferred type cannot be solved according to the generated
-/// constraints. If a given binding is annotated, and the inferred
-/// type is solvable with respect to the generated constraints but
-/// cannot be unified with respect to the annotated type, an error
-/// will be raised and type checking will fail, as the explicit
-/// contract takes precedence over implicit inference.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Contract<Id, T> {
-    Implicit,
-    Explicit(Signature<Id, T>),
-}
-
-wy_common::variant_preds! {
-    |Id, T| Contract[Id, T]
-    | is_implicit => Implicit
-    | is_explicit => Explicit(_)
-}
-
-impl<Id, T> Contract<Id, T> {
-    pub fn signature(&self) -> Option<&Signature<Id, T>> {
-        if let Self::Explicit(s) = self {
-            Some(s)
-        } else {
-            None
+        match self {
+            Type::Var(v) => Ty::Var(TyVar(*v, Kind::Star)),
+            Type::Con(c, args) => {
+                let kind = || Kind::mk(self.fv().len());
+                match c {
+                    Con::List => {
+                        if args.is_empty() {
+                            Ty::Con(TyCon(Symbol::from("[]"), Kind::mk(2)))
+                        } else {
+                            Ty::mk_list(args[0].desugar())
+                        }
+                    }
+                    Con::Tuple(n) => {
+                        let m = args.len();
+                        if *n == m + 1 {
+                            Ty::mk_tuple(args.into_iter().map(Self::desugar).collect())
+                        } else {
+                            todo!()
+                        }
+                    }
+                    Con::Arrow => args
+                        .into_iter()
+                        .map(|t| t.desugar())
+                        .reduce(Ty::mk_fun)
+                        .unwrap_or_else(|| Ty::Con(TyCon(Ty::ARROW, Kind::mk(3)))),
+                    Con::Named(n) | Con::Alias(n) => args.into_iter().map(|t| t.desugar()).fold(
+                        Ty::Con(TyCon(n.get_symbol(), Kind::mk(self.fv().len()))),
+                        |a, c| Ty::mk_app(a, c),
+                    ),
+                    Con::Free(t) => args.into_iter().map(|t| t.desugar()).fold(
+                        Ty::Con(TyCon(
+                            t.symbol(),
+                            Kind::Arrow(Box::new([Kind::Star, kind()])),
+                        )),
+                        |a, c| Ty::mk_app(a, c),
+                    ),
+                }
+            }
+            Type::Fun(x, y) => {
+                use Kind::{Arrow, Star};
+                let k = || Arrow(Box::new([Star, Arrow(Box::new([Star, Star]))]));
+                let app = |a, b| Ty::App(Box::new([a, b]));
+                let fun = |a, b| app(app(Ty::Con(TyCon(Ty::ARROW, k())), a), b);
+                // a -> b -> c
+                // (->) a ((->) b c)
+                fun(x.desugar(), y.desugar())
+            }
+            Type::Tup(ts) => Ty::mk_tuple(ts.into_iter().map(|ty| ty.desugar()).collect()),
+            Type::Vec(ts) => Ty::mk_list(ts.desugar()),
+            Type::Rec(_) => todo!(),
         }
     }
 }
 
-impl<Id: std::fmt::Display, Ty: std::fmt::Display> std::fmt::Display for Type<Id, Ty> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<Id, Ty> fmt::Display for Type<Id, Ty>
+where
+    Id: fmt::Display,
+    Ty: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Type::Var(tv) => write!(f, "{}", tv),
             Type::Con(con, args) => {
@@ -1204,156 +1324,697 @@ impl<Id: std::fmt::Display, Ty: std::fmt::Display> std::fmt::Display for Type<Id
     }
 }
 
-#[macro_export]
-macro_rules! Ty {
-    (Int) => {{ Type::INT }};
-    (Nat) => {{ Type::NAT }};
-    (Byte) => {{ Type::BYTE }};
-    (Bool) => {{ Type::BOOL }};
-    (IO $x:expr) => {{ Type::mk_app(Con::IO, $x) }};
-    (Str) => {{ Type::STR }};
-    (Char) => {{ Type::Char }};
-    (Float) => {{ Type::FLOAT }};
-    (Double) => {{ Type::DOUBLE }};
-    (#()) => {{ $crate::tipo::Type::UNIT }};
-    (
-        ($($ts:tt)+)
-    ) => {{
-        $crate::Ty! { $($ts)+ }
-    }};
-    (
-        ($($an:tt,)*)
-    ) => {{ $crate::tipo::Type::mk_tuple([$($an,)*]) }};
-    (@$id:ident) => {{ $id.clone() }};
-    (@$id:ident -> $($rest:tt)+) => {{
-        Type::mk_fun(
-            $id.clone(), $crate::Ty! { $($rest)+ }
-        )
-    }};
-    ($num:literal) => {{ Type::Var(Tv($num)) }};
-    ($num:literal -> $($rest:tt)+) => {{
-        Type::mk_fun(Type::Var(Tv($num)), $crate::Ty! { $($rest)+ })
-    }};
-    (#($t0:ident $($ts:tt)*)) => {{
-        $crate::tipo::Type::mk_app(
-            $crate::tipo::Con::Data(
-                Ident::Upper(wy_intern::intern_once(stringify!($t0)))
-            ),
-            [$($crate::Ty! { $ts },)*]
-        )
-    }};
-    (#($t0:ident $($($ts:tt)+)?) -> $($tail:tt)+) => {{
-        $crate::tipo::Type::mk_fun(
-            $crate::tipo::Type::mk_app(
-                $crate::tipo::Con::Data(
-                    wy_name::ident::Ident::Upper(wy_intern::intern_once(stringify!($t0)))
-                ),
-                [$($($crate::Ty! { $ts },)+)?]
-            ),
-            $crate::Ty! { $($tail)+ }
-        )
-    }};
-    (
-        $con:ident $(. $($ts:tt)+)?
-    ) => {{
-        $crate::Ty! { #( $con $($($ts)+)? )}
-    }};
-    (
-        $con:ident $(. $($ts:tt)+)? -> $(rest:tt)+
-    ) => {{
-        $crate::tipo::Type::mk_fun(
-            $crate::Ty! { #( $con $($($ts)+)? )},
-            $crate::Ty! { $($rest)+ }
-        )
-    }};
-    (
-        [$($ts:tt)+]
-    ) => {{ $crate::tipo::Type::mk_list($($ts)+) }};
-    (
-        $left:tt -> $($right:tt)+
-    ) => {{
-        $crate::tipo::Type::mk_fun(
-            $crate::Ty! { $left }, $crate::Ty! { $($right)+ }
-        )
-    }};
+/// The left-hand side of a type alias, newtype or class declaration.
+///
+/// A `SimpleType` consists of a type constructor followed by a flat
+/// sequence of type variables (which may be empty) and hence always
+/// have the form `C t1 t2 ... tn`, where `t1`, `t2`, ..., etc., are
+/// optional but must be *distinct* type variables. In other words, a
+/// simple type is the type application of a single type constructor
+/// with arbitrarily many non-repeated type variables.
+///
+/// For example, the type `Foo a b` is a simple type, as well as
+/// `Bool` and `Bar baz boo`, but **not** `(a, b)`, `[a]`, `Foo (Bar
+/// a) baz`, etc.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SimpleType<Id = Ident, V = Ident>(pub Id, pub Vec<V>);
 
+impl<Id, V> SimpleType<Id, V> {
+    pub fn new(tycon_id: Id, tyvars: Vec<V>) -> Self {
+        SimpleType(tycon_id, tyvars)
+    }
+
+    pub const fn new_nullary(tycon_id: Id) -> Self {
+        SimpleType(tycon_id, Vec::new())
+    }
+
+    pub fn con(&self) -> &Id {
+        &self.0
+    }
+
+    pub fn vars(&self) -> &[V] {
+        &self.1
+    }
+
+    #[inline]
+    pub fn len_vars(&self) -> usize {
+        self.1.len()
+    }
+
+    #[inline]
+    /// Returns `true` if it has no type variables, otherwise it
+    /// `false`.
+    pub fn is_nullary(&self) -> bool {
+        self.1.is_empty()
+    }
+
+    #[inline]
+    pub fn contains_var(&self, tyvar: &V) -> bool
+    where
+        V: PartialEq,
+    {
+        self.1.contains(tyvar)
+    }
+
+    #[inline]
+    pub fn vars_iter(&self) -> std::slice::Iter<'_, V> {
+        self.1.iter()
+    }
+
+    #[inline]
+    pub fn vars_iter_mut(&mut self) -> std::slice::IterMut<'_, V> {
+        self.1.iter_mut()
+    }
+
+    pub fn no_dupe_vars(&self) -> bool
+    where
+        V: PartialEq,
+    {
+        self.len_vars()
+            == self
+                .vars_iter()
+                .fold(
+                    Vec::with_capacity(self.len_vars()),
+                    wy_common::push_if_absent,
+                )
+                .len()
+    }
 }
 
-impl<Id> Type<Id, Tv> {
-    /// Like the method `simplify`, this reduces a type in terms of type
-    /// variables and type application, but represented with a `Ty` instance
-    /// instead of as a `Self` type.
-    pub fn simplify_ty(&self) -> Ty
+impl<Id, V> fmt::Display for SimpleType<Id, V>
+where
+    Id: fmt::Display,
+    V: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", &self.0)?;
+        for v in &self.1 {
+            write!(f, " {v}")?;
+        }
+        Ok(())
+    }
+}
+
+impl<Id, V, X> MapFst<Id, X> for SimpleType<Id, V> {
+    type WrapFst = SimpleType<X, V>;
+
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
     where
-        Id: Copy + Symbolic,
+        F: FnMut(Id) -> X,
+    {
+        SimpleType(f.apply(self.0), self.1)
+    }
+}
+
+impl<Id, V, X> MapSnd<V, X> for SimpleType<Id, V> {
+    type WrapSnd = SimpleType<Id, X>;
+
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(V) -> X,
+    {
+        use wy_common::functor::Functor;
+        SimpleType(self.0, Functor::fmap(self.1, f))
+    }
+}
+
+/// A parameter for `Predicate`s. This should *generally* be a single
+/// type variable, but it is possible for it to be a generic type
+/// application while still being valid (= in head-normal form), such
+/// as in the predicate `|Eq (m a)|`.
+///
+/// It is a syntax error for a `Parameter` to contain any non-variable
+/// constructors; this can be seen in the type parametrization of the
+/// `Parameter` type, which does not depend on constructor identifiers
+/// like most AST nodes, e.g., `Type<Id, V>` uses `Id` for fixed
+/// constructor identifiers and `V` for type variables (as well as the
+/// the case of a generic constructor).
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Parameter<V = Ident>(pub V, pub Vec<V>);
+
+impl<V> Parameter<V> {
+    pub fn iter(&self) -> impl Iterator<Item = &V> + '_ {
+        std::iter::once(&self.0).chain(self.1.iter())
+    }
+
+    pub fn mapf<F, X>(self, f: &mut wy_common::functor::Func<'_, F>) -> Parameter<X>
+    where
+        F: FnMut(V) -> X,
+    {
+        let Parameter(head, tail) = self;
+        let head = f.apply(head);
+        let tail = tail.into_iter().map(|v| f.apply(v)).collect();
+        Parameter(head, tail)
+    }
+}
+
+/// A `Predicate` encodes what *type constraints* a given *type
+/// variable* must adhere to in the following type signature. A
+/// `Predicate` always appears as an element in a sequence of other
+/// `Predicate`s enclosed by a single pipe `|`, and must precede a
+/// `Type`.
+///
+/// For example, the following type signature contains *two*
+/// `Predicate`s corresponding to two type variables `a` and `b`,
+/// where, for some given typeclasses `A` and `B`, `a` is constrained
+/// (= required to be a member of) the typeclass `A`, and `b` is
+/// constrained to `B`.
+/// ```wysk
+/// ~~> Predicate 1
+/// ~~|  vvv
+///     |A a, B b| (a, b)
+/// ~~:       ^^^  
+/// ~~:  Predicate 2
+/// ~~: ^--------^
+/// ~~: Predicate 1 and Predicate 2, surrounded by `|` and followed by the type `(a, b)`
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Predicate<Id = Ident, V = Ident> {
+    /// The name of the type class for which this holds
+    pub class: Id,
+    /// Type that must be a member of the class in the `class` field
+    pub head: Parameter<V>,
+}
+
+impl<Id, V> Predicate<Id, V> {
+    pub fn class(&self) -> &Id {
+        &self.class
+    }
+    pub fn head(&self) -> &Parameter<V> {
+        &self.head
+    }
+    pub fn tyvars(&self) -> impl Iterator<Item = &V> + '_ {
+        self.head.iter()
+    }
+}
+
+impl<Id, V, X> MapFst<Id, X> for Predicate<Id, V> {
+    type WrapFst = Predicate<X, V>;
+
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(Id) -> X,
+    {
+        let Predicate { class, head } = self;
+        let class = f.apply(class);
+        Predicate { class, head }
+    }
+}
+
+impl<Id, V, X> MapSnd<V, X> for Predicate<Id, V> {
+    type WrapSnd = Predicate<Id, X>;
+
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(V) -> X,
+    {
+        let Predicate { class, head } = self;
+        let head = head.mapf(f);
+        Predicate { class, head }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Qualified<Id = Ident, V = Ident> {
+    pub pred: Vec<Predicate<Id, V>>,
+    pub tipo: Type<Id, V>,
+}
+
+impl<Id, V> Qualified<Id, V> {
+    pub fn pred_iter(&self) -> std::slice::Iter<'_, Predicate<Id, V>> {
+        self.pred.iter()
+    }
+    pub fn pred_iter_mut(&mut self) -> std::slice::IterMut<'_, Predicate<Id, V>> {
+        self.pred.iter_mut()
+    }
+    pub fn vars(&self) -> impl Iterator<Item = &V> + '_ {
+        // todo!()
+        self.pred_iter()
+            .flat_map(|pred| pred.head().iter())
+            .chain(self.tipo.vars())
+    }
+}
+
+impl<Id, V, X> MapFst<Id, X> for Qualified<Id, V> {
+    type WrapFst = Qualified<X, V>;
+
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(Id) -> X,
+    {
+        Qualified {
+            pred: self.pred.map_fst(f),
+            tipo: self.tipo.map_fst(f),
+        }
+    }
+}
+
+impl<Id, V, X> MapSnd<V, X> for Qualified<Id, V> {
+    type WrapSnd = Qualified<Id, X>;
+
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(V) -> X,
+    {
+        Qualified {
+            pred: self.pred.map_snd(f),
+            tipo: self.tipo.map_snd(f),
+        }
+    }
+}
+
+/// Quantified variables, referring to explicitly quantified (type)
+/// variables in source code such as `foo :: forall a b . a -> b`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Quantified<Id = Ident, V = Tv>(pub Vec<Var<Id, V>>);
+
+impl<X, V> Default for Quantified<X, V> {
+    fn default() -> Self {
+        Self(Default::default())
+    }
+}
+
+impl<Id, V, X> MapFst<Id, X> for Quantified<Id, V> {
+    type WrapFst = Quantified<X, V>;
+
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(Id) -> X,
+    {
+        Quantified(self.0.map_fst(f))
+    }
+}
+
+impl<Id, V, X> MapSnd<V, X> for Quantified<Id, V> {
+    type WrapSnd = Quantified<Id, X>;
+
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(V) -> X,
+    {
+        Quantified(self.0.map_snd(f))
+    }
+}
+
+impl<Id, V> Quantified<Id, V> {
+    pub const EMPTY: Self = Self::new();
+
+    pub const fn new() -> Self {
+        Self(Vec::new())
+    }
+
+    #[inline]
+    pub fn with_capacity(cap: usize) -> Self {
+        Quantified(Vec::with_capacity(cap))
+    }
+
+    #[inline]
+    pub fn iter(&self) -> std::slice::Iter<'_, Var<Id, V>> {
+        self.0.iter()
+    }
+
+    #[inline]
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, Var<Id, V>> {
+        self.0.iter_mut()
+    }
+
+    #[inline]
+    pub fn into_iter(self) -> std::vec::IntoIter<Var<Id, V>> {
+        self.0.into_iter()
+    }
+
+    pub fn tvs(&self) -> impl Iterator<Item = &V> + '_ {
+        self.iter().map(|Var(_, tv)| tv)
+    }
+
+    pub fn ids(&self) -> impl Iterator<Item = &Id> + '_ {
+        self.iter().map(|Var(x, _)| x)
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl<X> Quantified<X> {
+    pub fn max_tv(&self) -> Tv {
+        self.iter()
+            .map(|Var(_, Tv(n))| n)
+            .max()
+            .map(|n| Tv(*n))
+            .unwrap_or_else(|| Tv(0))
+    }
+    pub fn min_tv(&self) -> Tv {
+        self.iter()
+            .map(|Var(_, Tv(n))| n)
+            .min()
+            .map(|n| Tv(*n))
+            .unwrap_or_else(|| Tv(0))
+    }
+
+    #[inline]
+    pub fn tv_bounds(&self) -> (Tv, Tv) {
+        (self.min_tv(), self.max_tv())
+    }
+
+    pub fn contains_tv(&self, tv: &Tv) -> bool {
+        self.iter().any(|Var(_, vt)| tv == vt)
+    }
+
+    /// Returns the `Tv` greater than the maximum `Tv` currently contained.
+    pub fn tv_supremum(&self) -> Tv {
+        Tv(self.max_tv().0 + 1)
+    }
+
+    pub fn push_fresh(&mut self, item: X) -> &mut Var<X> {
+        let len = self.len();
+        self.0.push(Var(item, self.tv_supremum()));
+        &mut self.0[len]
+    }
+}
+
+impl<X> IntoIterator for Quantified<X> {
+    type Item = Var<X>;
+
+    type IntoIter = std::vec::IntoIter<Var<X>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        Quantified::into_iter(self)
+    }
+}
+
+impl<'a, X> IntoIterator for &'a Quantified<X> {
+    type Item = &'a Var<X>;
+
+    type IntoIter = std::slice::Iter<'a, Var<X>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<X> FromIterator<X> for Quantified<X> {
+    fn from_iter<T: IntoIterator<Item = X>>(iter: T) -> Self {
+        Quantified(
+            iter.into_iter()
+                .enumerate()
+                .map(|(n, x)| Var(x, Tv(n as u32)))
+                .collect(),
+        )
+    }
+}
+
+impl<X, V> FromIterator<(X, V)> for Quantified<X, V> {
+    fn from_iter<T: IntoIterator<Item = (X, V)>>(iter: T) -> Self {
+        Self(iter.into_iter().map(|(x, v)| Var(x, v)).collect())
+    }
+}
+
+impl<X, V> FromIterator<Var<X, V>> for Quantified<X, V> {
+    fn from_iter<T: IntoIterator<Item = Var<X, V>>>(iter: T) -> Self {
+        Quantified(Vec::from_iter(iter))
+    }
+}
+
+impl fmt::Display for Quantified<()> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_empty() {
+            Ok(())
+        } else {
+            write!(f, "forall")?;
+            for Var(_, tv) in self {
+                write!(f, " {tv}")?;
+            }
+            write!(f, ". ")
+        }
+    }
+}
+
+impl fmt::Display for Quantified<Kind> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_empty() {
+            Ok(())
+        } else {
+            write!(f, "forall")?;
+            for Var(kind, tv) in self {
+                write!(f, " ({tv} :: {kind})")?;
+            }
+            write!(f, ". ")
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Annotation<Id = Ident, V = Ident> {
+    pub quant: Quantified<Id, V>,
+    pub qual: Qualified<Id, V>,
+}
+
+impl<Id, V> Annotation<Id, V> {
+    pub fn constrains(&self, tvar: &V) -> bool
+    where
+        V: PartialEq,
+    {
+        self.qual
+            .pred_iter()
+            .any(|pred| pred.head.iter().any(|v| v == tvar))
+    }
+}
+
+impl<Id, V, X> MapFst<Id, X> for Annotation<Id, V> {
+    type WrapFst = Annotation<X, V>;
+
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(Id) -> X,
+    {
+        Annotation {
+            quant: self.quant.map_fst(f),
+            qual: self.qual.map_fst(f),
+        }
+    }
+}
+
+impl<Id, V, X> MapSnd<V, X> for Annotation<Id, V> {
+    type WrapSnd = Annotation<Id, X>;
+
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(V) -> X,
+    {
+        Annotation {
+            quant: self.quant.map_snd(f),
+            qual: self.qual.map_snd(f),
+        }
+    }
+}
+
+/// An explicit type signature corresponds to the type annotation found in
+/// source code and is never overwritten (only isomorphically modified
+/// in terms of representation), but rather used as a reference with
+/// which type inference and checking is unified in later phases. This
+/// contrasts with an `Annotation`, which holds the same data as the
+/// `Signature::Explicit` variant and is used when explicit type
+/// signatures are *required*, such as in class declarations.
+///
+/// Note that whether a type signature is implicit or explicit does not
+/// affect whether the item to which it is tied has its type inferred.
+/// For example, the type of a binding is still inferred regardless as
+/// whether it was explicitly annotated with a type. However, after
+/// inference, explicit contracts are unified against the inferred
+/// types in addition to the inference-generated constraints.
+///
+/// For example, during type inference every binding has a type
+/// inferred along with a set of type constraints. Type checking fails
+/// if the inferred type cannot be solved according to the generated
+/// constraints. If a given binding is annotated, and the inferred
+/// type is solvable with respect to the generated constraints but
+/// cannot be unified with respect to the annotated type, an error
+/// will be raised and type checking will fail, as the explicit
+/// contract takes precedence over implicit inference.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Signature<Id = Ident, V = Ident> {
+    Implicit,
+    Explicit(Annotation<Id, V>),
+}
+
+wy_common::variant_preds! {
+    |Id, V| Signature[Id, V]
+    | is_implicit => Implicit
+    | is_explicit => Explicit (_)
+    | is_quantified => Explicit (Annotation { quant, ..}) [if !quant.is_empty()]
+}
+
+impl<Id, V, X> MapFst<Id, X> for Signature<Id, V> {
+    type WrapFst = Signature<X, V>;
+
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(Id) -> X,
     {
         match self {
-            Type::Var(v) => Ty::Var(Var(Kind::Star, *v)),
-            Type::Con(c, args) => {
-                let kind = || Kind::mk(self.fv().len());
-                match c {
-                    Con::List => {
-                        if args.is_empty() {
-                            Ty::Con(Symbol::from("[]"), Kind::mk(2))
-                        } else {
-                            Ty::mk_list(args[0].simplify_ty())
-                        }
-                    }
-                    Con::Tuple(n) => {
-                        let m = args.len();
-                        if *n == m {
-                            Ty::mk_tuple(args.into_iter().map(Self::simplify_ty).collect())
-                        } else {
-                            todo!()
-                        }
-                    }
-                    Con::Arrow => args
-                        .into_iter()
-                        .map(|t| t.simplify_ty())
-                        .reduce(Ty::mk_fun)
-                        .unwrap_or_else(|| Ty::Con(Ty::ARROW, Kind::mk(3))),
-                    Con::Data(n) | Con::Alias(n) => args.into_iter().map(|t| t.simplify_ty()).fold(
-                        Ty::Con(n.get_symbol(), Kind::mk(self.fv().len())),
-                        |a, c| Ty::mk_app(a, c),
-                    ),
-                    Con::Free(t) => args.into_iter().map(|t| t.simplify_ty()).fold(
-                        Ty::Con(t.symbol(), Kind::Arrow(Box::new([Kind::Star, kind()]))),
-                        |a, c| Ty::mk_app(a, c),
-                    ),
-                }
-            }
-            Type::Fun(x, y) => {
-                use Kind::{Arrow, Star};
-                let k = || Arrow(Box::new([Star, Arrow(Box::new([Star, Star]))]));
-                let app = |a, b| Ty::App(Box::new([a, b]));
-                let fun = |a, b| app(app(Ty::Con(Ty::ARROW, k()), a), b);
-                // a -> b -> c
-                // (->) a ((->) b c)
-                fun(x.simplify_ty(), y.simplify_ty())
-            }
-            Type::Tup(ts) => Ty::mk_tuple(ts.into_iter().map(|ty| ty.simplify_ty()).collect()),
-            Type::Vec(ts) => Ty::mk_list(ts.simplify_ty()),
-            Type::Rec(_) => todo!(),
+            Signature::Implicit => Signature::Implicit,
+            Signature::Explicit(ann) => Signature::Explicit(ann.map_fst(f)),
         }
+    }
+}
+
+impl<Id, V, X> MapSnd<V, X> for Signature<Id, V> {
+    type WrapSnd = Signature<Id, X>;
+
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(V) -> X,
+    {
+        match self {
+            Signature::Implicit => Signature::Implicit,
+            Signature::Explicit(ann) => Signature::Explicit(ann.map_snd(f)),
+        }
+    }
+}
+
+impl<Id, V> Signature<Id, V> {
+    pub fn qualified(&self) -> Option<&Qualified<Id, V>> {
+        if let Self::Explicit(Annotation { qual: sig, .. }) = self {
+            Some(sig)
+        } else {
+            None
+        }
+    }
+
+    pub fn quantified(&self) -> Option<&Quantified<Id, V>> {
+        if let Self::Explicit(Annotation { quant, .. }) = self {
+            Some(quant)
+        } else {
+            None
+        }
+    }
+
+    pub fn tyvars(&self) -> impl Iterator<Item = &V> + '_ {
+        let qual = self
+            .qualified()
+            .into_iter()
+            .flat_map(|qual| qual.vars())
+            .map(|v| v);
+        let quant = self
+            .quantified()
+            .into_iter()
+            .flat_map(|quant| quant.tvs())
+            .map(|v| v);
+        qual.chain(quant)
+    }
+
+    pub fn quantified_ids(&self) -> impl Iterator<Item = &Id> + '_ {
+        self.quantified().into_iter().flat_map(Quantified::ids)
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TyVar<Id = Tv>(pub Id, pub Kind);
+
+impl<Id> TyVar<Id> {
+    pub fn name(&self) -> &Id {
+        &self.0
+    }
+
+    pub fn kind(&self) -> &Kind {
+        &self.1
+    }
+}
+
+impl<Id> fmt::Debug for TyVar<Id>
+where
+    Id: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "TyVar({:?}, {:?})", &self.0, &self.1)
+    }
+}
+
+impl<Id> fmt::Display for TyVar<Id>
+where
+    Id: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", &self.0)
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TyCon<Id = Symbol>(pub Id, pub Kind);
+
+impl<Id> TyCon<Id> {
+    pub fn name(&self) -> &Id {
+        &self.0
+    }
+
+    pub fn kind(&self) -> &Kind {
+        &self.1
+    }
+
+    pub fn map_id<S>(self, f: impl FnOnce(Id) -> S) -> TyCon<S> {
+        TyCon(f(self.0), self.1)
+    }
+
+    /// Given a (strictly non-zero!) number of commas, returns the
+    /// type constructor. If `0` is passed in, then this will return `None`.
+    ///
+    /// Recall that `(,) :: * -> * -> *`, `(,,)` :: * -> * -> * -> *`,
+    /// etc, i.e., the kind of a tuple constructor with `n` commas has
+    /// a type arity of `n + 2`.
+    pub fn n_tuple(commas: usize) -> Option<TyCon> {
+        if commas == 0 {
+            return None;
+        }
+        let sym = Ident::mk_tuple_commas(commas - 1).symbol();
+        let kind = Kind::mk(commas + 1);
+        Some(TyCon(sym, kind))
+    }
+}
+
+impl<Id> fmt::Debug for TyCon<Id>
+where
+    Id: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "TyCon({:?}, {:?})", &self.0, &self.1)
+    }
+}
+
+impl<Id> fmt::Display for TyCon<Id>
+where
+    Id: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", &self.0)
     }
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Ty {
-    Var(Var<Kind>),
-    Con(Symbol, Kind),
+    Var(TyVar),
+    Con(TyCon),
     App(Box<[Self; 2]>),
+    /// Quantified type variables
     Gen(usize),
 }
 
 impl Default for Ty {
     fn default() -> Self {
-        Ty::Var(Var(Kind::Star, Tv(0)))
+        Ty::Var(TyVar(Tv(0), Kind::Star))
     }
 }
 
 impl Ty {
     pub const ARROW: Symbol = wy_intern::ARROW;
+    pub const LIST: Symbol = wy_intern::BRACK_LR;
+    pub const UNIT: Symbol = wy_intern::PAREN_LR;
 
     /// Returns a list containing all type variables in a given type in order
     /// **without** duplicates. Use the `vars` method to get a list containing
@@ -1364,7 +2025,7 @@ impl Ty {
     /// `[a, b, c]`.
     pub fn fv(&self) -> Vec<Tv> {
         match self {
-            Ty::Var(Var(_, tv)) => vec![*tv],
+            Ty::Var(TyVar(tv, _)) => vec![*tv],
             Ty::App(xy) => {
                 let [x, y] = xy.as_ref();
                 y.fv().into_iter().fold(x.fv(), push_if_absent)
@@ -1375,8 +2036,8 @@ impl Ty {
 
     pub fn kind(&self) -> &Kind {
         match self {
-            Ty::Var(Var(k, _)) => k,
-            Ty::Con(_, k) => k,
+            Ty::Var(TyVar(_, k)) => k,
+            Ty::Con(TyCon(_, k)) => k,
             Ty::App(ab) => match ab.as_ref()[0].kind() {
                 Kind::Arrow(uv) => &uv.as_ref()[1],
                 Kind::Star => {
@@ -1413,7 +2074,7 @@ impl Ty {
                 &ab.as_ref()[0],
                 Ty::App(xy) if matches!(
                     &xy.as_ref()[0],
-                    Ty::Con(s, _) if *s == Self::ARROW
+                    Ty::Con(TyCon(s, _)) if *s == Self::ARROW
                 )
             )
         )
@@ -1425,8 +2086,8 @@ impl Ty {
             let mut tmp = &ab.as_ref()[0];
             while let Ty::App(xy) = tmp {
                 let [x, _] = &**xy;
-                if let Ty::Con(s, _) = x {
-                    if s.as_str().starts_with("(,") {
+                if let Ty::Con(TyCon(s, _)) = x {
+                    if s.as_str().starts_with(',') {
                         return true;
                     }
                 } else {
@@ -1439,7 +2100,11 @@ impl Ty {
 
     #[inline]
     pub fn is_list(&self) -> bool {
-        matches!(self, Ty::App(xy) if matches!(&xy.as_ref()[0], Ty::Con(s, _) if s.as_str() == "[]"))
+        matches!(self, Ty::App(xy) if matches!(&xy.as_ref()[0], Ty::Con(TyCon(s, _)) if *s == Self::LIST))
+    }
+
+    pub fn is_unit(&self) -> bool {
+        matches!(self, Ty::Con(TyCon(id, _)) if id == Self::UNIT)
     }
 
     pub fn mk_app(ta: Ty, tb: Ty) -> Ty {
@@ -1449,7 +2114,10 @@ impl Ty {
     pub fn mk_fun(from_ty: Self, to_ty: Self) -> Self {
         Ty::App(Box::new([
             Ty::App(Box::new([
-                Ty::Con(Ty::ARROW, Kind::Arrow(Box::new([Kind::Star, Kind::Star]))),
+                Ty::Con(TyCon(
+                    Ty::ARROW,
+                    Kind::Arrow(Box::new([Kind::Star, Kind::Star])),
+                )),
                 from_ty,
             ])),
             to_ty,
@@ -1457,35 +2125,29 @@ impl Ty {
     }
 
     pub fn mk_list(list_of: Self) -> Self {
-        Self::mk_app(Self::Con(Symbol::intern("[]"), Kind::mk(2)), list_of)
+        Self::mk_app(Self::Con(TyCon(Self::LIST, Kind::mk(2))), list_of)
     }
 
     pub fn mk_tuple(mut tuple_of: Vec<Self>) -> Self {
         match tuple_of.len() {
-            0 => Ty::Con(Symbol::from_str("()"), Kind::Star),
-            1 => tuple_of.remove(0),
+            0 => Ty::Con(TyCon(Self::UNIT, Kind::Star)),
+            1 => tuple_of.swap_remove(0),
             n => {
-                let con = Ty::Con(
-                    std::iter::once('(')
-                        .chain(std::iter::repeat_with(|| ','))
-                        .chain(std::iter::once(')'))
-                        .collect(),
-                    Kind::mk(n + 1),
-                );
+                let con = Ty::Con(TyCon(Ident::mk_tuple_commas(n - 2).symbol(), Kind::mk(n)));
                 tuple_of
                     .into_iter()
-                    .rev()
+                    // .rev()
                     .fold(con, |a, c| Ty::mk_app(a, c))
             }
         }
     }
 }
 
-impl std::fmt::Debug for Ty {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for Ty {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         struct K<A>([A; 2]);
-        impl<A: std::fmt::Debug> std::fmt::Debug for K<A> {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        impl<A: fmt::Debug> fmt::Debug for K<A> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 f.debug_tuple("")
                     .field(&self.0[0])
                     .field(&self.0[1])
@@ -1493,8 +2155,8 @@ impl std::fmt::Debug for Ty {
             }
         }
         match self {
-            Ty::Var(Var(k, t)) => write!(f, "Var({t} :: {k})"),
-            Ty::Con(s, k) => {
+            Ty::Var(TyVar(t, k)) => write!(f, "Var({t} :: {k})"),
+            Ty::Con(TyCon(s, k)) => {
                 write!(f, "Con({s} :: {k})")
             }
             Ty::App(xy) => {
@@ -1507,31 +2169,31 @@ impl std::fmt::Debug for Ty {
     }
 }
 
-impl std::fmt::Display for Ty {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for Ty {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Ty::Var(Var(_, t)) => write!(f, "{t}"),
-            Ty::Con(s, _) => write!(f, "{s}"),
+            Ty::Var(TyVar(t, _)) => write!(f, "{t}"),
+            Ty::Con(TyCon(s, _)) => write!(f, "{s}"),
             Ty::App(xy) => {
                 let [x, y] = &**xy;
-                if let Ty::Con(s, _) = x {
-                    if s.as_str() == "[]" {
+                if let Ty::Con(TyCon(s, _)) = x {
+                    if *s == Self::LIST {
                         write!(f, "[{y}]")
                     } else {
                         write!(f, "{s} {y}")
                     }
                 } else if let Ty::App(uv) = x {
                     let [u, v] = uv.as_ref();
-                    if let Ty::Con(s, _) = u {
-                        match s.as_str() {
-                            "->" => {
+                    if let Ty::Con(TyCon(s, _)) = u {
+                        match s {
+                            &wy_intern::ARROW => {
                                 if v.is_fun() {
                                     write!(f, "({v} -> {y})")
                                 } else {
                                     write!(f, "{v} -> {y}")
                                 }
                             }
-                            "(,)" => {
+                            &wy_intern::COMMA_1 => {
                                 write!(f, "({v}, {y})")
                             }
                             s => {
@@ -1545,7 +2207,7 @@ impl std::fmt::Display for Ty {
                     write!(f, "{x} {y}")
                 }
             }
-            Ty::Gen(n) => f.write_str("'").and(usize::fmt(n, f)),
+            Ty::Gen(n) => write!(f, "#{n}"),
         }
     }
 }
@@ -1562,8 +2224,8 @@ wy_common::variant_preds! {
     | is_arrow => Arrow(..)
 }
 
-impl std::fmt::Debug for Kind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for Kind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Star => write!(f, "*"),
             Self::Arrow(ab) => {
@@ -1579,8 +2241,8 @@ impl std::fmt::Debug for Kind {
     }
 }
 
-impl std::fmt::Display for Kind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for Kind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Kind::Star => write!(f, "*"),
             Kind::Arrow(ab) => {
@@ -1607,6 +2269,22 @@ impl Kind {
         Kind::Arrow(Box::new([Kind::Star, Kind::Star]))
     }
 
+    /// Generates a simple `Kind` of order `n`. The *order* of a
+    /// `Kind` is analogous to a *type arity*. For example, below we
+    /// see a table with kinds corresponding to the first 4 orders.
+    /// Unless parenthesized, the arrows are assumed to associate to
+    /// the right in the same manner as function type arrows.
+    ///
+    /// Note that this function has limitations in kind generation.
+    /// For example, the order `3` does *NOT* generate the kind
+    /// `* -> (* -> *) -> *`.
+    ///
+    /// | Order | "Simple" Kind      |
+    /// |-------|:-------------------|
+    /// | 0     | `*`                |
+    /// | 1     | `* -> *`           |
+    /// | 2     | `* -> * -> *`      |
+    /// | 3     | `* -> * -> * -> *` |
     pub fn mk(mut n: usize) -> Kind {
         let mut k = Kind::Star;
         while n > 0 {
@@ -1659,34 +2337,60 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_ty_macro() {
-        let vars = (0..10).map(Tv).collect::<Vec<_>>();
-        if let [a, b, c, d, e, f, g, h, ..] = vars[..] {
-            assert_eq!(
-                Ty! { 0 -> 1 -> (2 -> 3) -> #(Foo 4 5 6 7) },
-                Type::mk_fun(
-                    Type::Var(a),
-                    Type::mk_fun(
-                        Type::Var(b),
-                        Type::mk_fun(
-                            Type::mk_fun(Type::Var(c), Type::Var(d)),
-                            Type::Con(
-                                Con::Data(Ident::Upper(Symbol::from("Foo"))),
-                                vec![Type::Var(e), Type::Var(f), Type::Var(g), Type::Var(h)]
-                            )
-                        )
-                    )
-                )
+    fn test_varying_tuple_reprs() {
+        let sugared_2tuple = Type::mk_n_tuple(2);
+        let simplified_2tuple_ty = sugared_2tuple.desugar();
+        let expected_tup2_tycon_kind = Kind::Arrow(Box::new([
+            Kind::Star,
+            Kind::Arrow(Box::new([Kind::Star, Kind::Star])),
+        ]));
+        assert_eq!(
+            &simplified_2tuple_ty,
+            &Ty::App(Box::new([
+                Ty::App(Box::new([
+                    Ty::Con(TyCon(wy_intern::COMMA_1, expected_tup2_tycon_kind.clone())),
+                    Ty::Var(TyVar(Tv(0), Kind::Star))
+                ])),
+                Ty::Var(TyVar(Tv(1), Kind::Star))
+            ]))
+        );
+        assert_eq!(simplified_2tuple_ty.kind(), &Kind::mk(0));
+        assert!(simplified_2tuple_ty.is_tuple());
+        let simplified_2tuple_tycon = TyCon::<Symbol>::n_tuple(1).unwrap();
+        let generated_2tuple_kind = Kind::mk(2);
+        assert_eq!(simplified_2tuple_tycon.kind(), &generated_2tuple_kind);
+        assert_eq!(expected_tup2_tycon_kind, generated_2tuple_kind);
+
+        for commas in 1..15 {
+            let simplified_tuple_tycon = TyCon::<Symbol>::n_tuple(commas).unwrap();
+            let generated_kind = Kind::mk(commas + 1);
+            assert_eq!(simplified_tuple_tycon.kind(), &generated_kind);
+            let synty =
+                Type::<Ident, Tv>::mk_tuple((0..(commas + 1)).map(|n| Tv(n as u32).as_type()));
+            assert!(synty.desugar().is_tuple());
+            let ty_mk_tuple = Ty::mk_tuple(
+                (0..(commas + 1))
+                    .map(|n| Ty::Var(TyVar(Tv(n as u32), Kind::Star)))
+                    .collect::<Vec<_>>(),
             );
-            let ty = Ty! { 0 -> 1 -> (2 -> 3) -> #(Foo 4 5 6 7) };
-            println!("type: {}", &ty);
-            let ty = dbg![ty.simplify_ty()];
-            println!("simplified: {}", &ty);
-            println!("kind: {}", ty.kind());
-            let kinds = ty.kind().clone().collect::<Vec<_>>();
-            println!("subkinds: {:?}", kinds);
-        } else {
-            unreachable!()
+            assert_eq!(synty.desugar(), ty_mk_tuple.clone());
+            // check that, if n = 2 then we have (a, b, c), and the
+            // following three are equivalent:
+            // * Tup(a, b, c)
+            //      ^ most sugared, parsed from `(a, b, c)`
+            // * Con(Tuple(2), [a, b, c]), parsed from `(,,) a b c`
+            //      ^ moderately desugared
+            // * App(App(Con((,,) :: * -> * -> * -> *), a :: *), b::*)
+            //      ^ completely desugared, from simplification
+            let moderately_sugared_tuple_tycon = synty.get_con().unwrap();
+            let sugared_tyvars = (0..(commas as u32 + 1))
+                .map(|n| Type::<Ident, Tv>::Var(Tv(n)))
+                .collect::<Vec<_>>();
+            let tipo = Type::<Ident, Tv>::Tup(sugared_tyvars.clone()).pre_simplify();
+            assert_eq!(
+                tipo,
+                Type::Con(moderately_sugared_tuple_tycon, sugared_tyvars)
+            );
         }
     }
 }
