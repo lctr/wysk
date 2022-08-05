@@ -1,111 +1,307 @@
 pub use std::collections::{HashMap as Map, HashSet as Set, VecDeque as Deque};
-use std::hash::Hash;
 
-pub struct Mapped<X, F> {
-    data: X,
-    f: F,
+/// Defunctionalization type.
+///
+/// When mapping over generic types recursively, it's likely that
+/// infinite types will be constructed by the compiler leading to a
+/// stack overflow; this is because Rust will ascribe a fresh type for
+/// each invocation of a given closure as it's passed through
+/// recursively. Instead, we can wrap our closure in a `Func` and pass
+/// in mutable to it to "functorial" methods, thus circumventing the
+/// need to generate a new unique closure type at every call site!
+///
+/// The ergonomics aren't as *clean* as passing in a simple closure --
+/// but it works ;)
+pub enum Func<'a, F> {
+    Fresh(F),
+    Cont(&'a mut Func<'a, F>),
 }
 
-impl<X, F> Mapped<X, F> {
-    #![allow(unused)]
-    pub fn new(data: X, f: F) -> Self {
-        Self { data, f }
-    }
-
-    pub fn run<Y>(self) -> Mapped<Y, ()>
+impl<'a, F> Func<'a, F> {
+    pub fn apply<A, B>(&mut self, arg: A) -> B
     where
-        F: Fn(X) -> Y,
+        F: FnMut(A) -> B,
     {
-        let Mapped { data, f } = self;
-        Mapped {
-            data: f(data),
-            f: (),
+        match self {
+            Func::Fresh(f) => f(arg),
+            Func::Cont(f) => f.apply(arg),
         }
-    }
-
-    pub fn run_once<Y>(self) -> Mapped<Y, ()>
-    where
-        F: FnOnce(X) -> Y,
-    {
-        let Mapped { data, f } = self;
-        Mapped {
-            data: f(data),
-            f: (),
-        }
-    }
-
-    pub fn run_mut<Y>(self) -> Mapped<Y, ()>
-    where
-        F: FnMut(X) -> Y,
-    {
-        let Mapped { data, mut f } = self;
-        Mapped {
-            data: f(data),
-            f: (),
-        }
-    }
-
-    pub fn chain<G>(self, g: G) -> Mapped<Self, G> {
-        Mapped { data: self, f: g }
-    }
-
-    pub fn compose<G>(self, g: G) -> Mapped<Mapped<X, G>, F> {
-        let Mapped { data, f } = self;
-        Mapped {
-            data: Mapped { data, f: g },
-            f,
-        }
-    }
-
-    pub fn take(self) -> X {
-        self.data
     }
 }
 
-impl<X, F, G> Mapped<Mapped<X, F>, G> {
-    #![allow(unused)]
-    #[inline]
-    pub fn run_f_g<Y, Z>(self) -> Z
+pub trait Functor<A, B> {
+    type Wrapper: Functor<B, A>;
+
+    fn fmap<F>(self, f: &mut Func<'_, F>) -> Self::Wrapper
     where
-        F: Fn(X) -> Y,
-        G: Fn(Y) -> Z,
-    {
-        (self.f)((self.data.f)(self.data.data))
-    }
-    #[inline]
-    pub fn run_fo_go<Y, Z>(self) -> Z
+        F: FnMut(A) -> B;
+}
+
+impl<A, B> Functor<A, B> for Option<A> {
+    type Wrapper = Option<B>;
+
+    fn fmap<F>(self, f: &mut Func<'_, F>) -> Self::Wrapper
     where
-        F: FnOnce(X) -> Y,
-        G: FnOnce(Y) -> Z,
+        F: FnMut(A) -> B,
     {
-        (self.f)((self.data.f)(self.data.data))
-    }
-    #[inline]
-    pub fn run_fm_gm<Y, Z>(self) -> Z
-    where
-        F: FnMut(X) -> Y,
-        G: FnMut(Y) -> Z,
-    {
-        self.run_fo_go()
-    }
-    #[inline]
-    pub fn runs_f_go<Y, Z>(self) -> Z
-    where
-        F: Fn(X) -> Y,
-        G: FnOnce(Y) -> Z,
-    {
-        self.run_fo_go()
-    }
-    #[inline]
-    pub fn run_fm_go<Y, Z>(self) -> Z
-    where
-        F: FnMut(X) -> Y,
-        G: FnOnce(Y) -> Z,
-    {
-        self.run_fo_go()
+        self.map(|a| f.apply(a))
     }
 }
 
+impl<A, B> Functor<A, B> for Vec<A> {
+    type Wrapper = Vec<B>;
+
+    fn fmap<F>(self, f: &mut Func<'_, F>) -> Self::Wrapper
+    where
+        F: FnMut(A) -> B,
+    {
+        self.into_iter().map(|a| f.apply(a)).collect()
+    }
+}
+
+impl<A, B> Functor<A, B> for Box<A> {
+    type Wrapper = Box<B>;
+
+    fn fmap<F>(self, f: &mut Func<'_, F>) -> Self::Wrapper
+    where
+        F: FnMut(A) -> B,
+    {
+        Box::new(f.apply(*self))
+    }
+}
+
+pub trait MapFst<A, B> {
+    type WrapFst: MapFst<B, A>;
+    fn map_fst<F>(self, f: &mut Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(A) -> B;
+}
+
+pub trait MapSnd<A, B> {
+    type WrapSnd: MapSnd<B, A>;
+    fn map_snd<F>(self, f: &mut Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(A) -> B;
+}
+
+pub trait MapThrd<A, B> {
+    type WrapThrd: MapThrd<B, A>;
+    fn map_thrd<F>(self, f: &mut Func<'_, F>) -> Self::WrapThrd
+    where
+        F: FnMut(A) -> B;
+}
+
+impl<A, B, C> MapFst<A, C> for (A, B) {
+    type WrapFst = (C, B);
+
+    fn map_fst<F>(self, f: &mut Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(A) -> C,
+    {
+        let (a, b) = self;
+        (f.apply(a), b)
+    }
+}
+
+impl<A, B, C> MapSnd<B, C> for (A, B) {
+    type WrapSnd = (A, C);
+
+    fn map_snd<F>(self, f: &mut Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(B) -> C,
+    {
+        let (a, b) = self;
+        (a, f.apply(b))
+    }
+}
+
+impl<A, B, C, D> MapFst<A, D> for (A, B, C) {
+    type WrapFst = (D, B, C);
+
+    fn map_fst<F>(self, f: &mut Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(A) -> D,
+    {
+        let (a, b, c) = self;
+        (f.apply(a), b, c)
+    }
+}
+
+impl<A, B, C, D> MapSnd<B, D> for (A, B, C) {
+    type WrapSnd = (A, D, C);
+
+    fn map_snd<F>(self, f: &mut Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(B) -> D,
+    {
+        let (a, b, c) = self;
+        (a, f.apply(b), c)
+    }
+}
+
+impl<A, B, C, D> MapThrd<C, D> for (A, B, C) {
+    type WrapThrd = (A, B, D);
+
+    fn map_thrd<F>(self, f: &mut Func<'_, F>) -> Self::WrapThrd
+    where
+        F: FnMut(C) -> D,
+    {
+        let (a, b, c) = self;
+        (a, b, f.apply(c))
+    }
+}
+
+impl<T, X, U> MapFst<X, U> for Option<T>
+where
+    T: MapFst<X, U>,
+{
+    type WrapFst = Option<T::WrapFst>;
+
+    fn map_fst<F>(self, f: &mut Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(X) -> U,
+    {
+        self.map(|t| t.map_fst(f))
+    }
+}
+
+impl<T, Y, U> MapSnd<Y, U> for Option<T>
+where
+    T: MapSnd<Y, U>,
+{
+    type WrapSnd = Option<T::WrapSnd>;
+
+    fn map_snd<F>(self, f: &mut Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(Y) -> U,
+    {
+        self.map(|t| t.map_snd(f))
+    }
+}
+
+impl<T, Z, U> MapThrd<Z, U> for Option<T>
+where
+    T: MapThrd<Z, U>,
+{
+    type WrapThrd = Option<T::WrapThrd>;
+
+    fn map_thrd<F>(self, f: &mut Func<'_, F>) -> Self::WrapThrd
+    where
+        F: FnMut(Z) -> U,
+    {
+        self.map(|t| t.map_thrd(f))
+    }
+}
+
+impl<T, X, U> MapFst<X, U> for Vec<T>
+where
+    T: MapFst<X, U>,
+{
+    type WrapFst = Vec<T::WrapFst>;
+
+    fn map_fst<F>(self, f: &mut Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(X) -> U,
+    {
+        self.into_iter().map(|t| t.map_fst(f)).collect()
+    }
+}
+
+impl<T, Y, U> MapSnd<Y, U> for Vec<T>
+where
+    T: MapSnd<Y, U>,
+{
+    type WrapSnd = Vec<T::WrapSnd>;
+
+    fn map_snd<F>(self, f: &mut Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(Y) -> U,
+    {
+        self.into_iter().map(|t| t.map_snd(f)).collect()
+    }
+}
+
+impl<T, Z, U> MapThrd<Z, U> for Vec<T>
+where
+    T: MapThrd<Z, U>,
+{
+    type WrapThrd = Vec<T::WrapThrd>;
+
+    fn map_thrd<F>(self, f: &mut Func<'_, F>) -> Self::WrapThrd
+    where
+        F: FnMut(Z) -> U,
+    {
+        self.into_iter().map(|t| t.map_thrd(f)).collect()
+    }
+}
+
+impl<X, E, U> MapFst<X, U> for Result<X, E> {
+    type WrapFst = Result<U, E>;
+
+    fn map_fst<F>(self, f: &mut Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(X) -> U,
+    {
+        self.map(|x| f.apply(x))
+    }
+}
+
+impl<X, E, U> MapSnd<E, U> for Result<X, E> {
+    type WrapSnd = Result<X, U>;
+
+    fn map_snd<F>(self, f: &mut Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(E) -> U,
+    {
+        self.map_err(|e| f.apply(e))
+    }
+}
+
+impl<K, V, U> MapFst<K, U> for std::collections::HashMap<K, V>
+where
+    K: Eq + std::hash::Hash,
+    U: Eq + std::hash::Hash,
+{
+    type WrapFst = std::collections::HashMap<U, V>;
+
+    fn map_fst<F>(self, f: &mut Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(K) -> U,
+    {
+        self.into_iter().map(|kv| kv.map_fst(f)).collect()
+    }
+}
+
+impl<K, V, U> MapSnd<V, U> for std::collections::HashMap<K, V>
+where
+    K: Eq + std::hash::Hash,
+{
+    type WrapSnd = std::collections::HashMap<K, U>;
+
+    fn map_snd<F>(self, f: &mut Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(V) -> U,
+    {
+        self.into_iter().map(|kv| kv.map_snd(f)).collect()
+    }
+}
+
+impl<K, U> MapFst<K, U> for std::collections::HashSet<K>
+where
+    K: Eq + std::hash::Hash,
+    U: Eq + std::hash::Hash,
+{
+    type WrapFst = std::collections::HashSet<U>;
+
+    fn map_fst<F>(self, f: &mut Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(K) -> U,
+    {
+        self.into_iter().map(|k| f.apply(k)).collect()
+    }
+}
+
+// maybe delete later lol
 pub trait Mappable<X> {
     type M<A>: Mappable<A>;
     fn fmap<F, Y>(self, f: F) -> Self::M<Y>
@@ -243,259 +439,5 @@ impl<X> Mappable<X> for (X,) {
     }
 }
 
-pub fn map_vec<X, Y>(vec: Vec<X>, f: impl FnMut(X) -> Y) -> Vec<Y> {
-    vec.fmap(f)
-}
-
-pub fn map_deque<X, Y>(deque: Deque<X>, f: impl FnMut(X) -> Y) -> Deque<Y> {
-    deque.fmap(f)
-}
-
-pub fn map_set<X, Y>(set: Set<X>, f: impl FnMut(X) -> Y) -> Set<Y>
-where
-    X: Eq + Hash,
-    Y: Eq + Hash,
-{
-    set.into_iter().map(f).collect()
-}
-
-pub fn map_iterator<Y, I: IntoIterator, J>(iter: I, f: impl FnMut(I::Item) -> Y) -> J
-where
-    J: FromIterator<Y>,
-{
-    iter.into_iter().map(f).collect()
-}
-
-// class Bifunctor p where
-//   bimap :: (a -> b) -> (c -> d) -> p a c -> p b d
-//   first :: (a -> b) -> p a c -> p b c
-//   second :: (b -> c) -> p a b -> p a c
-pub trait Bifunctor<X, Y>
-where
-    Self: Sized,
-{
-    type Bi<U, V>: Bifunctor<U, V>;
-    fn map_fst<A>(self, f: impl FnMut(X) -> A) -> Self::Bi<A, Y>;
-    fn map_snd<B>(self, f: impl FnMut(Y) -> B) -> Self::Bi<X, B>;
-    fn bimap<A, B>(self, f: impl FnMut(X) -> A, g: impl FnMut(Y) -> B) -> Self::Bi<A, B>;
-    fn chain_ltr<A, B>(
-        self,
-        fst: impl FnMut(X) -> A,
-        snd: impl FnMut(Y) -> B,
-    ) -> <<Self as Bifunctor<X, Y>>::Bi<A, Y> as Bifunctor<A, Y>>::Bi<A, B> {
-        /*
-             expected associated type `<Self as Bifunctor<X, Y>>::Bi<A, B>`
-        found associated type `<<Self as Bifunctor<X, Y>>::Bi<A, Y> as Bifunctor<A, Y>>::Bi<A, B>`
-
-             */
-        self.map_fst(fst).map_snd(snd)
-    }
-    fn chain_rtl<A, B>(
-        self,
-        fst: impl FnMut(X) -> A,
-        snd: impl FnMut(Y) -> B,
-    ) -> <<Self as Bifunctor<X, Y>>::Bi<X, B> as Bifunctor<X, B>>::Bi<A, B> {
-        self.map_snd(snd).map_fst(fst)
-    }
-}
-
-impl<X, Y> Bifunctor<X, Y> for (X, Y) {
-    type Bi<U, V> = (U, V);
-
-    fn map_fst<A>(self, mut f: impl FnMut(X) -> A) -> Self::Bi<A, Y> {
-        let (x, y) = self;
-        (f(x), y)
-    }
-
-    fn map_snd<B>(self, mut f: impl FnMut(Y) -> B) -> Self::Bi<X, B> {
-        let (x, y) = self;
-        (x, f(y))
-    }
-
-    fn bimap<A, B>(
-        self,
-        mut fst: impl FnMut(X) -> A,
-        mut snd: impl FnMut(Y) -> B,
-    ) -> Self::Bi<A, B> {
-        let (x, y) = self;
-        (fst(x), snd(y))
-    }
-}
-
-impl<X, Y> Bifunctor<X, Y> for Result<X, Y> {
-    type Bi<U, V> = Result<U, V>;
-
-    fn map_fst<A>(self, f: impl FnMut(X) -> A) -> Self::Bi<A, Y> {
-        self.map(f)
-    }
-
-    fn map_snd<B>(self, f: impl FnMut(Y) -> B) -> Self::Bi<X, B> {
-        self.map_err(f)
-    }
-
-    fn bimap<A, B>(self, fst: impl FnMut(X) -> A, snd: impl FnMut(Y) -> B) -> Self::Bi<A, B> {
-        self.map(fst).map_err(snd)
-    }
-}
-
-impl<X, Y, Z> Bifunctor<X, Y> for Vec<Z>
-where
-    Z: Bifunctor<X, Y>,
-{
-    type Bi<U, V> = Vec<Z::Bi<U, V>>;
-
-    fn map_fst<A>(self, mut f: impl FnMut(X) -> A) -> Self::Bi<A, Y> {
-        self.into_iter()
-            .map(|z| z.map_fst(|x| f(x)))
-            .collect::<Vec<_>>()
-    }
-
-    fn map_snd<B>(self, mut f: impl FnMut(Y) -> B) -> Self::Bi<X, B> {
-        self.into_iter()
-            .map(|z| z.map_snd(|y| f(y)))
-            .collect::<Vec<_>>()
-    }
-
-    fn bimap<A, B>(self, mut f: impl FnMut(X) -> A, mut g: impl FnMut(Y) -> B) -> Self::Bi<A, B> {
-        self.into_iter()
-            .map(|z| z.bimap(|x| f(x), |y| g(y)))
-            .collect()
-    }
-}
-
-impl<X, Y, Z> Bifunctor<X, Y> for Deque<Z>
-where
-    Z: Bifunctor<X, Y>,
-{
-    type Bi<U, V> = Deque<Z::Bi<U, V>>;
-
-    fn map_fst<A>(self, mut f: impl FnMut(X) -> A) -> Self::Bi<A, Y> {
-        self.into_iter()
-            .map(|z| z.map_fst(|x| f(x)))
-            .collect::<Deque<_>>()
-    }
-
-    fn map_snd<B>(self, mut f: impl FnMut(Y) -> B) -> Self::Bi<X, B> {
-        self.into_iter()
-            .map(|z| z.map_snd(|y| f(y)))
-            .collect::<Deque<_>>()
-    }
-
-    fn bimap<A, B>(self, mut f: impl FnMut(X) -> A, mut g: impl FnMut(Y) -> B) -> Self::Bi<A, B> {
-        self.into_iter()
-            .map(|z| z.bimap(|x| f(x), |y| g(y)))
-            .collect::<Deque<_>>()
-    }
-}
-
-pub struct Fmap<X, F> {
-    item: X,
-    f: F,
-}
-
-impl<X, F, T> Fmap<X, F>
-where
-    F: FnMut(X) -> T,
-{
-    pub fn new(item: X, f: F) -> Self {
-        Fmap { item, f }
-    }
-
-    pub fn apply(mut self) -> T {
-        (self.f)(self.item)
-    }
-
-    pub fn clone_item(&self) -> X
-    where
-        X: Clone,
-    {
-        self.item.clone()
-    }
-
-    pub fn repeat(self, n: usize) -> Vec<T>
-    where
-        X: Clone,
-    {
-        let Fmap { item, mut f } = self;
-        (0..n).map(|_| f(item.clone())).collect()
-    }
-
-    pub fn map<S>(self, mut g: impl FnMut(T) -> S) -> Fmap<X, impl FnMut(X) -> S> {
-        let Fmap { item, mut f } = self;
-        Fmap {
-            item,
-            f: move |x: X| g(f(x)),
-        }
-    }
-
-    pub fn then<S>(self, g: impl FnMut(T) -> S) -> Fmap<T, impl FnMut(T) -> S> {
-        Fmap {
-            item: self.apply(),
-            f: g,
-        }
-    }
-    pub fn iterate(self, mut g: impl FnMut(&X) -> Option<X>) -> Fmap<X, F> {
-        let Fmap { item, f } = self;
-        let mut item = item;
-        while let Some(x) = g(&item) {
-            item = x;
-        }
-        Fmap { item, f }
-    }
-}
-
-pub trait Transform {
-    type Domain;
-    type Codomain;
-    fn apply(self) -> Self::Codomain;
-    fn then<G, S>(self, g: G) -> Fmap<Self::Codomain, G>
-    where
-        Self: Sized,
-        G: FnMut(Self::Codomain) -> S,
-    {
-        Fmap {
-            item: self.apply(),
-            f: g,
-        }
-    }
-}
-
-impl<X, F, T> Transform for Fmap<X, F>
-where
-    F: FnMut(X) -> T,
-{
-    type Domain = X;
-    type Codomain = T;
-
-    fn apply(self) -> Self::Codomain {
-        Fmap::apply(self)
-    }
-}
-
-pub type Transformation<X, Y> = Box<dyn Transform<Domain = X, Codomain = Y>>;
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_map() {
-        let times_2 = Fmap::new(1, |n| n * 2);
-        let times_10 = times_2.map(|g| g * 10);
-        let res = times_10.apply();
-        assert_eq!(res, 20);
-        let counter = Fmap::new(0, |n| n);
-        let mut state = 0;
-        let iterated = counter.iterate(|n| {
-            if *n < 10 {
-                state += 30;
-                Some(n + 1)
-            } else {
-                None
-            }
-        });
-        let ten = iterated.apply();
-        assert_eq!(ten, 10);
-        assert_eq!(state, 300);
-    }
-}
+mod tests {}
