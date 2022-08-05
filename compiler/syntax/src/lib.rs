@@ -1,12 +1,11 @@
-#![feature(generic_associated_types)]
-
 use attr::Attribute;
-use wy_common::{deque, struct_field_iters, HashMap};
-use wy_intern::symbol::{self, Symbol};
-use wy_name::{
-    ident::{Chain, Ident},
-    module::ModuleId,
+use wy_common::{
+    deque,
+    functor::{MapFst, MapSnd, MapThrd},
+    struct_field_iters, HashMap,
 };
+use wy_intern::symbol::{self, Symbol};
+use wy_name::{module::ModuleId, Chain, Ident};
 
 pub use wy_lexer::{
     comment::{self, Comment},
@@ -21,13 +20,13 @@ pub mod pattern;
 pub mod record;
 pub mod stmt;
 pub mod tipo;
+pub mod types;
 pub mod visit;
 
 use decl::*;
 use expr::*;
 use fixity::*;
 use pattern::*;
-use record::*;
 use stmt::*;
 use tipo::*;
 
@@ -51,6 +50,25 @@ impl<I> SyntaxTree<I> {
             packages: HashMap::new(),
         }
     }
+    pub fn map_idents<X>(self, f: impl FnMut(I) -> X) -> SyntaxTree<X>
+    where
+        I: Eq + std::hash::Hash,
+        X: Eq + std::hash::Hash,
+    {
+        use wy_common::functor::Func;
+        let mut ph = Func::Fresh(f);
+        let SyntaxTree { programs, packages } = self;
+        let programs = programs
+            .into_iter()
+            .map(|program| program.map_fst(&mut ph))
+            .collect();
+        let packages = packages
+            .into_iter()
+            .map(|(mid, chain)| (mid, chain.mapf(&mut ph)))
+            .collect();
+        SyntaxTree { programs, packages }
+    }
+
     pub fn program_count(&self) -> usize {
         self.programs.len()
     }
@@ -234,6 +252,74 @@ impl<Id, U, T> Program<Id, U, T> {
     }
 }
 
+impl<Id, U, T, A> MapFst<Id, A> for Program<Id, U, T>
+where
+    Id: Eq + std::hash::Hash,
+    A: Eq + std::hash::Hash,
+{
+    type WrapFst = Program<A, U, T>;
+
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(Id) -> A,
+    {
+        let Program {
+            module,
+            fixities,
+            comments,
+        } = self;
+        let module = module.map_fst(f);
+        let fixities = fixities.into_iter().map(|pair| pair.map_fst(f)).collect();
+        Program {
+            module,
+            fixities,
+            comments,
+        }
+    }
+}
+
+impl<Id, U, T, A> MapSnd<U, A> for Program<Id, U, T> {
+    type WrapSnd = Program<Id, A, T>;
+
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(U) -> A,
+    {
+        let Program {
+            module,
+            fixities,
+            comments,
+        } = self;
+        let module = module.map_snd(f);
+        Program {
+            module,
+            fixities,
+            comments,
+        }
+    }
+}
+
+impl<Id, U, T, A> MapThrd<T, A> for Program<Id, U, T> {
+    type WrapThrd = Program<Id, U, A>;
+
+    fn map_thrd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapThrd
+    where
+        F: FnMut(T) -> A,
+    {
+        let Program {
+            module,
+            fixities,
+            comments,
+        } = self;
+        let module = module.map_thrd(f);
+        Program {
+            module,
+            fixities,
+            comments,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Module<Id = Ident, Uid = (), T = Ident> {
     pub uid: Uid,
@@ -263,6 +349,132 @@ struct_field_iters! {
     | aliases => aliases_iter :: AliasDecl<Id, T>
     | newtyps => newtyps_iter :: NewtypeDecl<Id, T>
     | pragmas => pragmas_iter :: Attribute<Id, T>
+}
+
+impl<Id, U, T, X> MapFst<Id, X> for Module<Id, U, T> {
+    type WrapFst = Module<X, U, T>;
+
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(Id) -> X,
+    {
+        let Module {
+            uid,
+            modname,
+            imports,
+            infixes,
+            datatys,
+            classes,
+            implems,
+            fundefs,
+            aliases,
+            newtyps,
+            pragmas,
+        } = self;
+        let modname = modname.mapf(f);
+        let imports = imports.into_iter().map(|i| i.mapf(f)).collect();
+        let infixes = infixes.into_iter().map(|d| d.mapf(f)).collect();
+        let datatys = datatys.map_fst(f);
+        let classes = classes.map_fst(f);
+        let implems = implems.map_fst(f);
+        let fundefs = fundefs.map_fst(f);
+        let aliases = aliases.map_fst(f);
+        let newtyps = newtyps.map_fst(f);
+        let pragmas = pragmas.map_fst(f);
+        Module {
+            uid,
+            modname,
+            imports,
+            infixes,
+            datatys,
+            classes,
+            implems,
+            fundefs,
+            aliases,
+            newtyps,
+            pragmas,
+        }
+    }
+}
+
+impl<Id, U, T, X> MapSnd<U, X> for Module<Id, U, T> {
+    type WrapSnd = Module<Id, X, T>;
+
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(U) -> X,
+    {
+        let Module {
+            uid,
+            modname,
+            imports,
+            infixes,
+            datatys,
+            classes,
+            implems,
+            fundefs,
+            aliases,
+            newtyps,
+            pragmas,
+        } = self;
+        let uid = f.apply(uid);
+        Module {
+            uid,
+            modname,
+            imports,
+            infixes,
+            datatys,
+            classes,
+            implems,
+            fundefs,
+            aliases,
+            newtyps,
+            pragmas,
+        }
+    }
+}
+
+impl<Id, U, T, X> MapThrd<T, X> for Module<Id, U, T> {
+    type WrapThrd = Module<Id, U, X>;
+
+    fn map_thrd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapThrd
+    where
+        F: FnMut(T) -> X,
+    {
+        let Module {
+            uid,
+            modname,
+            imports,
+            infixes,
+            datatys,
+            classes,
+            implems,
+            fundefs,
+            aliases,
+            newtyps,
+            pragmas,
+        } = self;
+        let datatys = datatys.map_snd(f);
+        let classes = classes.map_snd(f);
+        let implems = implems.map_snd(f);
+        let fundefs = fundefs.map_snd(f);
+        let aliases = aliases.map_snd(f);
+        let newtyps = newtyps.map_snd(f);
+        let pragmas = pragmas.map_snd(f);
+        Module {
+            uid,
+            modname,
+            imports,
+            infixes,
+            datatys,
+            classes,
+            implems,
+            fundefs,
+            aliases,
+            newtyps,
+            pragmas,
+        }
+    }
 }
 
 impl Default for RawModule {
@@ -333,6 +545,28 @@ struct_field_iters! {
 }
 
 impl<Id> ImportSpec<Id> {
+    pub fn mapf<F, X>(self, f: &mut wy_common::functor::Func<'_, F>) -> ImportSpec<X>
+    where
+        F: FnMut(Id) -> X,
+    {
+        let ImportSpec {
+            name,
+            qualified,
+            rename,
+            hidden,
+            imports,
+        } = self;
+        let name = name.mapf(f);
+        let rename = rename.map(|id| f.apply(id));
+        let imports = imports.into_iter().map(|i| i.mapf(f)).collect();
+        ImportSpec {
+            name,
+            qualified,
+            rename,
+            hidden,
+            imports,
+        }
+    }
     pub fn map<F, T>(self, mut f: F) -> ImportSpec<T>
     where
         F: FnMut(Id) -> T,
@@ -430,6 +664,23 @@ impl<Id> Import<Id> {
             }
         }
     }
+
+    pub fn mapf<F, X>(self, f: &mut wy_common::functor::Func<'_, F>) -> Import<X>
+    where
+        F: FnMut(Id) -> X,
+    {
+        match self {
+            Import::Operator(id) => Import::Operator(f.apply(id)),
+            Import::Function(id) => Import::Function(f.apply(id)),
+            Import::Abstract(id) => Import::Abstract(f.apply(id)),
+            Import::Total(id) => Import::Total(f.apply(id)),
+            Import::Partial(root, rest) => Import::Partial(
+                f.apply(root),
+                rest.into_iter().map(|id| f.apply(id)).collect(),
+            ),
+        }
+    }
+
     pub fn map_ref<U>(&self, f: &mut impl FnMut(&Id) -> U) -> Import<U> {
         match self {
             Import::Operator(id) => Import::Operator(f(id)),
