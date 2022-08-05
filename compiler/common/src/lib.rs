@@ -4,7 +4,6 @@
 
 pub use serde;
 
-pub mod data;
 pub mod either;
 pub mod functor;
 pub mod iter;
@@ -231,6 +230,33 @@ macro_rules! case {
             true
         } else {
             false
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! poison_error {
+    (
+        #error = $error:expr;
+        #msg = $custom_msg:expr
+        $(; #query = $query:expr)? $(;)?
+    ) => {{
+        let error = $error;
+        let custom_msg = $custom_msg;
+        eprintln!("Poison error while {custom_msg}");
+        $(let query = $query;
+        eprint!(" `{query:?}`");)?
+        panic!("{}", error)
+    }};
+    (
+        $error:ident,
+        $custom_msg:literal
+        $(, $query:expr)?
+    ) => {{
+        $crate::poison_error! {
+            #error = $error;
+            #msg = $custom_msg;
+            $(#query = $query)?
         }
     }};
 }
