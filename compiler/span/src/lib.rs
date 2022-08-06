@@ -15,6 +15,41 @@ newtype! {
     }
 }
 
+impl Col {
+    /// Returns a string slice of the `nth` grapheme of a given string
+    /// slice by generating a sequence of all character boundaries of
+    /// the slice and then taking the substring bound between the `n`th
+    /// and `n+1`th char boundaries.
+    pub fn of_str<'a>(&self, s: &'a str) -> &'a str {
+        let m = self.as_usize();
+        let w = s.len();
+        if m > w {
+            return "";
+        };
+        let mut bds = (0..w)
+            .filter(|n| s.is_char_boundary(*n))
+            .enumerate()
+            .filter_map(|(i, b)| if i == m || i == m + 1 { Some(b) } else { None });
+        match (bds.next(), bds.next()) {
+            (Some(a), Some(b)) => &s[a..b],
+            (Some(a), None) => &s[a..],
+            (None, _) => "",
+        }
+    }
+
+    pub fn byte(s: impl AsRef<str>) -> Col {
+        s.as_ref()
+            .char_indices()
+            .last()
+            .map(|(n, _)| Col(n as u32))
+            .unwrap_or_else(|| Col::ZERO)
+    }
+
+    pub fn of_chars(s: impl AsRef<str>) -> Col {
+        Col(s.as_ref().chars().count() as u32)
+    }
+}
+
 impl BytePos {
     pub fn str_range(s: &str) -> std::ops::Range<Self> {
         Self(0)..Self(s.len() as u32)
@@ -24,8 +59,29 @@ impl BytePos {
         (Self::ZERO, Self(s.len() as u32))
     }
 
+    pub fn range_from(&self) -> std::ops::RangeFrom<usize> {
+        self.as_usize()..
+    }
+
+    pub fn range_to(&self) -> std::ops::RangeTo<usize> {
+        ..(self.as_usize())
+    }
+
     pub fn from_char(c: char) -> Self {
         Self(c.len_utf8() as u32)
+    }
+}
+
+impl std::ops::Index<std::ops::RangeTo<BytePos>> for Str<'_> {
+    type Output = str;
+
+    fn index(&self, index: std::ops::RangeTo<BytePos>) -> &Self::Output {
+        let idx = index.end.as_usize();
+        if idx >= self.len() {
+            self.0
+        } else {
+            &self.0[..idx]
+        }
     }
 }
 
@@ -220,25 +276,17 @@ impl std::fmt::Debug for Span {
 }
 
 impl Span {
-    pub fn new(start: impl Into<BytePos>, end: impl Into<BytePos>) -> Self {
-        Self(start.into(), end.into())
-    }
-
-    pub fn from_pair((start, end): (impl Into<BytePos>, impl Into<BytePos>)) -> Self {
-        Self(start.into(), end.into())
-    }
-
-    pub fn from_str(s: &impl AsRef<str>) -> Self {
+    pub fn of_str(s: &impl AsRef<str>) -> Self {
         let (a, b) = BytePos::str_bounds(s.as_ref());
         Self(a, b)
     }
 
-    pub fn tuple(self) -> (BytePos, BytePos) {
-        (self.0, self.1)
-    }
-
     pub fn len(&self) -> usize {
         (self.1 - self.0).as_usize()
+    }
+
+    pub fn contains(&self, other: Span) -> bool {
+        self.start() <= other.start() && self.end() >= other.end()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -251,10 +299,6 @@ impl Span {
 
     pub fn end(&self) -> BytePos {
         self.1
-    }
-
-    pub fn begin<X: WithSpan>(start: BytePos) -> impl FnMut(X) -> Span {
-        move |x: X| Span(start, x.get_pos())
     }
 
     /// Returns a `Span` as a `Range<usize>`; used to index string slices using
@@ -339,6 +383,17 @@ impl Span {
     }
 }
 
+impl std::ops::Sub<Span> for Span {
+    type Output = Span;
+
+    /// Shift a span to the left by subtracting the starting point
+    /// of the subtrahend from the start and endpoint of this span
+    fn sub(self, rhs: Span) -> Self::Output {
+        assert!(self.contains(rhs));
+        Span(self.start() - rhs.start(), self.end() - rhs.start())
+    }
+}
+
 impl Dummy for Span {
     const DUMMY: Self = Self(BytePos::ZERO, BytePos::ZERO);
 
@@ -358,11 +413,29 @@ impl<'a> Str<'a> {
     pub fn len(&self) -> usize {
         self.0.len()
     }
+
     pub fn bytelen(&self) -> BytePos {
         BytePos::strlen(self.0)
     }
+
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+
+    pub fn column(&self) -> Col {
+        Col::of_chars(self)
+    }
+}
+
+impl AsRef<str> for Str<'_> {
+    fn as_ref(&self) -> &str {
+        self.0
+    }
+}
+
+impl std::borrow::Borrow<str> for Str<'_> {
+    fn borrow(&self) -> &str {
+        self.0
     }
 }
 
@@ -391,10 +464,6 @@ impl<T> Spanned<T> {
         Self(item, span)
     }
 
-    pub fn as_tuple(self) -> (T, Span) {
-        (self.0, self.1)
-    }
-
     #[inline]
     pub fn take_item(self) -> T {
         self.0
@@ -415,10 +484,6 @@ impl<T> Spanned<T> {
         Spanned(f(self.0), self.1)
     }
 
-    pub fn map_ref<U>(&self, f: &mut impl FnMut(&T) -> U) -> Spanned<U> {
-        Spanned(f(&self.0), self.1)
-    }
-
     /// Given a span, returns a new span containing the minimum `Pos` as the
     /// starting point and the maximum `Pos` as the ending point.
     pub fn union(&self, other: &Span) -> Spanned<&T> {
@@ -432,7 +497,7 @@ impl<T> Spanned<T> {
 }
 
 impl<T> Spanned<&T> {
-    pub fn cloned(self) -> Spanned<T>
+    pub fn clone_item(self) -> Spanned<T>
     where
         T: Clone,
     {
@@ -440,7 +505,7 @@ impl<T> Spanned<&T> {
         Spanned(t.clone(), span)
     }
 
-    pub fn copied(self) -> Spanned<T>
+    pub fn copy_item(self) -> Spanned<T>
     where
         T: Copy,
     {
@@ -644,16 +709,8 @@ impl Coord {
         self.col == rhs.col
     }
 
-    /// First, we say a [`Loc`] `x` *contains* a [`Loc`] `y` if
-    /// ```rust,ignore
-    /// x.row == y.row || (x.row < y.row && x.col < y.col)
-    /// ```
-    /// i.e, any of the following hold:
-    ///
-    /// * `y` is on the same row (= line) as `x`
-    /// * both `row` and `col` values of `y` are greater than that of `x`
     pub fn contains(&self, rhs: &Self) -> bool {
-        self.row == rhs.row || (self.row < rhs.row && self.col < rhs.col)
+        self.row < rhs.row && self.col < rhs.col
     }
 
     #[inline]
@@ -702,7 +759,11 @@ pub struct Location {
 
 impl std::fmt::Display for Location {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Location({}, {})", &self.start, &self.end)
+        write!(
+            f,
+            "{}:{}-{}:{}",
+            &self.start.row, &self.start.col, &self.end.row, &self.end.col
+        )
     }
 }
 
@@ -880,64 +941,6 @@ impl<T> Located<T> {
         Located(vec![item_1, item_2], loc_1.union(&loc_2))
     }
 }
-impl<T> Located<Vec<T>> {
-    pub fn veclen(&self) -> usize {
-        self.0.len()
-    }
-    pub fn as_slice(&self) -> &[T] {
-        self.0.as_slice()
-    }
-    pub fn as_mut_slice(&mut self) -> &mut [T] {
-        self.0.as_mut_slice()
-    }
-    pub fn items_iter(&self) -> std::slice::Iter<'_, T> {
-        self.0.iter()
-    }
-
-    pub fn items_iter_mut(&mut self) -> std::slice::IterMut<'_, T> {
-        self.0.iter_mut()
-    }
-
-    pub fn push(&mut self, located: Located<T>) {
-        let (item, loc) = located.as_tuple();
-        self.1 = self.1.union(&loc);
-        self.0.push(item);
-    }
-
-    pub fn extend(&mut self, iter: impl IntoIterator<Item = Located<T>>) {
-        iter.into_iter().for_each(|Located(item, loc)| {
-            self.0.push(item);
-            self.1 = self.1.union(&loc);
-        })
-    }
-
-    pub fn reverse(&mut self) {
-        self.0.reverse()
-    }
-}
-
-impl<X, E> Located<Result<X, E>> {
-    pub fn as_result(self) -> Result<Located<X>, E> {
-        self.0.map(|x| Located(x, self.1))
-    }
-    pub fn ok(self) -> Result<Located<X>, Located<E>> {
-        self.0
-            .map(|x| Located(x, self.1))
-            .map_err(|e| Located(e, self.1))
-    }
-    pub fn ok_or<A>(self, mut f: impl FnMut(E, Location) -> A) -> Result<Located<X>, A> {
-        self.0.map(|x| Located(x, self.1)).map_err(|e| f(e, self.1))
-    }
-    pub fn flat_map<Y>(self, mut f: impl FnMut(X) -> Result<Y, E>) -> Result<Located<Y>, E> {
-        self.0.and_then(|x| f(x).map(|y| Located(y, self.1)))
-    }
-    pub fn is_ok(&self) -> bool {
-        self.0.is_ok()
-    }
-    pub fn is_err(&self) -> bool {
-        self.0.is_err()
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Position {
@@ -946,12 +949,6 @@ pub struct Position {
 }
 
 impl Position {
-    pub fn from_pairs([(pos0, start), (pos1, end)]: [(BytePos, Coord); 2]) -> Self {
-        Position {
-            span: Span(pos0, pos1),
-            location: Location { start, end },
-        }
-    }
     pub fn new(span: Span, location: Location) -> Position {
         Position { span, location }
     }
@@ -987,7 +984,7 @@ impl Position {
         self.location.end.row
     }
     #[inline]
-    pub fn multiline(&self) -> bool {
+    pub fn is_multiline(&self) -> bool {
         self.location.start.row < self.location.end.row
     }
     #[inline]
@@ -1041,7 +1038,7 @@ impl Dummy for Position {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Positioned<X>(X, Position);
+pub struct Positioned<X>(pub X, pub Position);
 
 impl<X> Copy for Positioned<X> where X: Copy {}
 
@@ -1052,17 +1049,6 @@ impl<X> Positioned<X> {
     pub fn parts(self) -> (X, Position) {
         (self.0, self.1)
     }
-
-    pub fn from_pairs(item: X, [(pos0, start), (pos1, end)]: [(BytePos, Coord); 2]) -> Self {
-        Positioned(
-            item,
-            Position {
-                span: Span(pos0, pos1),
-                location: Location { start, end },
-            },
-        )
-    }
-
     pub fn position(&self) -> Position {
         self.1
     }
@@ -1149,41 +1135,6 @@ impl<X, E> Positioned<Result<X, E>> {
         X: PartialEq,
     {
         matches!(self.0.as_ref(), Ok(x) if x == item)
-    }
-}
-impl<T> Positioned<Vec<T>> {
-    pub fn veclen(&self) -> usize {
-        self.0.len()
-    }
-    pub fn as_slice(&self) -> &[T] {
-        self.0.as_slice()
-    }
-    pub fn as_mut_slice(&mut self) -> &mut [T] {
-        self.0.as_mut_slice()
-    }
-    pub fn items_iter(&self) -> std::slice::Iter<'_, T> {
-        self.0.iter()
-    }
-
-    pub fn items_iter_mut(&mut self) -> std::slice::IterMut<'_, T> {
-        self.0.iter_mut()
-    }
-
-    pub fn push(&mut self, positioned: Positioned<T>) {
-        let (item, loc) = positioned.parts();
-        self.1 = self.1.union(&loc);
-        self.0.push(item);
-    }
-
-    pub fn extend(&mut self, iter: impl IntoIterator<Item = Positioned<T>>) {
-        iter.into_iter().for_each(|Positioned(item, loc)| {
-            self.0.push(item);
-            self.1 = self.1.union(&loc);
-        })
-    }
-
-    pub fn reverse(&mut self) {
-        self.0.reverse()
     }
 }
 
