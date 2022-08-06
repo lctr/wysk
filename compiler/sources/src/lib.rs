@@ -3,9 +3,11 @@
 
 use std::path::Path;
 
+use files::{File, SourceMap};
 use manifest::Manifest;
-use paths::{Atlas, Dir, Src};
+use paths::{Atlas, Dir, FilePath};
 
+pub mod files;
 pub mod manifest;
 pub mod paths;
 
@@ -29,6 +31,7 @@ impl Config {
 pub struct Project {
     atlas: Atlas,
     config: Config,
+    source_map: SourceMap,
 }
 
 impl Project {
@@ -42,7 +45,11 @@ impl Project {
             atlas.add_paths(man.workspaces());
             Some(Config::Project(man))
         })
-        .map(|config| Project { atlas, config })
+        .map(|config| Project {
+            atlas,
+            config,
+            source_map: SourceMap::new(),
+        })
     }
 
     pub fn atlas(&self) -> &Atlas {
@@ -57,8 +64,20 @@ impl Project {
     pub fn manifest(&self) -> Option<&Manifest> {
         self.config.manifest()
     }
-    pub fn sources(&self) -> std::slice::Iter<'_, Src> {
+    pub fn sources(&self) -> std::slice::Iter<'_, FilePath> {
         self.atlas.sources_iter()
+    }
+    pub fn source_map(&self) -> &SourceMap {
+        &self.source_map
+    }
+    pub fn source_map_mut(&mut self) -> &mut SourceMap {
+        &mut self.source_map
+    }
+    pub fn stored_files(&self) -> std::slice::Iter<'_, std::sync::Arc<File>> {
+        self.source_map.iter_files()
+    }
+    pub fn file_count(&self) -> usize {
+        self.source_map.file_count()
     }
 }
 
