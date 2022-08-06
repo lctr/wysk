@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 use wy_common::iter::Counter;
 
 pub mod chain;
-pub mod file;
 pub mod ident;
 pub mod module;
 pub mod unique;
