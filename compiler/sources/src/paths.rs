@@ -1,11 +1,13 @@
 use std::{
     env,
     ffi::OsStr,
-    fs,
+    fmt, fs,
     path::{Path, PathBuf},
 };
 
-use wy_common::iter::Counter;
+use serde::{Deserialize, Serialize};
+use wy_intern::Symbol;
+
 use wy_failure::{Failure, Outcome};
 
 use crate::manifest::Manifest;
@@ -42,8 +44,8 @@ pub fn is_manifest_file<P: AsRef<Path>>(p: &P) -> bool {
         || path.ends_with("MANIFEST.toml")
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct FileId(usize);
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct FileId(pub(crate) usize);
 
 impl std::fmt::Debug for FileId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -54,26 +56,6 @@ impl std::fmt::Debug for FileId {
 impl std::fmt::Display for FileId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "FileId({})", &self.0)
-    }
-}
-
-impl From<&mut Counter> for FileId {
-    fn from(counter: &mut Counter) -> Self {
-        Self(counter.incremented())
-    }
-}
-
-wy_common::newtype! {
-    /// Manifest files are uniquely identified via their enumerated `MetaId`s.
-    /// While a project has a single manifest file, projects containing other
-    /// projects may contain their own manifest files, hence the need to
-    /// enumerate them.
-    usize in MetaId | Show (+=)
-}
-
-impl From<&mut Counter> for MetaId {
-    fn from(counter: &mut Counter) -> Self {
-        Self(counter.incremented())
     }
 }
 
@@ -109,21 +91,7 @@ pub fn new_sources(p: impl AsRef<Path>) -> Option<Atlas> {
 /// compiler is run.
 #[derive(Clone, Debug)]
 pub struct Atlas {
-    sources: Vec<Src>,
-}
-
-impl<I: IntoIterator<Item = PathBuf>> From<(&mut Counter, I)> for Atlas {
-    fn from((ct, iter): (&mut Counter, I)) -> Self {
-        Self {
-            sources: ct
-                .zip(iter)
-                .map(|(n, path)| Src {
-                    fid: FileId(n),
-                    path,
-                })
-                .collect(),
-        }
-    }
+    sources: Vec<FilePath>,
 }
 
 impl Atlas {
@@ -142,7 +110,7 @@ impl Atlas {
             sources: pbs
                 .into_iter()
                 .enumerate()
-                .map(|(n, path)| Src {
+                .map(|(n, path)| FilePath {
                     fid: FileId(n),
                     path,
                 })
@@ -160,7 +128,7 @@ impl Atlas {
     }
 
     #[inline]
-    pub fn has(&self, mut f: impl FnMut(&Src) -> bool) -> bool {
+    pub fn has(&self, mut f: impl FnMut(&FilePath) -> bool) -> bool {
         self.find_src(|s| f(*s)).is_some()
     }
 
@@ -170,7 +138,7 @@ impl Atlas {
         self.sources_iter().any(|src| src.path() == p)
     }
 
-    pub fn find_src(&self, f: impl FnMut(&&Src) -> bool) -> Option<&Src> {
+    pub fn find_src(&self, f: impl FnMut(&&FilePath) -> bool) -> Option<&FilePath> {
         self.sources_iter().find(f)
     }
 
@@ -184,13 +152,13 @@ impl Atlas {
     pub fn add_paths(&mut self, pbs: impl IntoIterator<Item = PathBuf>) {
         for path in pbs {
             let fid = FileId(self.sources.len());
-            self.sources.push(Src { fid, path })
+            self.sources.push(FilePath { fid, path })
         }
     }
 
-    pub fn add_source(&mut self, src: Src) {
+    pub fn add_source(&mut self, src: FilePath) {
         if !self.sources.contains(&src) {
-            self.sources.push(Src {
+            self.sources.push(FilePath {
                 fid: FileId(self.len()),
                 path: src.path,
             })
@@ -206,27 +174,27 @@ impl Atlas {
             .for_each(|dir| self.extend(dir.all_wysk_files()))
     }
 
-    pub fn add_sources(&mut self, sources: impl Iterator<Item = Src>) {
+    pub fn add_sources(&mut self, sources: impl Iterator<Item = FilePath>) {
         let len = self.len();
-        for (n, Src { path, .. }) in sources.enumerate() {
-            self.add_source(Src {
+        for (n, FilePath { path, .. }) in sources.enumerate() {
+            self.add_source(FilePath {
                 fid: FileId(len + n),
                 path,
             })
         }
     }
 
-    pub fn sources(&self) -> &[Src] {
+    pub fn sources(&self) -> &[FilePath] {
         self.sources.as_slice()
     }
 
     #[inline]
-    pub fn sources_iter(&self) -> std::slice::Iter<'_, Src> {
+    pub fn sources_iter(&self) -> std::slice::Iter<'_, FilePath> {
         self.sources.iter()
     }
 
     #[inline]
-    pub fn sources_iter_mut(&mut self) -> std::slice::IterMut<'_, Src> {
+    pub fn sources_iter_mut(&mut self) -> std::slice::IterMut<'_, FilePath> {
         self.sources.iter_mut()
     }
 
@@ -301,22 +269,22 @@ impl Atlas {
 }
 
 impl std::ops::Index<FileId> for Atlas {
-    type Output = Src;
+    type Output = FilePath;
 
     fn index(&self, index: FileId) -> &Self::Output {
         &self.sources[index.0]
     }
 }
 
-impl Extend<Src> for Atlas {
-    fn extend<T: IntoIterator<Item = Src>>(&mut self, iter: T) {
+impl Extend<FilePath> for Atlas {
+    fn extend<T: IntoIterator<Item = FilePath>>(&mut self, iter: T) {
         self.add_sources(iter.into_iter())
     }
 }
 
 impl<S> Extend<S> for Atlas
 where
-    S: IntoIterator<Item = Src>,
+    S: IntoIterator<Item = FilePath>,
 {
     fn extend<T: IntoIterator<Item = S>>(&mut self, iter: T) {
         for sources in iter {
@@ -331,7 +299,7 @@ impl FromIterator<PathBuf> for Atlas {
             sources: iter
                 .into_iter()
                 .enumerate()
-                .map(|(n, p)| Src {
+                .map(|(n, p)| FilePath {
                     fid: FileId(n),
                     path: p,
                 })
@@ -340,26 +308,26 @@ impl FromIterator<PathBuf> for Atlas {
     }
 }
 
-impl FromIterator<Src> for Atlas {
-    fn from_iter<T: IntoIterator<Item = Src>>(iter: T) -> Self {
+impl FromIterator<FilePath> for Atlas {
+    fn from_iter<T: IntoIterator<Item = FilePath>>(iter: T) -> Self {
         Atlas {
             sources: iter.into_iter().collect(),
         }
     }
 }
 
-/// `Src` describes a filepath ending in the extension `.wy`, and hence cannot
-/// be directly created. Instead, file system traversing helpers -- in `Atlas`
-/// and `Dir` -- are used to generate `Src` instances. This helps prevent
-/// non-wysk source files from inadvertently being included in the `Atlas` file
-/// tree, etc.
+/// `FilePath` describes a filepath ending in the extension `.wy`, and
+/// hence cannot be directly created. Instead, file system traversing
+/// helpers -- in `Atlas` and `Dir` -- are used to generate `FilePath`
+/// instances. This helps prevent non-wysk source files from
+/// inadvertently being included in the `Atlas` file tree, etc.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Src {
+pub struct FilePath {
     fid: FileId,
     path: PathBuf,
 }
 
-impl Src {
+impl FilePath {
     pub const MAIN_PATH: &'static str = "main.wy";
     pub const LIB_PATH: &'static str = "lib.wy";
     pub const MOD_PATH: &'static str = "mod.wy";
@@ -463,7 +431,7 @@ impl Src {
             .ok()
             .and_then(|p| p.parent().map(Path::to_path_buf))
             .unwrap_or_else(|| PathBuf::from("."));
-        Dir::new(0, p)
+        Dir::new(1, p)
     }
 
     /// Converts a given path-like type `P` implementing `AsRef<Path>` into an
@@ -533,17 +501,42 @@ impl Src {
     pub fn components(&self) -> std::path::Components {
         self.path.components()
     }
+
+    pub fn display(&self) -> String {
+        let mut parts = vec![];
+        let path = self.path.canonicalize().unwrap();
+        for (n, c) in path
+            .components()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .enumerate()
+        {
+            if n < 4 {
+                parts.push(c.as_os_str().to_string_lossy());
+                if n < 3 {
+                    parts.push(if cfg!(windows) { "\\" } else { "/" }.into())
+                }
+            } else {
+                break;
+            }
+        }
+        parts.into_iter().rfold(String::new(), |mut a, c| {
+            a.push_str(c.as_ref());
+            a
+        })
+    }
 }
 
-impl AsRef<Path> for Src {
+impl AsRef<Path> for FilePath {
     fn as_ref(&self) -> &Path {
         self.path()
     }
 }
 
-impl std::fmt::Display for Src {
+impl std::fmt::Display for FilePath {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}[{}]", self.fid, self.path().display())
+        write!(f, "{}", self.path().display())
     }
 }
 
@@ -611,7 +604,7 @@ impl Dir {
     }
 
     /// Returns an iterator of immediate descendant `Src` files.
-    pub fn imm_wysk_files(&self) -> impl Iterator<Item = Src> + '_ {
+    pub fn imm_wysk_files(&self) -> impl Iterator<Item = FilePath> + '_ {
         self.path.read_dir().into_iter().flat_map(|rd| {
             rd.filter_map(|res| {
                 res.ok().map(|de| {
@@ -625,7 +618,7 @@ impl Dir {
             })
             .flatten()
             .enumerate()
-            .map(|(n, path)| Src {
+            .map(|(n, path)| FilePath {
                 fid: FileId(n),
                 path,
             })
@@ -634,12 +627,12 @@ impl Dir {
 
     /// Recursively searches all children of this directory and returns an
     /// iterator containing `Src` instances.
-    pub fn all_wysk_files(&self) -> impl Iterator<Item = Src> + '_ {
+    pub fn all_wysk_files(&self) -> impl Iterator<Item = FilePath> + '_ {
         self.all_sub_dirs()
             .into_iter()
             .flat_map(move |dir| dir.imm_wysk_files().collect::<Vec<_>>())
             .enumerate()
-            .map(|(n, Src { path, .. })| Src {
+            .map(|(n, FilePath { path, .. })| FilePath {
                 fid: FileId(n),
                 path,
             })
@@ -742,6 +735,167 @@ impl Dir {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct FileName(Symbol);
+
+impl fmt::Debug for FileName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "FileName({})", &self.0)
+    }
+}
+
+impl fmt::Display for FileName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", &self.0)
+    }
+}
+
+// TODO: move to file/path/io related module
+#[derive(Clone, PartialEq, Eq)]
+pub enum FileSource {
+    Stdin,
+    File { path: PathBuf, depth: usize },
+}
+
+impl FileSource {
+    pub const DOT_WY: &'static str = ".wy";
+
+    pub fn is_file(&self) -> bool {
+        matches!(self, FileSource::File { .. })
+    }
+
+    /// Returns `true` if this is a `File` variant with a path
+    /// pointing to an existing file ending in the Wysk file extension `.wy`.
+    pub fn is_valid_file(&self) -> bool {
+        matches!(self, FileSource::File { path, .. } if path.exists() && path.to_string_lossy().ends_with(Self::DOT_WY))
+    }
+
+    pub fn read_text(&self) -> std::io::Result<String> {
+        match self {
+            FileSource::Stdin => {
+                use std::io::{self, BufRead};
+
+                let mut buffer = String::new();
+                let stdin = io::stdin();
+                let mut handle = stdin.lock();
+                while !buffer.ends_with(";;\n") {
+                    handle.read_line(&mut buffer)?;
+                }
+                Ok(buffer)
+            }
+            FileSource::File { path, .. } => std::fs::read_to_string(path),
+        }
+    }
+
+    pub fn qualified_name(&self, depth_offset: usize) -> Option<String> {
+        match self {
+            FileSource::Stdin => None,
+            FileSource::File { path, depth } => path.canonicalize().ok().and_then(|p| {
+                use wy_common::text::capitalize_first;
+                let mut parts = vec![];
+                let mut depth = *depth + depth_offset;
+                let mut path = p.components().rev().peekable();
+                while depth > 0 && path.peek().is_some() {
+                    let o = path.next().and_then(|c| c.as_os_str().to_str());
+                    if !matches!(&o, &Some("src")) {
+                        depth -= 1;
+                        parts.extend(o);
+                    }
+                }
+                if parts.is_empty() {
+                    return None;
+                }
+                Some(parts.into_iter().rfold(String::new(), |mut a, c| {
+                    if !a.is_empty() {
+                        a.push('.');
+                    }
+                    a.push_str(&*capitalize_first(if c.ends_with(".wy") {
+                        &c[0..c.len() - 3]
+                    } else {
+                        c
+                    }));
+                    a
+                }))
+            }),
+        }
+    }
+
+    /// Goes through all the descendants within a given directory,
+    /// returning the `FilePath` instances for all files ending in the
+    /// given extension.
+    pub fn within_dir(
+        p: impl AsRef<Path>,
+        ext: impl AsRef<str>,
+    ) -> impl Iterator<Item = FileSource> {
+        let mut dirnum = 0usize;
+        let mut stack = wy_common::Deque::new();
+        let mut entries = vec![];
+        let ext = ext.as_ref();
+        // if let Ok(p) = p.as_ref().canonicalize() {
+        //     stack.push_back(p)
+        // }
+        stack.push_back(p.as_ref().to_path_buf());
+        while let Some(path) = stack.pop_front() {
+            let mut incr = false;
+            path.read_dir().into_iter().for_each(|rdir| {
+                rdir.for_each(|ds| {
+                    ds.into_iter().for_each(|entry| {
+                        let pe = entry.path();
+                        if pe.is_file() && pe.to_string_lossy().ends_with(ext) {
+                            incr = true;
+                            entries.push((dirnum, pe));
+                        } else if pe.is_dir() {
+                            stack.push_back(pe);
+                        }
+                    });
+                });
+            });
+            if incr {
+                dirnum += 1;
+            }
+        }
+        entries
+            .into_iter()
+            .map(|(depth, path)| FileSource::File { path, depth })
+    }
+}
+
+impl std::fmt::Debug for FileSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Stdin => write!(f, "<stdin>"),
+            Self::File { path, .. } => write!(f, "{:?}", path),
+        }
+    }
+}
+
+impl PartialEq<PathBuf> for FileSource {
+    fn eq(&self, other: &PathBuf) -> bool {
+        matches!(self, FileSource::File { path, ..} if path == other)
+    }
+}
+
+impl PartialEq<FileSource> for PathBuf {
+    fn eq(&self, other: &FileSource) -> bool {
+        matches!(other, FileSource::File { path, ..} if self == path)
+    }
+}
+
+impl PartialEq<Path> for FileSource {
+    fn eq(&self, other: &Path) -> bool {
+        match self {
+            FileSource::Stdin => false,
+            FileSource::File { path, .. } => other == path.as_path(),
+        }
+    }
+}
+
+impl PartialEq<FileSource> for Path {
+    fn eq(&self, other: &FileSource) -> bool {
+        matches!(other, FileSource::File { path, ..} if path.as_path() == self)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -774,5 +928,72 @@ mod test {
         assert!(subdirs[2].is_src_dir());
         println!("{:?}", root.imm_wysk_files().collect::<Vec<_>>());
         println!("all {:?}", root.all_wysk_files().collect::<Vec<_>>());
+        println!(
+            "displayed: {:#?}",
+            root.all_wysk_files()
+                .map(|fp| fp.display())
+                .collect::<Vec<_>>()
+        )
+    }
+
+    #[test]
+    fn test_get_file_name() {
+        let fp = FileSource::File {
+            path: PathBuf::from("../../language/prelude/src/function.wy"),
+            depth: 1,
+        };
+        assert_eq!(Some(String::from("Function")), fp.qualified_name(0))
+    }
+
+    #[test]
+    fn test_dir_filepath_qualified_names() {
+        let actual = FileSource::within_dir("../../", ".wy")
+            .inspect(|s| println!("{s:?}"))
+            .flat_map(|fp| fp.qualified_name(0))
+            .collect::<Vec<_>>();
+        let expected = [
+            "List",
+            "Lib",
+            "Function",
+            "Numeric",
+            "Container",
+            "Predicate",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<_>>();
+        assert_eq!(actual, expected)
+    }
+
+    #[test]
+    fn test_dir_filepath_qualified_names_with_offset_1() {
+        let actual = FileSource::within_dir("../../", ".wy")
+            .inspect(|s| println!("{s:?}"))
+            .flat_map(|fp| fp.qualified_name(1))
+            .collect::<Vec<_>>();
+        let expected = [
+            "Prim",
+            "Sample",
+            "Prelude.List",
+            "Prelude.Lib",
+            "Prelude.Function",
+            "Prelude.Numeric",
+            "Prelude.Container",
+            "Prelude.Predicate",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<_>>();
+        assert_eq!(actual, expected)
+    }
+
+    #[test]
+    fn test_read_stdin() {
+        let path = FileSource::Stdin;
+        let text = path.read_text();
+        match text {
+            Ok(s) => println!("{s}"),
+            Err(e) => eprintln!("{e}"),
+        }
     }
 }
