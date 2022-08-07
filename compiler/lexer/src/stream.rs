@@ -1,6 +1,7 @@
 use std::{iter::Peekable, str::Chars};
 
-use wy_span::{BytePos, Coord, Located, Location, Position, Span, WithLoc, WithSpan};
+use wy_intern::symbol::Symbol;
+use wy_span::{BytePos, Coord, Location, Position, Span, WithLoc, WithSpan};
 
 use crate::comment::Comment;
 use crate::meta::Placement;
@@ -42,10 +43,6 @@ impl<'t> Source<'t> {
             pos: BytePos::ZERO,
             coord: Coord::new(),
         }
-    }
-
-    pub fn string(&self) -> String {
-        self.src.to_string()
     }
 
     /// Returns the last byte position possible. Equivalent to taking the length
@@ -351,40 +348,43 @@ impl<'t> From<Source<'t>> for String {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Mode {
     Default,
-    /// Lexing the insides of an attribute, i.e., within the square brackets
-    /// that follow a hash and an optional bang, e.g., `#[allow all]`
-    /// Identifiers within the top level brackets are lexed as lints,
-    /// attributes, and other possible pragma keywords.
-    ///
-    /// ATTRIBUTE := `#[` ATTRS QUOTE `]`
-    /// ATTRS := "allow" LINTS | "fixity" FIXITY | CONFIG | CUSTOM
-    /// FIXITY := ASSOC PREC | PREC ASSOC
-    /// PREC := "0" | ... | "9"
-    /// ASSOC := "L" | "N" | "R"
-    /// LINTS := LINT | LINT "&" LINTS
-    /// LINT := "all" | "unused" | ...
-    ///  
-    ///
-    /// However, within curly brackets OR after a pipe, identifiers are lexed
-    /// identically to `Default` mode. For example, the following sequence would
-    /// have `specialize` lexed according to the `Meta` mode as a pragma
-    /// component, but the `foo :: Bar -> Baz` would be lexed as though the mode
-    /// was `Default`; the same holds for pipe usage! Thus, the following two
-    /// are treated *nearly* the same.
-    /// - `#[specialize { foo :: Bar -> Baz }]`
-    ///     - `Default` mode is triggered by curly braces in `Meta` mode
-    /// - `#[specialize | foo :: Bar -> Baz ]`
-    ///     - `Default` mode is triggered by a pipe in `Meta` mode
-    Meta(Placement),
+    /// Lexing the insides of a pragma, i.e., within the square brackets
+    /// that follow a hash and an optional bang, e.g., `#[allow all]`.
+    /// The `place` field identifies whether the attribute is placed
+    /// before or after the item that it annotates. Moreover, the
+    /// first token seen after the left bracket `[` in an attribute
+    /// forms the *pragma* label and affect the semantic meaning of
+    /// the attribute, while the following tokens leading up to the
+    /// closing right bracket `]` form the arguments. Whether the
+    /// label of an attribute has been seen affects the behavior of
+    /// the lexer, with a number of builtin attributes being scanned
+    /// for when the `attr_seen` field is `false`.
+    Meta {
+        place: Placement,
+        attr_seen: bool,
+    },
     Macro,
 }
 
 wy_common::variant_preds! { Mode
     | is_default => Default
-    | is_meta => Meta(_)
-    | is_meta_before => Meta(Placement::Before)
-    | is_meta_after => Meta(Placement::After)
+    | is_meta => Meta { .. }
+    | is_meta_before => Meta { place: Placement::Before, .. }
+    | is_meta_after => Meta { place: Placement::After, .. }
     | is_macro => Macro
+}
+
+impl Mode {
+    /// Returns the value of the `attr_seen` field as an optional
+    /// value if the variant is a `Meta` variant, otherwise returns
+    /// `None`.
+    pub fn attr_witness(&self) -> Option<bool> {
+        if let Self::Meta { attr_seen, .. } = self {
+            Some(*attr_seen)
+        } else {
+            None
+        }
+    }
 }
 
 impl Default for Mode {
@@ -419,6 +419,7 @@ pub struct Lexer<'t> {
     pub comments: Vec<Comment>,
     pub current: Option<Token>,
     pub mode: Mode,
+    pub shebang: Option<Span>,
 }
 
 impl<'t> WithLoc for Lexer<'t> {
@@ -444,18 +445,17 @@ impl<'t> WithSpan for Lexer<'t> {
 
 impl<'t> Lexer<'t> {
     pub fn new(src: &'t str) -> Self {
-        Self {
+        let mut this = Self {
             coords: Vec::new(),
             stack: Vec::new(),
             source: Source::new(src),
             comments: Vec::new(),
             current: None,
             mode: Mode::Default,
-        }
-    }
-
-    pub fn src_len(&self) -> usize {
-        self.source.src.len()
+            shebang: None,
+        };
+        this.read_shebang();
+        this
     }
 
     pub fn span_from(&self, start: BytePos) -> Span {
@@ -467,12 +467,6 @@ impl<'t> Lexer<'t> {
             start,
             end: self.get_coord(),
         }
-    }
-
-    pub fn position_from(&self, start_pos: BytePos, start_coord: Coord) -> Position {
-        let span = self.span_from(start_pos);
-        let location = self.loc_from(start_coord);
-        Position::new(span, location)
     }
 
     pub fn peek(&mut self) -> Option<&Token> {
@@ -521,8 +515,8 @@ impl<'t> Lexer<'t> {
         ) || self.stack.is_empty() && (self.source.is_done())
     }
 
-    pub(crate) fn span_symbol(&self, span: Span) -> wy_intern::symbol::Symbol {
-        wy_intern::symbol::intern_once(&self.source[span])
+    pub(crate) fn span_symbol(&self, span: Span) -> Symbol {
+        Symbol::intern(&self.source[span])
     }
 
     pub fn on_char(&mut self, ch: impl Character) -> bool {
@@ -533,67 +527,47 @@ impl<'t> Lexer<'t> {
         &self.mode
     }
 
+    /// Updates the internal `Mode`. Note that every `Mode` toggle
+    /// resets the `attr_seen` of a `Meta` mode to `false`.
     pub fn set_meta_mode(&mut self, placement: Placement) -> &mut Self {
         if self.mode.is_default() {
-            self.mode = Mode::Meta(placement);
+            self.mode = Mode::Meta {
+                place: placement,
+                attr_seen: false,
+            };
         }
         self
     }
 
+    /// Resets the lexer's `Mode` to `Mode::Default`, modifying how the
+    /// lexer scans identifiers.
     pub fn reset_mode(&mut self) -> &mut Self {
         self.mode = Mode::default();
         self
     }
 
-    /// Reads the next token, wrapping the resulting `Token` in a `Located`
-    /// struct recording the location before and after calling `next`.
-    pub fn located(&mut self) -> Located<Token> {
-        let start = self.get_coord();
-        let token = self.next().unwrap_or_else(|| {
-            let end = BytePos::strlen(self.source.src);
-            Token {
-                span: Span(end, end),
-                lexeme: Lexeme::Eof,
+    /// Called immediately upon creation for a new file only and
+    /// stores the span inside the lexer corresponding to  
+    /// `#!interpreter [optional-arg]` found on the first line of the
+    /// text.
+    ///
+    // Should there be two spans? Moreover, should this be done/stored
+    // the lexer or the underlying source stream?
+    fn read_shebang(&mut self) {
+        #![allow(unused)]
+        if self.get_row().is_one() && self.get_col().is_zero() {
+            if self.source.bump_on('#') {
+                if self.source.bump_on('!') {
+                    // ignore the `#!` part of the shebang when
+                    // storing its span
+                    self.shebang = Some(self.source.eat_while(|c| c != '\n').span())
+                }
             }
-        });
-        let end = self.get_coord();
-        Located(token, Location { start, end })
+        }
     }
 
-    pub fn into_coord_stream(self) -> CoordStream<'t> {
-        CoordStream::new(self)
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct CoordStream<'t>(Lexer<'t>);
-impl<'t> CoordStream<'t> {
-    pub fn new(lexer: Lexer<'t>) -> Self {
-        Self(lexer)
-    }
-    pub fn from_str(src: &'t str) -> Self {
-        Self(Lexer::new(src))
-    }
-    pub fn lexer(&mut self) -> &mut Lexer<'t> {
-        &mut self.0
-    }
-    pub fn take_lexer(self) -> Lexer<'t> {
-        self.0
-    }
-    pub fn peek(&mut self) -> Option<Located<&Token>> {
-        let loc = self.peekable().peek().map(|tk| tk.location());
-        loc.and_then(|loc| self.0.peek().map(|t| Located(t, loc)))
-    }
-}
-
-impl Iterator for CoordStream<'_> {
-    type Item = Located<Token>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let start = self.0.get_coord();
-        let token = self.0.next();
-        let end = self.0.get_coord();
-        token.map(|t| Located(t, Location { start, end }))
+    pub fn get_shebang_span(&self) -> Option<Span> {
+        self.shebang
     }
 }
 
