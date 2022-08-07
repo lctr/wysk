@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use wy_intern::symbol::{Symbol, Symbolic};
+pub use wy_intern::symbol::{Symbol, Symbolic};
 
 const FRESH_PREFIX: &str = "_#";
 
@@ -177,6 +177,59 @@ pub fn min_fresh_value<I: std::ops::Deref<Target = Ident>>(
         })
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum IdentKind {
+    Upper,
+    Lower,
+    Infix,
+    Label,
+    Fresh,
+}
+
+impl IdentKind {
+    pub fn mk_ident_unchecked(self, s: Symbol) -> Ident {
+        match self {
+            IdentKind::Upper => Ident::Upper(s),
+            IdentKind::Lower => Ident::Lower(s),
+            IdentKind::Infix => Ident::Infix(s),
+            IdentKind::Label => Ident::Label(s),
+            IdentKind::Fresh if s.as_ref().chars().all(|c| c.is_digit(10)) => {
+                Ident::Fresh(s.as_str().parse::<u32>().unwrap())
+            }
+            _ => unreachable!(
+                "Fresh identifiers all consist of digit characters, but `{}` does not",
+                s
+            ),
+        }
+    }
+
+    pub fn maybe_ident(self, s: Symbol) -> Option<Ident> {
+        match self {
+            IdentKind::Upper => Some(Ident::Upper(s)),
+            IdentKind::Lower => Some(Ident::Lower(s)),
+            IdentKind::Infix => Some(Ident::Infix(s)),
+            IdentKind::Label => Some(Ident::Label(s)),
+            IdentKind::Fresh if s.as_ref().chars().all(|c| c.is_digit(10)) => {
+                s.as_str().parse::<u32>().ok().map(Ident::Fresh)
+            }
+            _ => None,
+        }
+    }
+
+    pub fn try_to_ident(self, s: Symbol) -> Result<Ident, (Symbol, Self)> {
+        match self {
+            IdentKind::Upper => Ok(Ident::Upper(s)),
+            IdentKind::Lower => Ok(Ident::Lower(s)),
+            IdentKind::Infix => Ok(Ident::Infix(s)),
+            IdentKind::Label => Ok(Ident::Label(s)),
+            IdentKind::Fresh if s.as_ref().chars().all(|c| c.is_digit(10)) => {
+                Ok(Ident::Fresh(s.as_str().parse::<u32>().unwrap()))
+            }
+            kind => Err((s, kind)),
+        }
+    }
+}
+
 pub trait Identifier: Eq {
     fn is_upper(&self) -> bool;
     fn is_lower(&self) -> bool;
@@ -195,6 +248,20 @@ pub trait Identifier: Eq {
             Ident::Label
         } else {
             |s| Ident::Fresh(s.as_u32())
+        }
+    }
+
+    fn ident_kind(&self) -> IdentKind {
+        if self.is_upper() {
+            IdentKind::Upper
+        } else if self.is_lower() {
+            IdentKind::Lower
+        } else if self.is_infix() {
+            IdentKind::Infix
+        } else if self.is_label() {
+            IdentKind::Label
+        } else {
+            IdentKind::Fresh
         }
     }
 
