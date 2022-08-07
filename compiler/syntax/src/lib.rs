@@ -157,9 +157,6 @@ pub struct Program<Id, U, T> {
     pub comments: Vec<Comment>,
 }
 
-pub type RawProgram = Program<Ident, Option<std::path::PathBuf>, Ident>;
-pub type FreshProgram<U = ()> = Program<Ident, U, Tv>;
-
 macro_rules! impl_program {
     (
         $(
@@ -335,9 +332,6 @@ pub struct Module<Id = Ident, Uid = (), T = Ident> {
     pub pragmas: Vec<Attribute<Id, T>>,
 }
 
-pub type RawModule = Module<Ident, Option<std::path::PathBuf>, Ident>;
-pub type FreshModule = Module<Ident, ModuleId, Tv>;
-
 struct_field_iters! {
     |Id, U, T| Module<Id, U, T>
     | imports => imports_iter :: ImportSpec<Id>
@@ -477,10 +471,13 @@ impl<Id, U, T, X> MapThrd<T, X> for Module<Id, U, T> {
     }
 }
 
-impl Default for RawModule {
+impl<U, T> Default for Module<Ident, U, T>
+where
+    U: Default,
+{
     fn default() -> Self {
         Self {
-            uid: None,
+            uid: U::default(),
             modname: Chain::new(Ident::Upper(*symbol::reserved::MAIN_MOD), deque![]),
             imports: vec![],
             infixes: vec![],
