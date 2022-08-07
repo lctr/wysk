@@ -1,1 +1,1 @@
-pub mod sources;
+pub mod inputs;
