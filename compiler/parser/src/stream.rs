@@ -1,15 +1,50 @@
 use wy_common::Deque;
-use wy_failure::SrcLoc;
 use wy_lexer::{
     meta::{Placement, Pragma},
     token::{LexKind, Lexlike},
     Lexeme, Lexer, Token,
 };
 use wy_name::ident::Ident;
+use wy_sources::paths::Resource;
 use wy_span::{BytePos, Coord, Dummy, Span, WithLoc, WithSpan};
 use wy_syntax::fixity::FixityTable;
 
-use crate::error::{ParseError, Parsed, Report};
+use crate::error::{ParseError, Parsed, Report, SrcLoc};
+
+#[derive(Debug)]
+pub struct Parser<'t> {
+    pub(crate) lexer: Lexer<'t>,
+    pub(crate) queue: Deque<Token>,
+    pub fixities: FixityTable,
+    pub resource: Resource,
+    pub pragmas: Vec<(Pragma, Placement)>,
+}
+
+impl<'t> WithSpan for Parser<'t> {
+    fn get_pos(&self) -> BytePos {
+        self.lexer.get_pos()
+    }
+}
+
+impl<'t> WithLoc for Parser<'t> {
+    fn get_coord(&self) -> Coord {
+        self.lexer.get_coord()
+    }
+}
+
+impl<'t> Report for Parser<'t> {
+    fn get_srcloc(&mut self) -> SrcLoc {
+        Parser::srcloc(self)
+    }
+
+    fn get_source(&self) -> String {
+        Parser::text(self)
+    }
+
+    fn next_token(&mut self) -> Token {
+        *self.peek_ahead()
+    }
+}
 
 pub trait Streaming {
     type Peeked: Lexlike;
@@ -185,92 +220,11 @@ pub trait Streaming {
     }
 }
 
-pub type FilePath = std::path::PathBuf;
-
-#[derive(Debug)]
-pub struct Parser<'t> {
-    pub(crate) lexer: Lexer<'t>,
-    pub(crate) queue: Deque<Token>,
-    pub fixities: FixityTable,
-    pub filepath: Option<FilePath>,
-    pub pragmas: Vec<(Pragma, Placement)>,
-}
-
-impl<'t> WithSpan for Parser<'t> {
-    fn get_pos(&self) -> BytePos {
-        self.lexer.get_pos()
-    }
-}
-
-impl<'t> WithLoc for Parser<'t> {
-    fn get_coord(&self) -> Coord {
-        self.lexer.get_coord()
-    }
-}
-
-impl<'t> Report for Parser<'t> {
-    fn get_srcloc(&mut self) -> SrcLoc {
-        Parser::srcloc(self)
-    }
-
-    fn get_source(&self) -> String {
-        Parser::text(self)
-    }
-
-    fn next_token(&mut self) -> Token {
-        *self.peek_ahead()
-    }
-}
-
-impl<'t> Streaming for Parser<'t> {
-    type Peeked = Token;
-    type Lexeme = Lexeme;
-    type Err = ParseError;
-
-    fn peek(&mut self) -> Option<&Self::Peeked> {
-        if let Some(t) = self.queue.front() {
-            Some(t)
-        } else {
-            self.lexer.peek()
-        }
-    }
-
-    fn eat<T>(&mut self, item: T) -> Parsed<Self::Peeked>
-    where
-        T: AsRef<Self::Lexeme>,
-    {
-        Parser::eat(self, item)
-    }
-
-    /// Advance the underlying stream of tokens, retuning the unwrapped result
-    /// of `Lexer::next`. If `Lexer::next` returns `None`, then the token
-    /// corresponding to the `EOF` lexeme is returned.
-    ///
-    /// Note that this method first checks the internal token queue before
-    /// calling the lexer. If the buffer is non-empty, it simply pops the next
-    /// element from the front of the qeueue.
-    fn bump(&mut self) -> Token {
-        if let Some(token) = self.queue.pop_front() {
-            token
-        } else {
-            self.lexer.bump()
-        }
-    }
-
-    fn is_done(&mut self) -> bool {
-        match self.peek() {
-            Some(t) if t.is_eof() => true,
-            None => true,
-            _ => false,
-        }
-    }
-}
-
 impl<'t> Parser<'t> {
-    pub fn new(src: &'t str, filepath: Option<FilePath>) -> Self {
+    pub fn new(src: &'t str, resource: Resource) -> Self {
         Self {
             lexer: Lexer::new(src),
-            filepath,
+            resource,
             queue: Deque::new(),
             fixities: FixityTable::new(Ident::Infix),
             pragmas: Vec::new(),
@@ -280,7 +234,7 @@ impl<'t> Parser<'t> {
     pub fn from_str(src: &'t str) -> Self {
         Self {
             lexer: Lexer::new(src),
-            filepath: None,
+            resource: Resource::Stdin,
             queue: Deque::new(),
             fixities: FixityTable::new(Ident::Infix),
             pragmas: Vec::new(),
@@ -303,11 +257,7 @@ impl<'t> Parser<'t> {
     }
 
     pub fn srcloc(&mut self) -> SrcLoc {
-        let pathstr = self
-            .filepath
-            .as_ref()
-            .and_then(|p| p.to_str())
-            .map(String::from);
+        let pathstr = self.resource.clone();
         let coord = self.lexer.get_coord();
         SrcLoc { pathstr, coord }
     }
@@ -387,5 +337,45 @@ impl<'t> Parser<'t> {
         }
         self.eat(end)?;
         Ok(nodes)
+    }
+}
+
+impl<'t> Streaming for Parser<'t> {
+    type Peeked = Token;
+    type Lexeme = Lexeme;
+    type Err = ParseError;
+
+    fn peek(&mut self) -> Option<&Self::Peeked> {
+        if let Some(t) = self.queue.front() {
+            Some(t)
+        } else {
+            self.lexer.peek()
+        }
+    }
+
+    fn eat<T>(&mut self, item: T) -> Parsed<Self::Peeked>
+    where
+        T: AsRef<Self::Lexeme>,
+    {
+        Parser::eat(self, item)
+    }
+
+    /// Advance the underlying stream of tokens, retuning the unwrapped result
+    /// of `Lexer::next`. If `Lexer::next` returns `None`, then the token
+    /// corresponding to the `EOF` lexeme is returned.
+    ///
+    /// Note that this method first checks the internal token queue before
+    /// calling the lexer. If the buffer is non-empty, it simply pops the next
+    /// element from the front of the qeueue.
+    fn bump(&mut self) -> Token {
+        Parser::bump(self)
+    }
+
+    fn is_done(&mut self) -> bool {
+        match self.peek() {
+            Some(t) if t.is_eof() => true,
+            None => true,
+            _ => false,
+        }
     }
 }

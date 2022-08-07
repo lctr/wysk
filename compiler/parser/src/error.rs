@@ -1,11 +1,14 @@
-pub use wy_failure::{self, Failure, SrcLoc};
+use std::path::Path;
+
+pub use wy_failure::{self, Failure};
 
 use wy_lexer::{
     stream::Source,
     token::{LexKind, Lexeme, Token},
 };
 use wy_name::ident::Ident;
-use wy_span::Span;
+use wy_sources::paths::Resource;
+use wy_span::{Coord, Row, Span};
 
 pub trait Report {
     fn get_srcloc(&mut self) -> SrcLoc;
@@ -240,3 +243,86 @@ pub trait Expects {
 }
 
 impl Expects for ParseError {}
+
+//---------- FOR FILE-CONTENT-RELATED STUFF, such as parsing, lexing, etc
+/// Describing the source path and position, primarily used in error reporting.
+/// This should be included in every error message to be able to reproduce
+/// tracking information regarding the source code involved during error
+/// reporting.
+///
+/// The error should effectively be able to produce a string of the form
+/// ```txt
+///         [PATH/TO/FILE]:[ROW][COL]
+/// ```
+/// in error messages.
+
+pub enum SrcPath<P: AsRef<Path> = String> {
+    Direct,
+    File(P),
+}
+
+impl<P: AsRef<Path>> std::fmt::Display for SrcPath<P> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SrcPath::Direct => write!(f, "<INTERACTIVE>"),
+            SrcPath::File(p) => write!(f, "{}", p.as_ref().display()),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq)]
+pub struct SrcLoc {
+    pub coord: Coord,
+    pub pathstr: Resource,
+}
+
+impl std::fmt::Display for SrcLoc {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // include only starting coordinates?
+        write!(f, "{}:{}", &self.pathstr, &self.coord)
+    }
+}
+
+impl std::fmt::Debug for SrcLoc {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl SrcLoc {
+    pub fn gutter(&self) -> RowGutter {
+        RowGutter(self.coord.row)
+    }
+}
+
+/// Error printing utility
+#[derive(Copy, Clone, PartialEq, PartialOrd)]
+pub struct RowGutter(Row);
+impl std::fmt::Display for RowGutter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for _ in 0..(4 + self.0.strlen()) {
+            char::fmt(&' ', f)?;
+        }
+        Ok(())
+    }
+}
+
+pub struct WithSrcLoc<X>(X, SrcLoc, String);
+impl<X> WithSrcLoc<X> {
+    pub fn new(x: X, srcloc: SrcLoc, text: String) -> Self {
+        Self(x, srcloc, text)
+    }
+    pub fn srcloc(&self) -> &SrcLoc {
+        &self.1
+    }
+    pub fn item(&self) -> &X {
+        &self.0
+    }
+    pub fn text(&self) -> &String {
+        &self.2
+    }
+    pub fn parts(self) -> (X, SrcLoc, String) {
+        let WithSrcLoc(x, srcloc, text) = self;
+        (x, srcloc, text)
+    }
+}

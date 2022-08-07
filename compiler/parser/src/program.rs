@@ -1,10 +1,14 @@
 use wy_lexer::{Keyword, Lexeme};
-use wy_name::Chain;
+use wy_name::{Chain, Ident};
+use wy_sources::paths::Resource;
 use wy_syntax::decl::Declaration;
-use wy_syntax::{Import, ImportSpec, Module, Program, RawModule, RawProgram};
+use wy_syntax::{Import, ImportSpec, Module, Program};
 
 use crate::error::*;
 use crate::stream::*;
+
+pub type RawModule = Module<Ident, Resource, Ident>;
+pub type RawProgram = Program<Ident, Resource, Ident>;
 
 // TOP-LEVEL
 type ModuleParser<'t> = Parser<'t>;
@@ -24,7 +28,7 @@ impl<'t> ModuleParser<'t> {
         let mut module = Module {
             modname,
             imports,
-            uid: self.filepath.clone(),
+            uid: self.resource.clone(),
             ..Default::default()
         };
 
