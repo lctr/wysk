@@ -1,63 +1,63 @@
 use std::fmt::Write;
 
-pub const LOWER_LATIN: [char; 26] = [
-    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's',
-    't', 'u', 'v', 'w', 'x', 'y', 'z',
-];
-
-// pub const UPPER_LATIN: [char; 26] = [
-//     'A', 'B', 'C', 'D', 'E', 'F', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'
-// ];
-
-// pub const LOWER_CONS: [char; 6] = ['f', 'm', 't', 's', 'p', 'w'];
-
 /// Generate a textual representation of a variable not bound to a specific name.
 /// This is useful when generating type variables whose actual *names* only matter when displayed to the user.
 pub fn display_var(n: u32) -> String {
-    let azs = LOWER_LATIN;
-    let mut buf = String::new();
-    let mut tmp = n as usize;
-    let lim = azs.len();
-    let mut ct = 0;
-    loop {
-        if tmp < lim {
-            buf.push(azs[tmp]);
-            break buf;
-        } else {
-            buf.push(azs[ct % lim]);
-            ct += 1;
-            tmp -= lim;
-        }
+    const LIM: u32 = 26;
+    const OFFSET: u32 = 0x61;
+    if n < LIM {
+        return String::from((n % LIM + OFFSET) as u8 as char);
     }
+    let mut bytes = Vec::with_capacity((n as f64).log(LIM as f64).ceil() as usize);
+    let mut ch = n;
+    while ch >= LIM {
+        bytes.push((ch % LIM + OFFSET) as u8);
+        ch /= LIM;
+    }
+    let mut buf = String::with_capacity(bytes.len() + 1);
+    buf.push((ch % LIM + OFFSET) as u8 as char);
+    bytes.into_iter().rfold(buf, |mut a, c| {
+        a.push(c as char);
+        a
+    })
 }
 
 /// Similar to `display_var`, but writes to a given string buffer instead of
 /// allocating a new string.
-pub fn write_display_var(mut n: usize, buf: &mut String) {
-    let mut ct = 0;
-    loop {
-        if n < 26 {
-            buf.push(LOWER_LATIN[n]);
-            break;
-        } else {
-            buf.push(LOWER_LATIN[ct % 26]);
-            ct += 1;
-            n -= 26;
-        }
+pub fn write_display_var(n: usize, buf: &mut String) {
+    const LIM: usize = 26;
+    const OFFSET: usize = 0x61;
+    if n < LIM {
+        buf.push((n % LIM + OFFSET) as u8 as char);
+        return;
     }
+    let mut bytes = Vec::with_capacity((n as f64).log(LIM as f64).ceil() as usize);
+    let mut ch = n;
+    while ch >= LIM {
+        bytes.push((ch % LIM + OFFSET) as u8);
+        ch /= LIM;
+    }
+    bytes.push((ch % LIM + OFFSET) as u8);
+    buf.reserve_exact(bytes.len());
+    buf.extend(bytes.into_iter().rev().map(|b| b as char));
 }
 
 pub fn fmt_display_var(mut n: usize, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    let mut ct = 0;
-    loop {
-        if n < 26 {
-            break f.write_char(LOWER_LATIN[n]);
-        } else {
-            f.write_char(LOWER_LATIN[ct % 26])?;
-            ct += 1;
-            n -= 6;
-        }
+    const LIM: usize = 26;
+    const OFFSET: usize = 0x61;
+    if n < LIM {
+        return f.write_char((n % LIM + OFFSET) as u8 as char);
     }
+    let mut bytes = Vec::with_capacity((n as f64).log(LIM as f64).ceil() as usize);
+    while n >= LIM {
+        bytes.push((n % LIM + OFFSET) as u8);
+        n /= LIM;
+    }
+    bytes.push((n % LIM + OFFSET) as u8);
+    for b in bytes.into_iter().rev() {
+        f.write_char(b as char)?;
+    }
+    Ok(())
 }
 
 /// Capitalizes the first letter in a given string.
