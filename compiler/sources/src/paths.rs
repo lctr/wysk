@@ -8,7 +8,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use wy_intern::Symbol;
 
-use wy_failure::{Failure, Outcome};
+// use wy_failure::{Failure, Outcome};
 
 use crate::manifest::Manifest;
 
@@ -16,7 +16,7 @@ pub const PRELUDE_PATH: &'static str = "../../language";
 
 pub const WY_FILE_EXT: &'static str = "wy";
 
-type IoResult<X> = Outcome<X, std::io::Error>;
+type IoResult<X> = Result<X, std::io::Error>;
 
 pub fn ext_str(p: &impl AsRef<Path>) -> Option<&str> {
     p.as_ref().extension().and_then(OsStr::to_str)
@@ -165,11 +165,11 @@ impl Atlas {
         }
     }
 
-    pub fn add_dir(&mut self, dir: Dir) {
+    pub fn add_dir(&mut self, dir: Directory) {
         self.extend(dir.all_wysk_files())
     }
 
-    pub fn add_dirs(&mut self, dirs: impl IntoIterator<Item = Dir>) {
+    pub fn add_dirs(&mut self, dirs: impl IntoIterator<Item = Directory>) {
         dirs.into_iter()
             .for_each(|dir| self.extend(dir.all_wysk_files()))
     }
@@ -198,7 +198,7 @@ impl Atlas {
         self.sources.iter_mut()
     }
 
-    pub fn walk_dir(dir: Dir) -> Self {
+    pub fn walk_dir(dir: Directory) -> Self {
         Self::walk_path(dir.path()).into_iter().flatten().collect()
     }
 
@@ -234,15 +234,13 @@ impl Atlas {
     /// capturing source files within the given directory and excluding
     /// subdirectories. Returns an error if the given path is invalid.
     pub fn walk_one_level<P: AsRef<Path>>(p: P) -> IoResult<Vec<PathBuf>> {
-        fs::read_dir(p.as_ref())
-            .map(|dir| {
-                dir.filter_map(|entry| match entry.as_ref().map(fs::DirEntry::path) {
-                    Ok(e) if e.is_file() && is_target_file(&e) => Some(e),
-                    _ => None,
-                })
-                .collect()
+        fs::read_dir(p.as_ref()).map(|dir| {
+            dir.filter_map(|entry| match entry.as_ref().map(fs::DirEntry::path) {
+                Ok(e) if e.is_file() && is_target_file(&e) => Some(e),
+                _ => None,
             })
-            .map_err(|e| Failure::Io(e))
+            .collect()
+        })
     }
 
     /// Traverses only the `src` subdirectory contained within the given path.
@@ -256,15 +254,13 @@ impl Atlas {
         p: P,
         mut predicate: impl FnMut(&PathBuf) -> bool,
     ) -> IoResult<Vec<PathBuf>> {
-        fs::read_dir(p.as_ref())
-            .map(|dir| {
-                dir.filter_map(|entry| match entry.as_ref().map(fs::DirEntry::path) {
-                    Ok(path) if predicate(&path) => Some(path),
-                    _ => None,
-                })
-                .collect()
+        fs::read_dir(p.as_ref()).map(|dir| {
+            dir.filter_map(|entry| match entry.as_ref().map(fs::DirEntry::path) {
+                Ok(path) if predicate(&path) => Some(path),
+                _ => None,
             })
-            .map_err(|e| Failure::Io(e))
+            .collect()
+        })
     }
 }
 
@@ -425,13 +421,13 @@ impl FilePath {
     }
 
     /// Returns the parent directory.
-    pub fn parent_dir(&self) -> Dir {
+    pub fn parent_dir(&self) -> Directory {
         let p = self
             .canonicalize()
             .ok()
             .and_then(|p| p.parent().map(Path::to_path_buf))
             .unwrap_or_else(|| PathBuf::from("."));
-        Dir::new(1, p)
+        Directory::new(1, p)
     }
 
     /// Converts a given path-like type `P` implementing `AsRef<Path>` into an
@@ -464,7 +460,7 @@ impl FilePath {
     /// Transparent wrapper around the `std::fs::read_to_string` method of the
     /// Rust standard library.
     pub fn read_to_string(&self) -> IoResult<String> {
-        fs::read_to_string(self.path()).map_err(|e| Failure::Io(e))
+        fs::read_to_string(self.path())
     }
 
     #[inline]
@@ -482,7 +478,7 @@ impl FilePath {
     ///
     /// To mutably modify the path in place, use `normalize`.
     pub fn canonicalize(&self) -> IoResult<PathBuf> {
-        self.path.canonicalize().map_err(|e| Failure::Io(e))
+        self.path.canonicalize()
     }
 
     /// Attempts to update the `path` field with the `PathBuf` returned from
@@ -541,18 +537,18 @@ impl std::fmt::Display for FilePath {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Dir {
+pub struct Directory {
     depth: usize,
     path: PathBuf,
 }
 
-impl AsRef<Path> for Dir {
+impl AsRef<Path> for Directory {
     fn as_ref(&self) -> &Path {
         self.path.as_path()
     }
 }
 
-impl Dir {
+impl Directory {
     pub const SRC_DIR: &'static str = "src";
 
     pub fn new(depth: usize, path: impl AsRef<Path>) -> Self {
@@ -568,9 +564,7 @@ impl Dir {
     /// `0`.
     #[inline]
     pub fn current_dir() -> IoResult<Self> {
-        env::current_dir()
-            .and_then(|pb| pb.canonicalize().map(|pb| Dir::new(0, pb)))
-            .map_err(|e| Failure::Io(e))
+        env::current_dir().and_then(|pb| pb.canonicalize().map(|pb| Directory::new(0, pb)))
     }
 
     #[inline]
@@ -644,7 +638,7 @@ impl Dir {
     ///
     /// To mutably modify the path in place, use `normalize`.
     pub fn canonicalize(&self) -> IoResult<PathBuf> {
-        self.path.canonicalize().map_err(|e| Failure::Io(e))
+        self.path.canonicalize()
     }
 
     #[inline]
@@ -677,7 +671,7 @@ impl Dir {
     /// directories. Since the directories returned are immediate descendants of
     /// `Self`, it follows that all returned directories have a `depth` of
     /// `self.depth + 1`.
-    pub fn imm_sub_dirs(&self) -> impl Iterator<Item = Dir> + '_ {
+    pub fn child_dirs(&self) -> impl Iterator<Item = Directory> + '_ {
         self.path
             .read_dir()
             .into_iter()
@@ -692,7 +686,7 @@ impl Dir {
                                 None
                             }
                         })
-                        .map(|path| Dir::new(self.depth + 1, path))
+                        .map(|path| Directory::new(self.depth + 1, path))
                 })
             })
             .flatten()
@@ -728,7 +722,7 @@ impl Dir {
             depth += 1;
             while let Some(path) = paths.pop() {
                 reader(path.as_path(), &mut des);
-                dirs.push(Dir::new(depth, path))
+                dirs.push(Directory::new(depth, path))
             }
         }
         dirs
@@ -750,29 +744,66 @@ impl fmt::Display for FileName {
     }
 }
 
-// TODO: move to file/path/io related module
-#[derive(Clone, PartialEq, Eq)]
-pub enum FileSource {
+/// Represents the kind of resource from which input will be sourced.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Resource {
     Stdin,
-    File { path: PathBuf, depth: usize },
+    ModuleFile { path: PathBuf, depth: isize },
+    Standalone { path: PathBuf },
 }
 
-impl FileSource {
+impl Default for Resource {
+    fn default() -> Self {
+        Resource::Stdin
+    }
+}
+
+impl Resource {
     pub const DOT_WY: &'static str = ".wy";
 
     pub fn is_file(&self) -> bool {
-        matches!(self, FileSource::File { .. })
+        matches!(
+            self,
+            Resource::ModuleFile { .. } | Resource::Standalone { .. }
+        )
     }
 
     /// Returns `true` if this is a `File` variant with a path
     /// pointing to an existing file ending in the Wysk file extension `.wy`.
     pub fn is_valid_file(&self) -> bool {
-        matches!(self, FileSource::File { path, .. } if path.exists() && path.to_string_lossy().ends_with(Self::DOT_WY))
+        matches!(self, Resource::ModuleFile { path, .. } | Resource::Standalone { path, ..} if path.exists() && path.to_string_lossy().ends_with(Self::DOT_WY))
     }
 
+    pub fn path(&self) -> Option<&Path> {
+        match self {
+            Resource::Stdin => None,
+            Resource::ModuleFile { path, .. } | Resource::Standalone { path, .. } => {
+                Some(path.as_path())
+            }
+        }
+    }
+
+    /// If the resource corresponds to the standard input, then it
+    /// will read from the standard input, terminating only on input
+    /// ending in two semicolons (`";;"`). If the resource corresponds
+    /// to a filepath ending in `.wy`, then it will read the file.
+    ///
+    /// ## Note: Windows Portability Considerations
+    /// When operating in a console, the Windows implementation of
+    /// this stream does not support non-UTF-8 byte sequences.
+    /// Attempting to read bytes that are not valid UTF-8 will return
+    /// an error.
+    ///
+    /// In a process with a detached console, such as one using
+    /// #![windows_subsystem = "windows"], or in a child process
+    /// spawned from such a process, the contained handle will be
+    /// null. In such cases, the standard library's Read and Write
+    /// will do nothing and silently succeed. All other I/O
+    /// operations, via the standard library or via raw Windows API
+    /// calls, will fail.
     pub fn read_text(&self) -> std::io::Result<String> {
         match self {
-            FileSource::Stdin => {
+            Resource::Stdin => {
                 use std::io::{self, BufRead};
 
                 let mut buffer = String::new();
@@ -783,14 +814,16 @@ impl FileSource {
                 }
                 Ok(buffer)
             }
-            FileSource::File { path, .. } => std::fs::read_to_string(path),
+            Resource::ModuleFile { path, .. } | Resource::Standalone { path, .. } => {
+                std::fs::read_to_string(path)
+            }
         }
     }
 
-    pub fn qualified_name(&self, depth_offset: usize) -> Option<String> {
+    pub fn guess_qualified_name(&self, depth_offset: isize) -> Option<String> {
         match self {
-            FileSource::Stdin => None,
-            FileSource::File { path, depth } => path.canonicalize().ok().and_then(|p| {
+            Resource::Stdin => None,
+            Resource::ModuleFile { path, depth } => path.canonicalize().ok().and_then(|p| {
                 use wy_common::text::capitalize_first;
                 let mut parts = vec![];
                 let mut depth = *depth + depth_offset;
@@ -817,17 +850,18 @@ impl FileSource {
                     a
                 }))
             }),
+            Resource::Standalone { path, .. } => path
+                .canonicalize()
+                .ok()
+                .map(|pb| pb.to_string_lossy().to_string()),
         }
     }
 
     /// Goes through all the descendants within a given directory,
     /// returning the `FilePath` instances for all files ending in the
     /// given extension.
-    pub fn within_dir(
-        p: impl AsRef<Path>,
-        ext: impl AsRef<str>,
-    ) -> impl Iterator<Item = FileSource> {
-        let mut dirnum = 0usize;
+    pub fn within_dir(p: impl AsRef<Path>, ext: impl AsRef<str>) -> impl Iterator<Item = Resource> {
+        let mut dirnum = 0isize;
         let mut stack = wy_common::Deque::new();
         let mut entries = vec![];
         let ext = ext.as_ref();
@@ -856,43 +890,47 @@ impl FileSource {
         }
         entries
             .into_iter()
-            .map(|(depth, path)| FileSource::File { path, depth })
+            .map(|(depth, path)| Resource::ModuleFile { path, depth })
     }
 }
 
-impl std::fmt::Debug for FileSource {
+impl std::fmt::Display for Resource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Stdin => write!(f, "<stdin>"),
-            Self::File { path, .. } => write!(f, "{:?}", path),
+            Self::ModuleFile { path, .. } | Resource::Standalone { path, .. } => {
+                write!(f, "{:?}", path)
+            }
         }
     }
 }
 
-impl PartialEq<PathBuf> for FileSource {
+impl PartialEq<PathBuf> for Resource {
     fn eq(&self, other: &PathBuf) -> bool {
-        matches!(self, FileSource::File { path, ..} if path == other)
+        matches!(self, Resource::ModuleFile { path, ..} | Resource::Standalone { path, .. } if path == other)
     }
 }
 
-impl PartialEq<FileSource> for PathBuf {
-    fn eq(&self, other: &FileSource) -> bool {
-        matches!(other, FileSource::File { path, ..} if self == path)
+impl PartialEq<Resource> for PathBuf {
+    fn eq(&self, other: &Resource) -> bool {
+        matches!(other, Resource::ModuleFile { path, ..} | Resource::Standalone { path, .. } if self == path)
     }
 }
 
-impl PartialEq<Path> for FileSource {
+impl PartialEq<Path> for Resource {
     fn eq(&self, other: &Path) -> bool {
         match self {
-            FileSource::Stdin => false,
-            FileSource::File { path, .. } => other == path.as_path(),
+            Resource::Stdin => false,
+            Resource::ModuleFile { path, .. } | Resource::Standalone { path, .. } => {
+                other == path.as_path()
+            }
         }
     }
 }
 
-impl PartialEq<FileSource> for Path {
-    fn eq(&self, other: &FileSource) -> bool {
-        matches!(other, FileSource::File { path, ..} if path.as_path() == self)
+impl PartialEq<Resource> for Path {
+    fn eq(&self, other: &Resource) -> bool {
+        matches!(other, Resource::ModuleFile { path, ..} | Resource::Standalone { path, .. } if path.as_path() == self)
     }
 }
 
@@ -919,7 +957,7 @@ mod test {
 
     #[test]
     fn test_subdirs() {
-        let root = Dir {
+        let root = Directory {
             depth: 0,
             path: PathBuf::from("../../language"),
         };
@@ -938,18 +976,18 @@ mod test {
 
     #[test]
     fn test_get_file_name() {
-        let fp = FileSource::File {
+        let fp = Resource::ModuleFile {
             path: PathBuf::from("../../language/prelude/src/function.wy"),
             depth: 1,
         };
-        assert_eq!(Some(String::from("Function")), fp.qualified_name(0))
+        assert_eq!(Some(String::from("Function")), fp.guess_qualified_name(0))
     }
 
     #[test]
     fn test_dir_filepath_qualified_names() {
-        let actual = FileSource::within_dir("../../", ".wy")
+        let actual = Resource::within_dir("../../", ".wy")
             .inspect(|s| println!("{s:?}"))
-            .flat_map(|fp| fp.qualified_name(0))
+            .flat_map(|fp| fp.guess_qualified_name(0))
             .collect::<Vec<_>>();
         let expected = [
             "List",
@@ -967,9 +1005,9 @@ mod test {
 
     #[test]
     fn test_dir_filepath_qualified_names_with_offset_1() {
-        let actual = FileSource::within_dir("../../", ".wy")
+        let actual = Resource::within_dir("../../", ".wy")
             .inspect(|s| println!("{s:?}"))
-            .flat_map(|fp| fp.qualified_name(1))
+            .flat_map(|fp| fp.guess_qualified_name(1))
             .collect::<Vec<_>>();
         let expected = [
             "Prim",
@@ -989,7 +1027,7 @@ mod test {
 
     #[test]
     fn test_read_stdin() {
-        let path = FileSource::Stdin;
+        let path = Resource::Stdin;
         let text = path.read_text();
         match text {
             Ok(s) => println!("{s}"),
