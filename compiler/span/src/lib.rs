@@ -15,6 +15,13 @@ newtype! {
     }
 }
 
+impl Row {
+    /// Rows begin at `1`. If a `Row` is `0`, then it is a dummy value.
+    pub fn is_one(&self) -> bool {
+        self.0 == 1
+    }
+}
+
 impl Col {
     /// Returns a string slice of the `nth` grapheme of a given string
     /// slice by generating a sequence of all character boundaries of
@@ -494,6 +501,13 @@ impl<T> Spanned<T> {
         let [start, _, _, end] = ss;
         Spanned(t, Span(*start, *end))
     }
+
+    pub fn item_eq(&self, other: &Self) -> bool
+    where
+        T: PartialEq,
+    {
+        self.item() == other.item()
+    }
 }
 
 impl<T> Spanned<&T> {
@@ -572,7 +586,7 @@ where
     T: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
-        self.span() == other.span()
+        self.span() == other.span() && self.item() == other.item()
     }
 }
 
