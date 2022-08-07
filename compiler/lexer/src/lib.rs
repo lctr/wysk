@@ -1,4 +1,5 @@
-use meta::{Associativity, Attr, Digit, Placement, Pragma};
+use meta::{Attr, Placement, Pragma};
+use stream::Mode;
 // use stream::Mode;
 use wy_intern as intern;
 use wy_span as span;
@@ -8,7 +9,7 @@ use intern::symbol;
 use comment::{Comment, CommentId, LineKind};
 use literal::Base;
 
-use span::{BytePos, Span, Spanned, WithSpan};
+use span::{BytePos, Span, Spanned, WithLoc, WithSpan};
 
 pub use literal::Literal;
 pub use stream::{Lexer, Source};
@@ -32,7 +33,7 @@ impl From<Spanned<Lexeme>> for Token {
 }
 
 impl<'t> Lexer<'t> {
-    pub fn token(&mut self) -> Token {
+    fn token(&mut self) -> Token {
         if let Some(t) = self.stack.pop() {
             t
         } else {
@@ -149,28 +150,23 @@ impl<'t> Lexer<'t> {
             "\\" => Lexeme::Lambda,
             "@" => Lexeme::At,
             "!" => Lexeme::Bang,
-            "#" => {
-                let hash = Lexeme::Pound;
-                let bang = self
-                    .source
-                    .spanned(|s| {
-                        if s.bump_on('!') {
-                            Some(Lexeme::Bang)
-                        } else {
-                            None
-                        }
-                    })
-                    .transpose();
-                if self.source.on_char('[') {
-                    let placement = if let Some(b) = bang {
-                        self.stack.push(Token::from(b));
-                        Placement::After
-                    } else {
-                        Placement::Before
+            "#!" => {
+                if self.on_char('[') && self.mode.is_default() {
+                    self.mode = Mode::Meta {
+                        place: Placement::After,
+                        attr_seen: false,
                     };
-                    self.set_meta_mode(placement);
-                };
-                hash
+                }
+                Lexeme::Hashbang
+            }
+            "#" => {
+                if self.on_char('[') && self.mode.is_default() {
+                    self.mode = Mode::Meta {
+                        place: Placement::Before,
+                        attr_seen: false,
+                    };
+                }
+                Lexeme::Pound
             }
             "." => Lexeme::Dot,
             ".." => Lexeme::Dot2,
@@ -180,35 +176,6 @@ impl<'t> Lexer<'t> {
             s => Lexeme::Infix(symbol::intern_once(s)),
         };
         Token { lexeme, span }
-    }
-
-    fn _hash(&mut self) -> Lexeme {
-        let hash = Lexeme::Pound;
-        let bang = self
-            .source
-            .spanned(|s| {
-                if s.bump_on('!') {
-                    Some(Lexeme::Bang)
-                } else {
-                    None
-                }
-            })
-            .transpose();
-        if self.source.on_char('[') {
-            let placement = if let Some(b) = bang {
-                self.stack.push(Token::from(b));
-                Placement::After
-            } else {
-                Placement::Before
-            };
-            self.set_meta_mode(placement);
-        };
-        hash
-    }
-
-    fn shebang(&mut self) {
-        #![allow(unused)]
-        todo!()
     }
 
     fn backtick(&mut self) -> Token {
@@ -356,6 +323,16 @@ impl<'t> Lexer<'t> {
 
         let (span, _) = self.source.eat_while(is_ident_char).parts();
 
+        if matches!(
+            self.mode,
+            Mode::Meta {
+                attr_seen: false,
+                ..
+            }
+        ) {
+            return self.pragma(span);
+        }
+
         let text = &self.source[span];
         let token = |lexeme: Lexeme| Token { lexeme, span };
 
@@ -372,59 +349,31 @@ impl<'t> Lexer<'t> {
         }
     }
 
-    pub fn pragma(&mut self, span: Span) -> Option<Token> {
-        use Associativity as A;
-        if self.mode.is_meta() {
-            match Attr::scan(&mut self.source) {
-                Some(Spanned(atr, sp_at)) => match atr {
-                    Attr::Fixity => {
-                        if self.source.on_char(Digit::digit_char) {
-                            Digit::scan(&mut self.source).map(|Spanned(digit, sp_d)| match A::scan(
-                                &mut self.source,
-                            ) {
-                                Some(Spanned(assoc, sp_a)) => Token {
-                                    lexeme: Lexeme::Meta(Pragma::Fixity(assoc, digit)),
-                                    span: sp_d.union(&sp_a.union(&sp_at)),
-                                },
-                                None => Token {
-                                    lexeme: Lexeme::Meta(Pragma::Fixity(A::None, digit)),
-                                    span: sp_at.union(&sp_d),
-                                },
-                            })
-                        } else {
-                            A::scan(&mut self.source).map(|Spanned(aso, sp_a)| {
-                                match Digit::scan(&mut self.source) {
-                                    Some(Spanned(digit, sp_d)) => Token {
-                                        lexeme: Lexeme::Meta(Pragma::Fixity(aso, digit)),
-                                        span: sp_a.union(&sp_d),
-                                    },
-                                    None => Token {
-                                        lexeme: Lexeme::Meta(Pragma::Fixity(aso, Digit::Nine)),
-                                        span: sp_a.union(&sp_at),
-                                    },
-                                }
-                            })
-                        }
-                    }
-                    attr => Some(Token {
-                        lexeme: Lexeme::Meta(Pragma::Attr(attr)),
-                        span,
-                    }),
-                },
-                None => {
-                    let pos = self.get_pos();
-                    if let Some(&'|') = self.source.peek() {
-                        self.reset_mode();
-                        return Some(Token {
-                            lexeme: Lexeme::Pipe,
-                            span: self.span_from(pos),
-                        });
-                    };
-                    None
-                }
+    /// Reads within an attribute the first token that would have
+    /// otherwise been treated as a regular token. Note that this
+    /// requires the lexer's internal `Mode` to have an `attr_seen`
+    /// field with a value of `false`.
+    pub fn pragma(&mut self, span: Span) -> Token {
+        debug_assert!(matches!(
+            self.get_mode(),
+            Mode::Meta {
+                attr_seen: false,
+                ..
             }
+        ));
+        let txt = &self.source[span];
+        let pragma = if let Some(attr) = Attr::from_str(txt) {
+            Pragma::BuiltIn(attr)
         } else {
-            None
+            Pragma::Custom(wy_intern::intern_once(txt))
+        };
+        match &mut self.mode {
+            Mode::Meta { attr_seen, .. } => *attr_seen = true,
+            _ => (),
+        };
+        Token {
+            lexeme: Lexeme::Meta(pragma),
+            span,
         }
     }
 
@@ -941,10 +890,7 @@ mod test {
         assert_eq!(lexer.token().lexeme, Lexeme::Lit(Literal::Int(4)));
         assert_eq!(lexer.token().lexeme, Lexeme::Dot2);
         assert_eq!(lexer.token().lexeme, Lexeme::Lit(Literal::Int(5)));
-        assert_eq!(
-            lexer.token().lexeme,
-            Lexeme::Lit(Literal::Float(4.5_f32))
-        );
+        assert_eq!(lexer.token().lexeme, Lexeme::Lit(Literal::Float(4.5_f32)));
         assert_eq!(lexer.token().lexeme, Lexeme::Lower(a));
         assert_eq!(lexer.token().lexeme, Lexeme::Dot);
         assert_eq!(lexer.token().lexeme, Lexeme::Lower(b));
@@ -1021,5 +967,37 @@ mod test {
         lexer
             .zip(expected)
             .for_each(|(tok, lex)| assert_eq!(tok.lexeme, lex))
+    }
+
+    #[test]
+    fn test_attribute() {
+        let src = "hi #[test] foo bar";
+        let mut lexer = Lexer::new(src);
+        assert!(lexer.get_mode().is_default());
+        lexer.next();
+        assert!(lexer.get_mode().is_default());
+        assert_eq!(
+            lexer.next(),
+            Some(Token {
+                lexeme: Lexeme::Pound,
+                span: Span(BytePos::strlen("hi "), BytePos::strlen("hi #"))
+            })
+        );
+        assert_eq!(lexer.get_mode().attr_witness(), Some(false));
+        assert_eq!(
+            lexer.next(),
+            Some(Token {
+                lexeme: Lexeme::BrackL,
+                span: Span(BytePos::strlen("hi #"), BytePos::strlen("hi #["))
+            })
+        );
+        assert_eq!(
+            lexer.next(),
+            Some(Token {
+                lexeme: Lexeme::Meta(Pragma::BuiltIn(Attr::Test)),
+                span: Span(BytePos::strlen("hi #["), BytePos::strlen("hi #[test"))
+            })
+        );
+        assert_eq!(lexer.get_mode().attr_witness(), Some(true));
     }
 }
