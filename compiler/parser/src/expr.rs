@@ -536,7 +536,7 @@ impl<'t> ExprParser<'t> {
                 }
             }
             lexpat!(~[var]) => {
-                let lower = self.expect_ident()?;
+                let lower = self.expect_lower()?;
                 if self.bump_on(Lexeme::ArrowL) {
                     self.expression()
                         .map(|ex| RawStatement::Generator(RawPattern::Var(lower), ex))
