@@ -1024,14 +1024,4 @@ mod test {
         .collect::<Vec<_>>();
         assert_eq!(actual, expected)
     }
-
-    #[test]
-    fn test_read_stdin() {
-        let path = Resource::Stdin;
-        let text = path.read_text();
-        match text {
-            Ok(s) => println!("{s}"),
-            Err(e) => eprintln!("{e}"),
-        }
-    }
 }
