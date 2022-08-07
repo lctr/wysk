@@ -9,7 +9,7 @@ use intern::symbol;
 use comment::{Comment, CommentId, LineKind};
 use literal::Base;
 
-use span::{BytePos, Span, Spanned, WithLoc, WithSpan};
+use span::{BytePos, Span, Spanned, WithSpan};
 
 pub use literal::Literal;
 pub use stream::{Lexer, Source};

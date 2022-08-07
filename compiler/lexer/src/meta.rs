@@ -1,8 +1,5 @@
 use wy_common::strenum;
-use wy_intern::{Symbol, Symbolic};
-use wy_span::{Span, Spanned};
-
-use crate::{is_ident_char, Source};
+use wy_intern::Symbol;
 
 strenum! { Attr is_builtin_attr ::
     Inline "inline"
