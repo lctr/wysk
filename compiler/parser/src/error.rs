@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub use wy_failure::{self, Failure};
 
@@ -7,7 +7,6 @@ use wy_lexer::{
     token::{LexKind, Lexeme, Token},
 };
 use wy_name::ident::Ident;
-use wy_sources::paths::Resource;
 use wy_span::{Coord, Row, Span};
 
 pub trait Report {
@@ -256,9 +255,16 @@ impl Expects for ParseError {}
 /// ```
 /// in error messages.
 
-pub enum SrcPath<P: AsRef<Path> = String> {
+#[derive(Clone, Debug, PartialEq)]
+pub enum SrcPath<P: AsRef<Path> = PathBuf> {
     Direct,
     File(P),
+}
+
+impl<P: AsRef<Path>> Default for SrcPath<P> {
+    fn default() -> Self {
+        Self::Direct
+    }
 }
 
 impl<P: AsRef<Path>> std::fmt::Display for SrcPath<P> {
@@ -273,7 +279,7 @@ impl<P: AsRef<Path>> std::fmt::Display for SrcPath<P> {
 #[derive(Clone, PartialEq)]
 pub struct SrcLoc {
     pub coord: Coord,
-    pub pathstr: Resource,
+    pub pathstr: SrcPath<PathBuf>,
 }
 
 impl std::fmt::Display for SrcLoc {
