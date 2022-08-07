@@ -4,11 +4,7 @@ use serde::{Deserialize, Serialize};
 use visit::{Visit, VisitError, VisitMut};
 use wy_intern::symbol;
 
-use wy_lexer::{
-    self,
-    meta::{Associativity, Digit},
-    LexError,
-};
+use wy_lexer::{self, LexError};
 
 /// Precedence are internally represented with values greater than declared in
 /// source code, differing by 1. This not only implies that the minimum
@@ -43,12 +39,6 @@ impl std::str::FromStr for Prec {
             Err(e) => Err(format!(
                 "the string `{}` is not a valid precedence value due to failure to parse as unsigned integer.\n >> {}", s, e)),
         }
-    }
-}
-
-impl From<Digit> for Prec {
-    fn from(digit: Digit) -> Self {
-        Prec(digit.get_ord() as u8)
     }
 }
 
@@ -102,16 +92,6 @@ impl std::str::FromStr for Assoc {
     }
 }
 
-impl From<Associativity> for Assoc {
-    fn from(assoc: Associativity) -> Self {
-        match assoc {
-            Associativity::Left => Self::Left,
-            Associativity::Right => Self::Right,
-            Associativity::None => Self::None,
-        }
-    }
-}
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Fixity {
     pub prec: Prec,
@@ -144,60 +124,6 @@ impl From<(Prec, Assoc)> for Fixity {
 impl From<(Assoc, Prec)> for Fixity {
     fn from((assoc, prec): (Assoc, Prec)) -> Self {
         Fixity { prec, assoc }
-    }
-}
-
-impl From<(Associativity, Digit)> for Fixity {
-    fn from((a, d): (Associativity, Digit)) -> Self {
-        Fixity {
-            prec: d.into(),
-            assoc: a.into(),
-        }
-    }
-}
-
-impl From<(Digit, Associativity)> for Fixity {
-    fn from((d, a): (Digit, Associativity)) -> Self {
-        Fixity {
-            prec: d.into(),
-            assoc: a.into(),
-        }
-    }
-}
-
-impl From<(Associativity, Prec)> for Fixity {
-    fn from((a, prec): (Associativity, Prec)) -> Self {
-        Fixity {
-            prec,
-            assoc: a.into(),
-        }
-    }
-}
-
-impl From<(Prec, Associativity)> for Fixity {
-    fn from((prec, a): (Prec, Associativity)) -> Self {
-        Fixity {
-            prec,
-            assoc: a.into(),
-        }
-    }
-}
-
-impl From<(Assoc, Digit)> for Fixity {
-    fn from((assoc, p): (Assoc, Digit)) -> Self {
-        Fixity {
-            prec: p.into(),
-            assoc,
-        }
-    }
-}
-
-impl From<(Digit, Assoc)> for Fixity {
-    fn from((p, assoc): (Digit, Assoc)) -> Self {
-        Fixity {
-            prec: p.into(),
-            assoc,
-        }
     }
 }
 
