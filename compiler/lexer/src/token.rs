@@ -54,18 +54,6 @@ impl PartialEq<Token> for Keyword {
     }
 }
 
-impl PartialEq<Lexeme> for Lint {
-    fn eq(&self, other: &Lexeme) -> bool {
-        matches!(other.symbol(), Some(s) if s == Symbol::from_str(self.as_str()))
-    }
-}
-
-impl PartialEq<Lint> for Lexeme {
-    fn eq(&self, other: &Lint) -> bool {
-        matches!(self.symbol(), Some(s) if s == Symbol::from_str(other.as_str()))
-    }
-}
-
 impl PartialEq<Lexeme> for Attr {
     fn eq(&self, other: &Lexeme) -> bool {
         matches!(other.symbol(), Some(s) if s == Symbol::from_str(self.as_str()))
@@ -99,6 +87,7 @@ pub enum Lexeme {
     At,        // `@`
     Pound,     // `#`
     Bang,      // `!`
+    Hashbang,  // `#!`
     Equal,     // `=`
     Comma,     // `,`
     Semi,      // `;`
@@ -168,9 +157,8 @@ wy_common::variant_preds! {
     | is_unknown => Unknown (..)
     | is_left_delim => ParenL [ | Self::BrackL | Self::CurlyL ]
     | is_right_delim => ParenR [ | Self::BrackR | Self::CurlyR ]
-    | is_inline_attr => Meta (Pragma::Attr(Attr::Inline))
-    | is_no_inline_attr => Meta (Pragma::Attr(Attr::NoInline))
-    | is_test_attr => Meta (Pragma::Attr(Attr::Test))
+    | is_builtin_attr => Meta (Pragma::BuiltIn(_))
+    | is_custom_attr => Meta (Pragma::Custom(_))
 
 }
 
@@ -379,6 +367,7 @@ impl std::fmt::Display for Lexeme {
             Lexeme::At => write!(f, "@"),
             Lexeme::Pound => write!(f, "#"),
             Lexeme::Bang => write!(f, "!"),
+            Lexeme::Hashbang => write!(f, "#!"),
             Lexeme::Equal => write!(f, "="),
             Lexeme::Comma => write!(f, ","),
             Lexeme::Semi => write!(f, ";"),
@@ -503,6 +492,7 @@ impl LexKind {
             | Lexeme::ArrowR
             | Lexeme::FatArrow
             | Lexeme::Pipe => Self::Punct,
+            Lexeme::Hashbang => Self::Specified(Lexeme::Hashbang),
             Lexeme::ParenL | Lexeme::BrackL | Lexeme::CurlyL => Self::LeftDelim,
             Lexeme::ParenR | Lexeme::BrackR | Lexeme::CurlyR => Self::RightDelim,
             Lexeme::Kw(_) => Self::Keyword,
@@ -1007,6 +997,9 @@ pub enum LexError {
     MalformedNumber,
     /// Emitted when encountering the EOF after `~{` without a closing `}~`.
     UnterminatedComment,
+    /// Emitted when encountering a closing bracket `[` after the
+    /// opening bracket `[` within an attribute.
+    EmptyPragma,
 }
 impl std::error::Error for LexError {}
 
@@ -1036,6 +1029,7 @@ impl std::fmt::Display for LexError {
             LexError::NoLeadingZeroInt => write!(f, "invalid leading 0 found in number"),
             LexError::MalformedNumber => write!(f, "malformed integer"),
             LexError::UnterminatedComment => write!(f, "block comment not terminated"),
+            LexError::EmptyPragma => write!(f, "no pragma found within attribute"),
         }
     }
 }
