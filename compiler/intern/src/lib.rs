@@ -2,7 +2,7 @@
 mod interner;
 pub mod symbol;
 
-pub use symbol::*;
+pub use symbol::{Symbol, Symbolic};
 
 use wy_span::{Located, Positioned, Spanned};
 
