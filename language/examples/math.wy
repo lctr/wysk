@@ -1,0 +1,17 @@
+~~ A file with random math-related code in Wysk, primarily to get a
+~~ feel for things
+
+module Sample.Math where
+
+fn differentiate :: |Num a| (a -> a) -> a -> a -> a
+| f dx x = (f (x + dx) - f x) / dx
+
+fn integrate :: |Num a| (a -> a) -> [a] -> a -> a 
+  ~~ trivially equivalent to an empty domain?
+  | _ [] _ = 0 
+  ~~ the integral over a single point is 0
+  | f [_] _ = 0 
+  ~~ `[a]` is a member of class `Foldable` which defines the `sum` method
+  | f xs dx = sum <| f `over` xs <| dx
+    where over f xs dx = [ (f x) * dx | x <- xs ];
+
