@@ -651,7 +651,7 @@ y -> y;
         use Expression::Lit;
         let [op1, op2, plus, times, minus, fun] =
             wy_intern::intern_many(["<>", "><", "+", "*", "-", "fun"]);
-        let int = |n| Lit(Literal::Int(n));
+        let int = |n| Lit(Literal::mk_simple_integer(n));
 
         let tests = [
             (
@@ -732,7 +732,6 @@ y -> y;
     fn test_section_expr() {
         use wy_syntax::expr::Section::*;
         use Expression as E;
-        use Literal::*;
         let src = "map (+5) [1, 2, 3]";
         let [map, plus] = wy_intern::intern_many(["map", "+"]);
         let map = Ident::Lower(map);
@@ -742,13 +741,13 @@ y -> y;
                 Box::new(E::Ident(map)),
                 Box::new(E::Section(Prefix {
                     prefix: plus,
-                    right: Box::new(E::Lit(Int(5))),
+                    right: Box::new(E::Lit(Literal::mk_simple_integer(5))),
                 })),
             )),
             Box::new(E::Array(vec![
-                E::Lit(Int(1)),
-                E::Lit(Int(2)),
-                E::Lit(Int(3)),
+                E::Lit(Literal::mk_simple_integer(1)),
+                E::Lit(Literal::mk_simple_integer(2)),
+                E::Lit(Literal::mk_simple_integer(3)),
             ])),
         );
         assert_eq!(Parser::from_str(src).expression(), Ok(expected))
