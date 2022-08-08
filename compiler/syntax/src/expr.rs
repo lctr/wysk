@@ -896,7 +896,7 @@ mod tests {
     fn test_flatten_app() {
         let [f, g, h]: [RawExpression; 3] =
             symbol::intern_many_with(["f", "g", "h"], |sym| Expression::Ident(Ident::Lower(sym)));
-        let lit = |n| Expression::Lit(Literal::Int(n));
+        let lit = |n| Expression::Lit(Literal::mk_simple_integer(n));
         let [one, three, four]: [RawExpression; 3] = [lit(1), lit(3), lit(4)];
 
         // (((f (g 1)) h) 3) 4)

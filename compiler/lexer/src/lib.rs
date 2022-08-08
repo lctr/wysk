@@ -7,7 +7,7 @@ use wy_span as span;
 use intern::symbol;
 
 use comment::{Comment, CommentId, LineKind};
-use literal::Base;
+use literal::{Base, NumPrefix};
 
 use span::{BytePos, Span, Spanned, WithSpan};
 
@@ -390,7 +390,7 @@ impl<'t> Lexer<'t> {
         self.source.next();
         if self.source.test_char(|c| c.is_whitespace()) {
             return Some(Token {
-                lexeme: Lexeme::Lit(Literal::Int(0)),
+                lexeme: Lexeme::Lit(Literal::DIGIT_ZERO),
                 span: self.source.span_from(start),
             });
         };
@@ -460,7 +460,7 @@ impl<'t> Lexer<'t> {
                     span: self.span_from(a),
                 });
                 return Token {
-                    lexeme: Lexeme::Lit(Literal::Int(0)),
+                    lexeme: Lexeme::Lit(Literal::DIGIT_ZERO),
                     span: Span(start, a),
                 };
             } else {
@@ -505,15 +505,13 @@ impl<'t> Lexer<'t> {
                         });
                         let span = Span(start, end);
                         return Token {
-                            lexeme: Literal::parse_int(&self.source[span], Base::Dec)
-                                .ok()
-                                .map(Literal::Int)
-                                .map(Lexeme::Lit)
-                                .unwrap_or_else(|| {
-                                    let span = self.span_from(start);
-                                    eprintln!("Invalid number `{}`", &self.source[span]);
-                                    Lexeme::Unknown(LexError::MalformedNumber)
-                                }),
+                            lexeme: Lexeme::Lit(Literal::Fractional {
+                                symbol: wy_intern::intern_once(&self.source[span]),
+                                base: Base::Dec,
+                                has_exponent: has_exp,
+                                suffix: None,
+                            }),
+
                             span,
                         };
                     };
@@ -523,20 +521,23 @@ impl<'t> Lexer<'t> {
         }
         let span = Span(start, self.source.get_pos());
         let src = &self.source[span];
-
-        let lexeme = if !has_dot && !has_exp && sign_positive.is_none() {
-            if src.len() < 15 {
-                Literal::parse_int(src, Base::Dec).ok().map(Literal::Int)
-            } else {
-                Literal::parse_nat(src, Base::Dec).ok().map(Literal::Nat)
-            }
-        } else if has_dot && src.len() < 15 {
-            Literal::parse_float(src).ok().map(Literal::Float)
+        let symbol = wy_intern::intern_once(src);
+        /// num suffixes not currently supported but are still represented
+        let lexeme = if has_dot || has_exp {
+            Lexeme::Lit(Literal::Fractional {
+                symbol,
+                base: Base::Dec,
+                has_exponent: has_exp,
+                suffix: None,
+            })
         } else {
-            Literal::parse_double(src).ok().map(Literal::Double)
-        }
-        .map(Lexeme::Lit)
-        .unwrap_or_else(|| Lexeme::Unknown(LexError::MalformedNumber));
+            Lexeme::Lit(Literal::Integral {
+                symbol,
+                base: Base::Dec,
+                prefix: None,
+                suffix: None,
+            })
+        };
         Token { lexeme, span }
     }
 
@@ -544,11 +545,12 @@ impl<'t> Lexer<'t> {
         let radix = base.radix();
         let (span, _) = self.source.eat_while(|c| c.is_digit(radix)).parts();
         let src = &self.source[span];
-        let lexeme = Literal::parse_int(src, base)
-            .ok()
-            .map(Literal::Int)
-            .map(Lexeme::Lit)
-            .unwrap_or_else(|| Lexeme::Unknown(LexError::MalformedNumber));
+        let lexeme = Lexeme::Lit(Literal::Integral {
+            symbol: wy_intern::intern_once(src),
+            base,
+            prefix: NumPrefix::from_base(base),
+            suffix: None,
+        });
         Token { lexeme, span }
     }
 
@@ -874,9 +876,25 @@ mod test {
         let nl = lexer.token();
         assert_eq!(nl.lexeme, Lexeme::Lit(Literal::Char('\n')));
         let _356 = lexer.token();
-        assert_eq!(_356.lexeme, Lexeme::Lit(Literal::Float(3.56)));
+        assert_eq!(
+            _356.lexeme,
+            Lexeme::Lit(Literal::Fractional {
+                symbol: wy_intern::intern_once("3.56"),
+                base: Base::Dec,
+                has_exponent: false,
+                suffix: None
+            })
+        );
         let _4e12 = lexer.token();
-        assert_eq!(_4e12.lexeme, Lexeme::Lit(Literal::Double(4e12_f64)));
+        assert_eq!(
+            _4e12.lexeme,
+            Lexeme::Lit(Literal::Fractional {
+                symbol: wy_intern::intern_once("4e12"),
+                base: Base::Dec,
+                has_exponent: true,
+                suffix: None
+            })
+        );
 
         println!("{:?}", lexer);
 
@@ -887,10 +905,34 @@ mod test {
     fn test_dots() {
         let mut lexer = Lexer::new("4..5 4.5 a.b a..b [1..2]");
         let [a, b] = symbol::intern_many(["a", "b"]);
-        assert_eq!(lexer.token().lexeme, Lexeme::Lit(Literal::Int(4)));
+        assert_eq!(
+            lexer.token().lexeme,
+            Lexeme::Lit(Literal::Integral {
+                symbol: wy_intern::DIGIT_4,
+                base: Base::Dec,
+                prefix: None,
+                suffix: None
+            })
+        );
         assert_eq!(lexer.token().lexeme, Lexeme::Dot2);
-        assert_eq!(lexer.token().lexeme, Lexeme::Lit(Literal::Int(5)));
-        assert_eq!(lexer.token().lexeme, Lexeme::Lit(Literal::Float(4.5_f32)));
+        assert_eq!(
+            lexer.token().lexeme,
+            Lexeme::Lit(Literal::Integral {
+                symbol: wy_intern::DIGIT_5,
+                base: Base::Dec,
+                prefix: None,
+                suffix: None
+            })
+        );
+        assert_eq!(
+            lexer.token().lexeme,
+            Lexeme::Lit(Literal::Fractional {
+                symbol: wy_intern::intern_once("4.5"),
+                base: Base::Dec,
+                has_exponent: false,
+                suffix: None
+            })
+        );
         assert_eq!(lexer.token().lexeme, Lexeme::Lower(a));
         assert_eq!(lexer.token().lexeme, Lexeme::Dot);
         assert_eq!(lexer.token().lexeme, Lexeme::Lower(b));
@@ -898,9 +940,25 @@ mod test {
         assert_eq!(lexer.token().lexeme, Lexeme::Dot2);
         assert_eq!(lexer.token().lexeme, Lexeme::Lower(b));
         assert_eq!(lexer.token().lexeme, Lexeme::BrackL);
-        assert_eq!(lexer.token().lexeme, Lexeme::Lit(Literal::Int(1)));
+        assert_eq!(
+            lexer.token().lexeme,
+            Lexeme::Lit(Literal::Integral {
+                symbol: wy_intern::DIGIT_1,
+                base: Base::Dec,
+                prefix: None,
+                suffix: None
+            })
+        );
         assert_eq!(lexer.token().lexeme, Lexeme::Dot2);
-        assert_eq!(lexer.token().lexeme, Lexeme::Lit(Literal::Int(2)));
+        assert_eq!(
+            lexer.token().lexeme,
+            Lexeme::Lit(Literal::Integral {
+                symbol: wy_intern::DIGIT_2,
+                base: Base::Dec,
+                prefix: None,
+                suffix: None
+            })
+        );
         assert_eq!(lexer.token().lexeme, Lexeme::BrackR);
         assert_eq!(lexer.token().lexeme, Lexeme::Eof);
 

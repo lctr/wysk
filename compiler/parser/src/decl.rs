@@ -462,6 +462,7 @@ fn some_record_function
             wy_intern::intern_many_with(["a", "b", "c", "some_record_function"], Ident::Lower);
         let [con_a] = wy_intern::intern_many_with(["A"], Ident::Upper);
         let [plus] = wy_intern::intern_many_with(["+"], Ident::Infix);
+        let mkint = Literal::mk_simple_integer;
         let actual = Parser::from_str(src).function_decl().unwrap();
         let expected = FnDecl {
             name: some_record_function,
@@ -484,7 +485,7 @@ fn some_record_function
                                 Expression::Infix {
                                     infix: plus,
                                     left: Box::new(Expression::Ident(b)),
-                                    right: Box::new(Expression::Lit(Literal::Int(2))),
+                                    right: Box::new(Expression::Lit(mkint(2))),
                                 },
                             ),
                             Field::Entry(
@@ -494,7 +495,7 @@ fn some_record_function
                                         Box::new(Expression::Ident(c)),
                                         Box::new(Expression::Ident(a)),
                                     )),
-                                    Box::new(Expression::Lit(Literal::Int(3))),
+                                    Box::new(Expression::Lit(mkint(3))),
                                 ),
                             ),
                         ],
@@ -510,8 +511,8 @@ fn some_record_function
                                 Field::Entry(
                                     b,
                                     Pattern::Or(vec![
-                                        Pattern::Lit(Literal::Int(1)),
-                                        Pattern::Lit(Literal::Int(2)),
+                                        Pattern::Lit(mkint(1)),
+                                        Pattern::Lit(mkint(2)),
                                     ]),
                                 ),
                                 Field::Key(c),
@@ -530,7 +531,7 @@ fn some_record_function
                                         Box::new(Expression::Ident(c)),
                                         Box::new(Expression::Ident(a)),
                                     )),
-                                    Box::new(Expression::Lit(Literal::Int(3))),
+                                    Box::new(Expression::Lit(mkint(3))),
                                 ),
                             ),
                         ],

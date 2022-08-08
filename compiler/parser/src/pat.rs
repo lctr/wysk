@@ -289,7 +289,7 @@ mod test {
 
     #[test]
     fn test_pattern() {
-        let int = |n| Pattern::Lit(Literal::Int(n));
+        let int = |n| Pattern::Lit(Literal::mk_simple_integer(n));
         let [a, b, c, d] = wy_intern::intern_many(["a", "b", "c", "d"]);
         let id = |s| Pattern::Var(Ident::Lower(s));
         let lnk = |px, py| Pattern::Lnk(Box::new(px), Box::new(py));

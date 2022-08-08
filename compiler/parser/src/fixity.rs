@@ -1,10 +1,7 @@
 use crate::error::*;
 use crate::stream::*;
 
-use wy_lexer::{
-    literal::Literal,
-    token::{Keyword, Lexeme, Token},
-};
+use wy_lexer::token::{Keyword, Lexeme};
 use wy_name::ident::Ident;
 use wy_span::Spanned;
 use wy_span::WithSpan;
@@ -28,23 +25,22 @@ impl<'t> FixityParser<'t> {
     }
 
     pub(crate) fn fixity_prec(&mut self) -> Parsed<Prec> {
-        use Lexeme::Lit;
-        use Literal::Int;
-        match self.peek() {
-            Some(Token {
-                lexeme: Lit(Int(p)),
-                ..
-            }) if *p < 10 => {
-                let prec = Prec(*p as u8);
+        if let Some(p) = self.peek().and_then(|tok| match tok.lexeme {
+            Lexeme::Lit(lit) => lit.try_simple_digit_byte(),
+            _ => None,
+        }) {
+            if p < 10 {
+                let prec = Prec(p as u8);
                 self.bump();
-                Ok(prec)
+                return Ok(prec);
             }
-            _ => Err(ParseError::InvalidPrec(
-                self.srcloc(),
-                self.bump(),
-                self.text(),
-            )),
         }
+
+        Err(ParseError::InvalidPrec(
+            self.srcloc(),
+            self.bump(),
+            self.text(),
+        ))
     }
 
     pub(crate) fn with_fixity(&mut self, fixity: Fixity) -> Parsed<Vec<Ident>> {
