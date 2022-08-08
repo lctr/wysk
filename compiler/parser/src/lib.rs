@@ -1,6 +1,9 @@
+use program::RawProgram;
 use token::*;
+use wy_common::either::Either;
 use wy_lexer::*;
 use wy_name::ident::{Ident, IdentKind};
+use wy_sources::files::File;
 use wy_syntax::{
     expr::RawExpression,
     tipo::{Signature, Type},
@@ -76,7 +79,7 @@ impl<'t> Parser<'t> {
     #[inline]
     pub(crate) fn expect_literal(&mut self) -> Parsed<Literal> {
         self.peek()
-            .and_then(|t| t.literal())
+            .and_then(Token::lift(Lexeme::literal))
             .map(|lit| self.bumped(lit))
             .ok_or_else(|| self.expected(LexKind::Literal))
     }
@@ -101,17 +104,19 @@ pub fn parse_expression(src: &str) -> Parsed<RawExpression> {
     Parser::from_str(src).expression()
 }
 
-pub fn parse_standalone_file<P: AsRef<std::path::Path>>(
+pub fn parse_file(file: &File) -> Parsed<RawProgram> {
+    Parser::new(file.source(), file.src_path().path()).parse_program()
+}
+
+pub fn parse_standalone<P: AsRef<std::path::Path>>(
     filepath: P,
-) -> Result<program::RawProgram, Failure<ParseError>> {
+) -> Result<program::RawProgram, Either<std::io::Error, ParseError>> {
     let path = filepath.as_ref();
-    let content = std::fs::read_to_string(path)?;
-    Parser::new(
-        content.as_str(),
-        wy_sources::paths::Resource::Standalone {
-            path: path.to_path_buf(),
-        },
-    )
-    .parse_program()
-    .map_err(Failure::Err)
+    std::fs::read_to_string(path)
+        .map_err(Either::Left)
+        .and_then(|content| {
+            Parser::new(content.as_str(), path)
+                .parse_program()
+                .map_err(Either::Right)
+        })
 }
