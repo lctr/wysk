@@ -464,12 +464,8 @@ impl LexKind {
 
     pub fn from_literal(lit: Literal) -> Self {
         match lit {
-            Literal::Byte(_)
-            | Literal::Int(_)
-            | Literal::Nat(_)
-            | Literal::Float(_)
-            | Literal::Double(_) => Self::Number,
-            Literal::Char(_) => Self::Character,
+            Literal::Integral { .. } | Literal::Fractional { .. } => Self::Number,
+            Literal::Char(_) | Literal::NullChar => Self::Character,
             Literal::Str(_) | Literal::EmptyStr => Self::Literal,
         }
     }
