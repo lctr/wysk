@@ -266,6 +266,7 @@ impl<'t> DeclParser<'t> {
 
 #[cfg(test)]
 mod test {
+    use wy_intern::Symbol;
     use wy_lexer::Literal;
     use wy_syntax::{
         expr::Expression,
@@ -283,9 +284,9 @@ mod test {
             "data Foo a b = Foo a b | Bar a (Foo a b) | Baz { foo_a :: a, foo_b :: b } with Eq";
         let decl = Parser::from_str(src).data_decl().unwrap();
         let [a, b, foo_a, foo_b] =
-            wy_intern::intern_many_with(["a", "b", "foo_a", "foo_b"], Ident::Lower);
+            Symbol::intern_many_with(["a", "b", "foo_a", "foo_b"], Ident::Lower);
         let [foo, bar, baz, eq] =
-            wy_intern::intern_many_with(["Foo", "Bar", "Baz", "Eq"], Ident::Upper);
+            Symbol::intern_many_with(["Foo", "Bar", "Baz", "Eq"], Ident::Upper);
         let expected = {
             DataDecl {
                 tdef: SimpleType(foo, vec![a, b]),
@@ -332,11 +333,10 @@ impl |Eq a| Eq [a] {
     | _ _ = False
 }
 "#;
-        let [a, x, xs, y, ys] =
-            wy_intern::intern_many_with(["a", "x", "xs", "y", "ys"], Ident::Lower);
+        let [a, x, xs, y, ys] = Symbol::intern_many_with(["a", "x", "xs", "y", "ys"], Ident::Lower);
         let [cl_eq, con_true, con_false] =
-            wy_intern::intern_many_with(["Eq", "True", "False"], Ident::Upper);
-        let [eq2, amper2] = wy_intern::intern_many_with(["==", "&&"], Ident::Infix);
+            Symbol::intern_many_with(["Eq", "True", "False"], Ident::Upper);
+        let [eq2, amper2] = Symbol::intern_many_with(["==", "&&"], Ident::Infix);
         let actual = Parser::from_str(src).inst_decl().unwrap();
         let expected = {
             InstDecl {
@@ -395,7 +395,7 @@ impl |Eq a| Eq [a] {
         let src = r#"newtype Parser a = Parser { parse :: String -> (a, String) }"#;
         let parsed = Parser::from_str(src).newtype_decl().unwrap();
         let [parser_ty, a, parse, string_ty] =
-            wy_intern::intern_many(["Parser", "a", "parse", "String"]);
+            Symbol::intern_many(["Parser", "a", "parse", "String"]);
         let expected = NewtypeDecl {
             tdef: SimpleType(Ident::Upper(parser_ty), vec![Ident::Lower(a)]),
             ctor: Ident::Upper(parser_ty),
@@ -459,9 +459,9 @@ fn some_record_function
     }
 ";
         let [a, b, c, some_record_function] =
-            wy_intern::intern_many_with(["a", "b", "c", "some_record_function"], Ident::Lower);
-        let [con_a] = wy_intern::intern_many_with(["A"], Ident::Upper);
-        let [plus] = wy_intern::intern_many_with(["+"], Ident::Infix);
+            Symbol::intern_many_with(["a", "b", "c", "some_record_function"], Ident::Lower);
+        let [con_a] = Symbol::intern_many_with(["A"], Ident::Upper);
+        let [plus] = Symbol::intern_many_with(["+"], Ident::Infix);
         let mkint = Literal::mk_simple_integer;
         let actual = Parser::from_str(src).function_decl().unwrap();
         let expected = FnDecl {

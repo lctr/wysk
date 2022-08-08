@@ -134,6 +134,7 @@ impl<'t> ModuleParser<'t> {
 
 #[cfg(test)]
 mod test {
+    use wy_intern::Symbol;
     use wy_name::ident::Ident;
 
     use super::*;
@@ -146,7 +147,7 @@ import A.thing.from.Somewhere @ A { foo, bar }
 "#;
         let program = Parser::from_str(src).imports();
         let [a_con, thing, from, somewhere_con, foo, bar, b_con, things, elsewhere, baz] =
-            wy_intern::intern_many([
+            Symbol::intern_many([
                 "A",
                 "thing",
                 "from",

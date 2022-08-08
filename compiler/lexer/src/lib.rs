@@ -4,7 +4,7 @@ use stream::Mode;
 use wy_intern as intern;
 use wy_span as span;
 
-use intern::symbol;
+use intern::Symbol;
 
 use comment::{Comment, CommentId, LineKind};
 use literal::{Base, NumPrefix};
@@ -92,7 +92,7 @@ impl<'t> Lexer<'t> {
                     Lexeme::Unlabel
                 } else if is_ident_start(c) {
                     let posn = self.source.eat_while(is_ident_char);
-                    let symbol = wy_intern::intern_once(&self.source[posn.span()]);
+                    let symbol = Symbol::intern(&self.source[posn.span()]);
                     Lexeme::Label(symbol)
                 } else {
                     Lexeme::Unknown(LexError::UnterminatedChar)
@@ -173,7 +173,7 @@ impl<'t> Lexer<'t> {
             // this shouldn't be possible at this point!!
             "~" => Lexeme::Tilde,
             "-" => Lexeme::Infix(wy_intern::sym::MINUS),
-            s => Lexeme::Infix(symbol::intern_once(s)),
+            s => Lexeme::Infix(Symbol::intern(s)),
         };
         Token { lexeme, span }
     }
@@ -303,7 +303,7 @@ impl<'t> Lexer<'t> {
         let lexeme = if !terminated {
             Lexeme::Unknown(LexError::UnterminatedString)
         } else {
-            Lexeme::Lit(Literal::Str(symbol::intern_once(buf.as_str())))
+            Lexeme::Lit(Literal::Str(Symbol::intern(buf.as_str())))
         };
         Token { lexeme, span }
     }
@@ -311,7 +311,7 @@ impl<'t> Lexer<'t> {
     fn identifier(&mut self, first: char) -> Token {
         if first == 'w' && self.source.bump_on('#') {
             let (span, _) = self.source.eat_until_whitespace().parts();
-            let sym = symbol::intern_once(&self.source[span]);
+            let sym = Symbol::intern(&self.source[span]);
             // lex all raw idents as lower
             return Token {
                 lexeme: Lexeme::Lower(sym),
@@ -345,7 +345,7 @@ impl<'t> Lexer<'t> {
                 Lexeme::Upper
             } else {
                 Lexeme::Lower
-            }(symbol::intern_once(text)))
+            }(Symbol::intern(text)))
         }
     }
 
@@ -365,7 +365,7 @@ impl<'t> Lexer<'t> {
         let pragma = if let Some(attr) = Attr::from_str(txt) {
             Pragma::BuiltIn(attr)
         } else {
-            Pragma::Custom(wy_intern::intern_once(txt))
+            Pragma::Custom(Symbol::intern(txt))
         };
         match &mut self.mode {
             Mode::Meta { attr_seen, .. } => *attr_seen = true,
@@ -506,7 +506,7 @@ impl<'t> Lexer<'t> {
                         let span = Span(start, end);
                         return Token {
                             lexeme: Lexeme::Lit(Literal::Integral {
-                                symbol: wy_intern::intern_once(&self.source[span]),
+                                symbol: Symbol::intern(&self.source[span]),
                                 base: Base::Dec,
                                 prefix: None,
                                 suffix: None,
@@ -521,7 +521,7 @@ impl<'t> Lexer<'t> {
         }
         let span = Span(start, self.source.get_pos());
         let src = &self.source[span];
-        let symbol = wy_intern::intern_once(src);
+        let symbol = Symbol::intern(src);
         // num suffixes not currently supported but are still represented
         let lexeme = if has_dot || has_exp {
             Lexeme::Lit(Literal::Fractional {
@@ -546,7 +546,7 @@ impl<'t> Lexer<'t> {
         let (span, _) = self.source.eat_while(|c| c.is_digit(radix)).parts();
         let src = &self.source[span];
         let lexeme = Lexeme::Lit(Literal::Integral {
-            symbol: wy_intern::intern_once(src),
+            symbol: Symbol::intern(src),
             base,
             prefix: NumPrefix::from_base(base),
             suffix: None,
@@ -822,7 +822,6 @@ pub fn is_infix_char(c: char) -> bool {
 
 #[cfg(test)]
 mod test {
-    use wy_intern::{intern_many, symbol};
 
     use super::*;
 
@@ -858,15 +857,15 @@ mod test {
         let src = "a + b )*( 'x' .. '\n' 3.56 4e12";
         let mut lexer = Lexer::new(src);
         let a = lexer.token();
-        assert_eq!(a.lexeme, Lexeme::Lower(symbol::intern_once("a")));
+        assert_eq!(a.lexeme, Lexeme::Lower(Symbol::intern("a")));
         let plus = lexer.token();
-        assert_eq!(plus.lexeme, Lexeme::Infix(symbol::intern_once("+")));
+        assert_eq!(plus.lexeme, Lexeme::Infix(Symbol::intern("+")));
         let b = lexer.token();
-        assert_eq!(b.lexeme, Lexeme::Lower(symbol::intern_once("b")));
+        assert_eq!(b.lexeme, Lexeme::Lower(Symbol::intern("b")));
         let parenr = lexer.token();
         assert_eq!(parenr.lexeme, Lexeme::ParenR);
         let times = lexer.token();
-        assert_eq!(times.lexeme, Lexeme::Infix(symbol::intern_once("*")));
+        assert_eq!(times.lexeme, Lexeme::Infix(Symbol::intern("*")));
         let parenl = lexer.token();
         assert_eq!(parenl.lexeme, Lexeme::ParenL);
         let charx = lexer.token();
@@ -879,7 +878,7 @@ mod test {
         assert_eq!(
             _356.lexeme,
             Lexeme::Lit(Literal::Fractional {
-                symbol: wy_intern::intern_once("3.56"),
+                symbol: Symbol::intern("3.56"),
                 base: Base::Dec,
                 has_exponent: false,
                 suffix: None
@@ -889,7 +888,7 @@ mod test {
         assert_eq!(
             _4e12.lexeme,
             Lexeme::Lit(Literal::Fractional {
-                symbol: wy_intern::intern_once("4e12"),
+                symbol: Symbol::intern("4e12"),
                 base: Base::Dec,
                 has_exponent: true,
                 suffix: None
@@ -904,7 +903,7 @@ mod test {
     #[test]
     fn test_dots() {
         let mut lexer = Lexer::new("4..5 4.5 a.b a..b [1..2]");
-        let [a, b] = symbol::intern_many(["a", "b"]);
+        let [a, b] = Symbol::intern_many(["a", "b"]);
         assert_eq!(
             lexer.token().lexeme,
             Lexeme::Lit(Literal::Integral {
@@ -927,7 +926,7 @@ mod test {
         assert_eq!(
             lexer.token().lexeme,
             Lexeme::Lit(Literal::Fractional {
-                symbol: wy_intern::intern_once("4.5"),
+                symbol: Symbol::intern("4.5"),
                 base: Base::Dec,
                 has_exponent: false,
                 suffix: None
@@ -978,7 +977,7 @@ mod test {
         let mut lexer = Lexer::new(source);
         println!("collected: {:#?}", lexer.clone().collect::<Vec<_>>());
         let [lamr, lam2, eq2, tarrow, tpipe, boop] =
-            intern_many([r#"\>"#, r#"\\"#, "==", "~>", "~|", "boop"]);
+            Symbol::intern_many([r#"\>"#, r#"\\"#, "==", "~>", "~|", "boop"]);
         let expected = [
             (Lambda, "\\"),
             (Infix(lam2), "\\\\"),

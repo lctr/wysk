@@ -257,8 +257,8 @@ impl<Id> Chain<Id> {
     }
 
     pub fn from_strings<S: AsRef<str>, const N: usize>(head: S, strings: [S; N]) -> Chain<Symbol> {
-        let root = wy_intern::intern_once(head.as_ref());
-        let tail = wy_intern::intern_many(strings);
+        let root = Symbol::intern(head.as_ref());
+        let tail = Symbol::intern_many(strings);
         Chain::from((root, tail))
     }
 
@@ -267,8 +267,8 @@ impl<Id> Chain<Id> {
         strings: [S; N],
         mut f: impl FnMut(Symbol) -> Id,
     ) -> Self {
-        let root = f(wy_intern::intern_once(head.as_ref()));
-        let tail = wy_intern::intern_many_with(strings, f);
+        let root = f(Symbol::intern(head.as_ref()));
+        let tail = Symbol::intern_many_with(strings, f);
         Self::from((root, tail))
     }
 

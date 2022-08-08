@@ -417,6 +417,8 @@ impl<Id, V, X> MapSnd<V, X> for Pattern<Id, V> {
 
 #[cfg(test)]
 mod tests {
+    use wy_intern::Symbol;
+
     use super::*;
 
     #[test]
@@ -426,7 +428,7 @@ mod tests {
         use wy_name::ident::Ident::{self, Lower};
         use Pattern::*;
         let [a, b, c, d, e, f, g] =
-            wy_intern::intern_many_with(["a", "b", "c", "d", "e", "f", "g"], Lower);
+            Symbol::intern_many_with(["a", "b", "c", "d", "e", "f", "g"], Lower);
         let pat_with_dupe_vars = Tup(vec![
             Var(a),
             Var(b),

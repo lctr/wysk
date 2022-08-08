@@ -324,7 +324,7 @@ mod test {
 
     #[test]
     fn test_tuple_prefix_form() {
-        let [a, b, c, b00l] = wy_intern::intern_many(["a", "b", "c", "Bool"]);
+        let [a, b, c, b00l] = Symbol::intern_many(["a", "b", "c", "Bool"]);
         let bool_tycon = Con::Named(UPPER(b00l));
         for (src, expected) in [
             (
@@ -379,7 +379,7 @@ mod test {
     fn test_type_app() {
         let src = "Foo x y z -> Bar (z, y) x";
         let result = Parser::from_str(src).ty_node().unwrap();
-        let [foo_ty, x, y, z, bar_ty] = wy_intern::intern_many(["Foo", "x", "y", "z", "Bar"]);
+        let [foo_ty, x, y, z, bar_ty] = Symbol::intern_many(["Foo", "x", "y", "z", "Bar"]);
         assert_eq!(
             result,
             Type::Fun(
@@ -400,7 +400,7 @@ mod test {
         let src = "a -> b -> c -> d";
         let result = Parser::from_str(src).ty_node().unwrap();
         println!("{}", &result);
-        let [a, b, c, d] = wy_intern::intern_many(["a", "b", "c", "d"]);
+        let [a, b, c, d] = Symbol::intern_many(["a", "b", "c", "d"]);
         let expected = Type::Fun(
             Box::new(VAR_T(a)),
             Box::new(Type::Fun(
@@ -425,8 +425,8 @@ mod test {
     fn test_parse_type_signature() {
         let src = r#":: forall a b. |A a, B b| m a -> (a -> m b) -> m b"#;
         let sig = Parser::from_str(src).ty_signature().unwrap();
-        let [a, b, m] = wy_intern::intern_many_with(["a", "b", "m"], Ident::Lower);
-        let [class_a, class_b] = wy_intern::intern_many_with(["A", "B"], UPPER);
+        let [a, b, m] = Symbol::intern_many_with(["a", "b", "m"], Ident::Lower);
+        let [class_a, class_b] = Symbol::intern_many_with(["A", "B"], UPPER);
         let expected = Signature::Explicit(Annotation {
             quant: Quantified(vec![Var(a, a), Var(b, b)]),
             qual: Qualified {

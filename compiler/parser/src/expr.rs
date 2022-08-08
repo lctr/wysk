@@ -581,6 +581,7 @@ impl<'t> ExprParser<'t> {
 
 #[cfg(test)]
 mod test {
+    use wy_intern::Symbol;
     use wy_syntax::{expr::Expression, pattern::Pattern, stmt::Alternative};
 
     use super::*;
@@ -611,7 +612,7 @@ y -> y;
 }
 "#;
         let [a, b, c, d, h, f, x, y] =
-            wy_intern::intern_many(["A", "B", "c", "d", "h", "f", "x", "y"]);
+            Symbol::intern_many(["A", "B", "c", "d", "h", "f", "x", "y"]);
         let expr = Parser::from_str(src).case_expr();
         println!("{:#?}", &expr);
         let expected = Expression::Case(
@@ -650,7 +651,7 @@ y -> y;
     fn test_infix_exprs() {
         use Expression::Lit;
         let [op1, op2, plus, times, minus, fun] =
-            wy_intern::intern_many(["<>", "><", "+", "*", "-", "fun"]);
+            Symbol::intern_many(["<>", "><", "+", "*", "-", "fun"]);
         let int = |n| Lit(Literal::mk_simple_integer(n));
 
         let tests = [
@@ -706,7 +707,7 @@ y -> y;
     #[test]
     fn test_lambda_expr() {
         let src = r#"\x -> f x"#;
-        let [x, f] = wy_intern::intern_many(["x", "f"]);
+        let [x, f] = Symbol::intern_many(["x", "f"]);
         let expr = Parser::from_str(src).expression().unwrap();
         let expected = Expression::Lambda(
             Pattern::Var(Ident::Lower(x)),
@@ -733,7 +734,7 @@ y -> y;
         use wy_syntax::expr::Section::*;
         use Expression as E;
         let src = "map (+5) [1, 2, 3]";
-        let [map, plus] = wy_intern::intern_many(["map", "+"]);
+        let [map, plus] = Symbol::intern_many(["map", "+"]);
         let map = Ident::Lower(map);
         let plus = Ident::Infix(plus);
         let expected: RawExpression = E::App(

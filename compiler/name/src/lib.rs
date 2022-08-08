@@ -69,13 +69,14 @@ impl Name {
 
 #[cfg(test)]
 mod test {
+    use wy_intern::Symbol;
+
     use super::*;
 
     #[test]
     fn test_chains() {
-        let [prelude, function] =
-            wy_intern::intern_many_with(["Prelude", "Function"], Ident::Upper);
-        let [curry, uncurry] = wy_intern::intern_many_with(["curry", "uncurry"], Ident::Lower);
+        let [prelude, function] = Symbol::intern_many_with(["Prelude", "Function"], Ident::Upper);
+        let [curry, uncurry] = Symbol::intern_many_with(["curry", "uncurry"], Ident::Lower);
 
         let curry_chain = Chain::from((prelude, [function, curry]));
         let uncurry_chain = Chain::from((prelude, [function, uncurry]));

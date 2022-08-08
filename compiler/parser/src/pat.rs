@@ -282,6 +282,7 @@ impl<'t> PatParser<'t> {
 
 #[cfg(test)]
 mod test {
+    use wy_intern::Symbol;
     use wy_lexer::Literal;
     use wy_syntax::pattern::Pattern;
 
@@ -290,7 +291,7 @@ mod test {
     #[test]
     fn test_pattern() {
         let int = |n| Pattern::Lit(Literal::mk_simple_integer(n));
-        let [a, b, c, d] = wy_intern::intern_many(["a", "b", "c", "d"]);
+        let [a, b, c, d] = Symbol::intern_many(["a", "b", "c", "d"]);
         let id = |s| Pattern::Var(Ident::Lower(s));
         let lnk = |px, py| Pattern::Lnk(Box::new(px), Box::new(py));
         let pairs = [
@@ -318,7 +319,7 @@ mod test {
     #[test]
     fn test_cons_pat() {
         let var = |s| Pattern::Var(Ident::Lower(s));
-        let [a, b, c] = wy_intern::intern_many(["a", "b", "c"]);
+        let [a, b, c] = Symbol::intern_many(["a", "b", "c"]);
         let link = Pattern::Lnk(
             Box::new(var(a)),
             Box::new(Pattern::Lnk(Box::new(var(b)), Box::new(var(c)))),

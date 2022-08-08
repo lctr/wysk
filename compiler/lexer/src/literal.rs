@@ -175,7 +175,7 @@ impl Literal {
             7 => wy_intern::sym::DIGIT_7,
             8 => wy_intern::sym::DIGIT_8,
             9 => wy_intern::sym::DIGIT_9,
-            n => wy_intern::intern_once(format!("{n}")),
+            n => Symbol::intern(format!("{n}")),
         };
         Self::Integral {
             symbol,
