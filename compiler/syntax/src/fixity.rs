@@ -268,7 +268,7 @@ where
 {
     pub fn new(mut infixify: impl FnMut(Symbol) -> Id) -> Self {
         let mut map = HashMap::new();
-        map.insert(infixify(symbol::COLON), Fixity::CONS);
+        map.insert(infixify(wy_intern::sym::COLON), Fixity::CONS);
         Self(map)
     }
 

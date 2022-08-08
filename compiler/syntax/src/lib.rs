@@ -478,7 +478,7 @@ where
     fn default() -> Self {
         Self {
             uid: U::default(),
-            modname: Chain::new(Ident::Upper(*symbol::reserved::MAIN_MOD), deque![]),
+            modname: Chain::new(Ident::Upper(wy_intern::sym::MAIN_MOD), deque![]),
             imports: vec![],
             infixes: vec![],
             datatys: vec![],

@@ -172,7 +172,7 @@ impl<'t> Lexer<'t> {
             ".." => Lexeme::Dot2,
             // this shouldn't be possible at this point!!
             "~" => Lexeme::Tilde,
-            "-" => Lexeme::Infix(*symbol::reserved::MINUS),
+            "-" => Lexeme::Infix(wy_intern::sym::MINUS),
             s => Lexeme::Infix(symbol::intern_once(s)),
         };
         Token { lexeme, span }
@@ -908,7 +908,7 @@ mod test {
         assert_eq!(
             lexer.token().lexeme,
             Lexeme::Lit(Literal::Integral {
-                symbol: wy_intern::DIGIT_4,
+                symbol: wy_intern::sym::DIGIT_4,
                 base: Base::Dec,
                 prefix: None,
                 suffix: None
@@ -918,7 +918,7 @@ mod test {
         assert_eq!(
             lexer.token().lexeme,
             Lexeme::Lit(Literal::Integral {
-                symbol: wy_intern::DIGIT_5,
+                symbol: wy_intern::sym::DIGIT_5,
                 base: Base::Dec,
                 prefix: None,
                 suffix: None
@@ -943,7 +943,7 @@ mod test {
         assert_eq!(
             lexer.token().lexeme,
             Lexeme::Lit(Literal::Integral {
-                symbol: wy_intern::DIGIT_1,
+                symbol: wy_intern::sym::DIGIT_1,
                 base: Base::Dec,
                 prefix: None,
                 suffix: None
@@ -953,7 +953,7 @@ mod test {
         assert_eq!(
             lexer.token().lexeme,
             Lexeme::Lit(Literal::Integral {
-                symbol: wy_intern::DIGIT_2,
+                symbol: wy_intern::sym::DIGIT_2,
                 base: Base::Dec,
                 prefix: None,
                 suffix: None

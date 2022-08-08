@@ -157,7 +157,7 @@ pub enum Literal {
 
 impl Literal {
     pub const DIGIT_ZERO: Self = Self::Integral {
-        symbol: wy_intern::DIGIT_0,
+        symbol: wy_intern::sym::DIGIT_0,
         base: Base::Dec,
         prefix: None,
         suffix: None,
@@ -165,16 +165,16 @@ impl Literal {
 
     pub fn mk_simple_integer(val: usize) -> Self {
         let symbol = match val {
-            0 => wy_intern::DIGIT_0,
-            1 => wy_intern::DIGIT_1,
-            2 => wy_intern::DIGIT_2,
-            3 => wy_intern::DIGIT_3,
-            4 => wy_intern::DIGIT_4,
-            5 => wy_intern::DIGIT_5,
-            6 => wy_intern::DIGIT_6,
-            7 => wy_intern::DIGIT_7,
-            8 => wy_intern::DIGIT_8,
-            9 => wy_intern::DIGIT_9,
+            0 => wy_intern::sym::DIGIT_0,
+            1 => wy_intern::sym::DIGIT_1,
+            2 => wy_intern::sym::DIGIT_2,
+            3 => wy_intern::sym::DIGIT_3,
+            4 => wy_intern::sym::DIGIT_4,
+            5 => wy_intern::sym::DIGIT_5,
+            6 => wy_intern::sym::DIGIT_6,
+            7 => wy_intern::sym::DIGIT_7,
+            8 => wy_intern::sym::DIGIT_8,
+            9 => wy_intern::sym::DIGIT_9,
             n => wy_intern::intern_once(format!("{n}")),
         };
         Self::Integral {

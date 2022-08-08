@@ -379,14 +379,14 @@ impl<Id, V> Con<Id, V> {
 impl<Id: Symbolic> Symbolic for Con<Id, Tv> {
     fn get_symbol(&self) -> Symbol {
         match self {
-            Con::List => wy_intern::COLON,
+            Con::List => wy_intern::sym::COLON,
             Con::Tuple(ts) => {
                 let s = std::iter::repeat(',').take(*ts).collect::<String>();
-                wy_intern::intern_once(&*s)
+                Symbol::intern(&*s)
             }
-            Con::Arrow => wy_intern::ARROW,
+            Con::Arrow => wy_intern::sym::ARROW,
             Con::Named(s) => s.get_symbol(),
-            Con::Free(t) => wy_intern::intern_once(&*t.display()),
+            Con::Free(t) => Symbol::intern(&*t.display()),
             Con::Alias(s) => s.get_symbol(),
         }
     }
@@ -406,9 +406,9 @@ wy_common::variant_preds! {
 impl<S: Identifier + Symbolic> PartialEq<S> for Con<Ident, Tv> {
     fn eq(&self, other: &S) -> bool {
         match (self, other) {
-            (Con::List, c) => c.get_symbol() == wy_intern::COLON,
+            (Con::List, c) => c.get_symbol() == wy_intern::sym::COLON,
             (Con::Tuple(n), c) => c.get_symbol() == Ident::mk_tuple_commas(*n).get_symbol(),
-            (Con::Arrow, c) => c.get_symbol() == wy_intern::ARROW,
+            (Con::Arrow, c) => c.get_symbol() == wy_intern::sym::ARROW,
             (Con::Named(c) | Con::Alias(c), id) => id.get_symbol() == c.get_symbol(),
             (Con::Free(t), s) if s.is_fresh() || s.is_lower() => {
                 s.get_symbol() == Symbol::intern(t.display())
@@ -437,17 +437,17 @@ impl Con<Ident, Tv> {
         }
     }
 
-    pub const ARROW: Self = Self::mk_data(wy_intern::ARROW);
-    pub const BOOL: Self = Self::mk_data(wy_intern::BOOL);
-    pub const INT: Self = Self::mk_data(wy_intern::INT);
-    pub const NAT: Self = Self::mk_data(wy_intern::NAT);
-    pub const FLOAT: Self = Self::mk_data(wy_intern::FLOAT);
-    pub const DOUBLE: Self = Self::mk_data(wy_intern::DOUBLE);
-    pub const BYTE: Self = Self::mk_data(wy_intern::BYTE);
-    pub const CHAR: Self = Self::mk_data(wy_intern::CHAR);
-    pub const STR: Self = Self::mk_data(wy_intern::STR);
-    pub const IO: Self = Self::mk_data(wy_intern::IO);
-    pub const HOLE: Self = Self::mk_data(wy_intern::WILD);
+    pub const ARROW: Self = Self::mk_data(wy_intern::sym::ARROW);
+    pub const BOOL: Self = Self::mk_data(wy_intern::sym::BOOL);
+    pub const INT: Self = Self::mk_data(wy_intern::sym::INT);
+    pub const NAT: Self = Self::mk_data(wy_intern::sym::NAT);
+    pub const FLOAT: Self = Self::mk_data(wy_intern::sym::FLOAT);
+    pub const DOUBLE: Self = Self::mk_data(wy_intern::sym::DOUBLE);
+    pub const BYTE: Self = Self::mk_data(wy_intern::sym::BYTE);
+    pub const CHAR: Self = Self::mk_data(wy_intern::sym::CHAR);
+    pub const STR: Self = Self::mk_data(wy_intern::sym::STR);
+    pub const IO: Self = Self::mk_data(wy_intern::sym::IO);
+    pub const HOLE: Self = Self::mk_data(wy_intern::sym::WILD);
 }
 
 impl<Id: fmt::Debug, V: fmt::Debug> fmt::Debug for Con<Id, V> {
@@ -2021,9 +2021,9 @@ impl Default for Ty {
 }
 
 impl Ty {
-    pub const ARROW: Symbol = wy_intern::ARROW;
-    pub const LIST: Symbol = wy_intern::BRACK_LR;
-    pub const UNIT: Symbol = wy_intern::PAREN_LR;
+    pub const ARROW: Symbol = wy_intern::sym::ARROW;
+    pub const LIST: Symbol = wy_intern::sym::BRACK_LR;
+    pub const UNIT: Symbol = wy_intern::sym::PAREN_LR;
 
     /// Returns a list containing all type variables in a given type in order
     /// **without** duplicates. Use the `vars` method to get a list containing
@@ -2195,14 +2195,14 @@ impl fmt::Display for Ty {
                     let [u, v] = uv.as_ref();
                     if let Ty::Con(TyCon(s, _)) = u {
                         match s {
-                            &wy_intern::ARROW => {
+                            &wy_intern::sym::ARROW => {
                                 if v.is_fun() {
                                     write!(f, "({v} -> {y})")
                                 } else {
                                     write!(f, "{v} -> {y}")
                                 }
                             }
-                            &wy_intern::COMMA_1 => {
+                            &wy_intern::sym::COMMA_1 => {
                                 write!(f, "({v}, {y})")
                             }
                             s => {
@@ -2357,7 +2357,10 @@ mod test {
             &simplified_2tuple_ty,
             &Ty::App(Box::new([
                 Ty::App(Box::new([
-                    Ty::Con(TyCon(wy_intern::COMMA_1, expected_tup2_tycon_kind.clone())),
+                    Ty::Con(TyCon(
+                        wy_intern::sym::COMMA_1,
+                        expected_tup2_tycon_kind.clone()
+                    )),
                     Ty::Var(TyVar(Tv(0), Kind::Star))
                 ])),
                 Ty::Var(TyVar(Tv(1), Kind::Star))

@@ -174,7 +174,7 @@ impl Lexeme {
             | Self::Infix(s)
             | Self::Label(s)
             | Self::Lit(Literal::Str(s)) => Some(*s),
-            Self::Colon => Some(symbol::COLON),
+            Self::Colon => Some(wy_intern::sym::COLON),
             _ => None,
         }
     }
@@ -183,7 +183,7 @@ impl Lexeme {
     pub fn ident_symbol(&self) -> Option<Symbol> {
         match self {
             Self::Lower(s) | Self::Upper(s) | Self::Infix(s) | Self::Label(s) => Some(*s),
-            Self::Colon => Some(symbol::COLON),
+            Self::Colon => Some(wy_intern::sym::COLON),
             _ => None,
         }
     }
@@ -204,7 +204,7 @@ impl Lexeme {
     }
     pub fn infix_symbol(&self) -> Option<Symbol> {
         match self {
-            Self::Colon => Some(symbol::COLON),
+            Self::Colon => Some(wy_intern::sym::COLON),
             Self::Infix(s) => Some(*s),
             _ => None,
         }
@@ -323,7 +323,7 @@ impl Lexeme {
 
     #[inline]
     pub fn is_minus_sign(&self) -> bool {
-        matches!(self, Lexeme::Infix(s) if *s == symbol::MINUS)
+        matches!(self, Lexeme::Infix(s) if *s == wy_intern::sym::MINUS)
     }
 }
 
@@ -610,7 +610,7 @@ impl PartialEq<Lexeme> for Token {
     fn eq(&self, other: &Lexeme) -> bool {
         match (&self.lexeme, other) {
             (Lexeme::Colon, Lexeme::Infix(s)) | (Lexeme::Infix(s), Lexeme::Colon) => {
-                *s == symbol::COLON
+                *s == wy_intern::sym::COLON
             }
             (me, other) => me == other,
         }

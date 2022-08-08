@@ -46,13 +46,13 @@ impl Symbolic for Ident {
 }
 
 impl Ident {
-    pub const MAIN_MOD: Self = Ident::Upper(wy_intern::MAIN_MOD);
-    pub const MAIN_FN: Self = Ident::Lower(wy_intern::MAIN_FN);
-    pub const COLON: Self = Ident::Infix(wy_intern::COLON);
-    pub const ARROW: Self = Ident::Infix(wy_intern::ARROW);
-    pub const MINUS: Self = Ident::Infix(wy_intern::MINUS);
-    pub const TRUE: Self = Ident::Upper(wy_intern::TRUE);
-    pub const FALSE: Self = Ident::Lower(wy_intern::FALSE);
+    pub const MAIN_MOD: Self = Ident::Upper(wy_intern::sym::MAIN_MOD);
+    pub const MAIN_FN: Self = Ident::Lower(wy_intern::sym::MAIN_FN);
+    pub const COLON: Self = Ident::Infix(wy_intern::sym::COLON);
+    pub const ARROW: Self = Ident::Infix(wy_intern::sym::ARROW);
+    pub const MINUS: Self = Ident::Infix(wy_intern::sym::MINUS);
+    pub const TRUE: Self = Ident::Upper(wy_intern::sym::TRUE);
+    pub const FALSE: Self = Ident::Lower(wy_intern::sym::FALSE);
 
     pub const NAMES: [fn(Symbol) -> Self; 4] = [Self::Upper, Self::Lower, Self::Infix, Self::Label];
 
@@ -118,16 +118,16 @@ impl Ident {
     pub fn mk_tuple_commas(extras: usize) -> Self {
         // tuple constructors with 1-10 commas are pre-interned
         let sym = match extras + 1 {
-            1 => wy_intern::COMMA_1,
-            2 => wy_intern::COMMA_2,
-            3 => wy_intern::COMMA_3,
-            4 => wy_intern::COMMA_4,
-            5 => wy_intern::COMMA_5,
-            6 => wy_intern::COMMA_6,
-            7 => wy_intern::COMMA_7,
-            8 => wy_intern::COMMA_8,
-            9 => wy_intern::COMMA_9,
-            10 => wy_intern::COMMA_10,
+            1 => wy_intern::sym::COMMA_1,
+            2 => wy_intern::sym::COMMA_2,
+            3 => wy_intern::sym::COMMA_3,
+            4 => wy_intern::sym::COMMA_4,
+            5 => wy_intern::sym::COMMA_5,
+            6 => wy_intern::sym::COMMA_6,
+            7 => wy_intern::sym::COMMA_7,
+            8 => wy_intern::sym::COMMA_8,
+            9 => wy_intern::sym::COMMA_9,
+            10 => wy_intern::sym::COMMA_10,
             n => Symbol::from_iter(std::iter::repeat(',').take(n)),
         };
         Self::Infix(sym)
