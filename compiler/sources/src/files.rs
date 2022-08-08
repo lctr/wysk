@@ -1,8 +1,10 @@
-use std::sync::Arc;
+use std::{fmt, path::Path, sync::Arc};
 
+use serde::{Deserialize, Serialize};
+use wy_intern::Symbol;
 use wy_span::{BytePos, Col, Coord, Location, Row, Span};
 
-use crate::paths::{FileName, FilePath};
+use crate::paths::{FileId, FilePath, IoResult};
 
 #[derive(Default, Debug)]
 pub struct SourceMap {
@@ -21,7 +23,31 @@ impl SourceMap {
             .unwrap_or(BytePos::ZERO)
     }
 
+    pub fn add_from_filepath(&mut self, filepath: FilePath) -> IoResult<Arc<File>> {
+        if let Some(file) = self.find_file_with_path(&filepath) {
+            return Ok(file.clone());
+        }
+
+        filepath
+            .read_to_string()
+            .map(|text| self.add_file(FileName::from_filepath(&filepath), text, filepath))
+    }
+
+    pub fn has_file_with_path<P: AsRef<Path>>(&self, path: P) -> bool {
+        self.iter_files()
+            .any(|file| file.src_path().path() == path.as_ref())
+    }
+
+    pub fn find_file_with_path<P: AsRef<Path>>(&self, path: P) -> Option<&Arc<File>> {
+        self.iter_files()
+            .find(|file| file.src_path().path() == path.as_ref())
+    }
+
     pub fn add_file(&mut self, name: FileName, text: String, path: FilePath) -> Arc<File> {
+        if let Some(stored_file) = self.iter_files().find(|file| file.src_path() == &path) {
+            return stored_file.clone();
+        }
+
         let start = self.end_pos() + 1;
         let end = start + BytePos::strlen(text.as_str());
         let mut rows = vec![start];
@@ -49,6 +75,27 @@ impl SourceMap {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct FileName(Symbol);
+
+impl FileName {
+    pub fn from_filepath(fp: &FilePath) -> Self {
+        FileName(Symbol::intern(fp.file_name()))
+    }
+}
+
+impl fmt::Debug for FileName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "FileName({})", &self.0)
+    }
+}
+
+impl fmt::Display for FileName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", &self.0)
+    }
+}
+
 pub struct File {
     pub span: Span,
     name: FileName,
@@ -59,7 +106,11 @@ pub struct File {
 
 impl std::fmt::Debug for File {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "File({})", &self.name)
+        f.debug_struct("File")
+            .field("name", &self.name())
+            .field("path", &self.src_path())
+            .field("rows", &self.rows)
+            .finish_non_exhaustive()
     }
 }
 
@@ -84,6 +135,12 @@ impl std::hash::Hash for File {
     }
 }
 
+impl AsRef<str> for File {
+    fn as_ref(&self) -> &str {
+        self.text.as_str()
+    }
+}
+
 impl File {
     pub fn name(&self) -> &FileName {
         &self.name
@@ -91,6 +148,10 @@ impl File {
 
     pub fn source(&self) -> &str {
         &self.text
+    }
+
+    pub fn id(&self) -> FileId {
+        self.src_path().file_id()
     }
 
     pub fn src_path(&self) -> &FilePath {
