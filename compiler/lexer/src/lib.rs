@@ -505,10 +505,10 @@ impl<'t> Lexer<'t> {
                         });
                         let span = Span(start, end);
                         return Token {
-                            lexeme: Lexeme::Lit(Literal::Fractional {
+                            lexeme: Lexeme::Lit(Literal::Integral {
                                 symbol: wy_intern::intern_once(&self.source[span]),
                                 base: Base::Dec,
-                                has_exponent: has_exp,
+                                prefix: None,
                                 suffix: None,
                             }),
 
@@ -522,7 +522,7 @@ impl<'t> Lexer<'t> {
         let span = Span(start, self.source.get_pos());
         let src = &self.source[span];
         let symbol = wy_intern::intern_once(src);
-        /// num suffixes not currently supported but are still represented
+        // num suffixes not currently supported but are still represented
         let lexeme = if has_dot || has_exp {
             Lexeme::Lit(Literal::Fractional {
                 symbol,
