@@ -548,7 +548,7 @@ impl<'t> Lexer<'t> {
 
     /// Called immediately upon creation for a new file only and
     /// stores the span inside the lexer corresponding to  
-    /// `#!interpreter [optional-arg]` found on the first line of the
+    /// `#!/path/to/compiler` found on the first line of the
     /// text.
     ///
     // Should there be two spans? Moreover, should this be done/stored
@@ -556,12 +556,8 @@ impl<'t> Lexer<'t> {
     fn read_shebang(&mut self) {
         #![allow(unused)]
         if self.get_row().is_one() && self.get_col().is_zero() {
-            if self.source.bump_on('#') {
-                if self.source.bump_on('!') {
-                    // ignore the `#!` part of the shebang when
-                    // storing its span
-                    self.shebang = Some(self.source.eat_while(|c| c != '\n').span())
-                }
+            if self.source.src.starts_with("#!/") {
+                self.shebang = Some(self.source.eat_while(|c| c != '\n').span())
             }
         }
     }
