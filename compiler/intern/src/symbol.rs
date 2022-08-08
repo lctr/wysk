@@ -1,7 +1,3 @@
-use std::collections::HashMap;
-use std::mem;
-use std::sync::{Arc, Mutex};
-
 use super::sym;
 use serde::{Deserialize, Serialize};
 /// Key used to reference stored strings. When a string is interened, a
