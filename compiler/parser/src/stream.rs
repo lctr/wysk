@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use wy_common::Deque;
 use wy_lexer::{
     meta::{Placement, Pragma},
@@ -5,18 +7,18 @@ use wy_lexer::{
     Lexeme, Lexer, Token,
 };
 use wy_name::ident::Ident;
-use wy_sources::paths::Resource;
+
 use wy_span::{BytePos, Coord, Dummy, Span, WithLoc, WithSpan};
 use wy_syntax::fixity::FixityTable;
 
-use crate::error::{ParseError, Parsed, Report, SrcLoc};
+use crate::error::{ParseError, Parsed, Report, SrcLoc, SrcPath};
 
 #[derive(Debug)]
 pub struct Parser<'t> {
     pub(crate) lexer: Lexer<'t>,
     pub(crate) queue: Deque<Token>,
     pub fixities: FixityTable,
-    pub resource: Resource,
+    pub path: SrcPath,
     pub pragmas: Vec<(Pragma, Placement)>,
 }
 
@@ -43,6 +45,133 @@ impl<'t> Report for Parser<'t> {
 
     fn next_token(&mut self) -> Token {
         *self.peek_ahead()
+    }
+}
+
+impl<'t> Parser<'t> {
+    pub fn new(src: &'t str, path: impl AsRef<Path>) -> Self {
+        Self {
+            lexer: Lexer::new(src),
+            path: SrcPath::File(path.as_ref().to_path_buf()),
+            queue: Deque::new(),
+            fixities: FixityTable::new(Ident::Infix),
+            pragmas: Vec::new(),
+        }
+    }
+
+    pub fn from_str(src: &'t str) -> Self {
+        Self {
+            lexer: Lexer::new(src),
+            path: SrcPath::Direct,
+            queue: Deque::new(),
+            fixities: FixityTable::new(Ident::Infix),
+            pragmas: Vec::new(),
+        }
+    }
+
+    /// Advance the underlying stream of tokens, retuning the unwrapped result
+    /// of `Lexer::next`. If `Lexer::next` returns `None`, then the token
+    /// corresponding to the `EOF` lexeme is returned.
+    ///
+    /// Note that this method first checks the internal lexeme queue before
+    /// calling the lexer. If the buffer is non-empty, it simply pops the next
+    /// element from the front of the qeueue.
+    pub fn bump(&mut self) -> Token {
+        if let Some(token) = self.queue.pop_front() {
+            token
+        } else {
+            self.lexer.bump()
+        }
+    }
+
+    pub fn then_bump<T>(t: T) -> impl FnOnce(&mut Parser) -> T {
+        move |this: &mut Parser| {
+            this.bump();
+            t
+        }
+    }
+
+    pub fn srcloc(&mut self) -> SrcLoc {
+        let pathstr = self.path.clone();
+        let coord = self.lexer.get_coord();
+        SrcLoc { pathstr, coord }
+    }
+
+    pub fn eat<T>(&mut self, expected: T) -> Parsed<Token>
+    where
+        T: AsRef<Lexeme>,
+    {
+        let lexeme: &Lexeme = expected.as_ref();
+        match self.peek() {
+            None
+            | Some(Token {
+                lexeme: Lexeme::Eof,
+                ..
+            }) => Err(self.unexpected_eof()),
+
+            t if t.cmp_lex(lexeme) => Ok(self.bump()),
+
+            Some(_) => match *lexeme {
+                delim if delim.is_right_delim() => Err(self.unbalanced(delim)),
+                found => self.expected(LexKind::Specified(found)).err(),
+            },
+        }
+    }
+
+    pub fn text(&self) -> String {
+        let mut buf = String::new();
+        self.lexer.write_to_string(&mut buf);
+        buf
+    }
+
+    pub fn peek_ahead(&mut self) -> &Token {
+        let tok = self.bump();
+        self.queue.push_front(tok);
+        &self.queue[0]
+    }
+
+    pub fn lookahead<const N: usize>(&mut self) -> [Token; N] {
+        let mut array = [Token {
+            lexeme: Lexeme::Eof,
+            span: Span::DUMMY,
+        }; N];
+        for arr in &mut array {
+            let token = self.bump();
+            *arr = token;
+            self.queue.push_back(token);
+        }
+        array
+    }
+
+    /// Consumes an initial lexeme `start` and repeatedly alternates applying
+    /// the given closure `f` and consuming the separator lexeme `mid`,
+    /// terminating upon encountering (and consuming) the ending lexeme `end`.
+    ///
+    /// This method is ideal for parsing collections of delimited nodes, as in
+    /// tuples and arrays.
+    pub fn delimited<F, X>(&mut self, [start, mid, end]: [Lexeme; 3], mut f: F) -> Parsed<Vec<X>>
+    where
+        F: FnMut(&mut Self) -> Parsed<X>,
+    {
+        let mut nodes = vec![];
+        let mut first = true;
+        self.eat(start)?;
+        while !self.is_done() {
+            if self.peek_on(end) {
+                break;
+            }
+            if first {
+                first = false;
+            } else {
+                self.eat(mid)?;
+            }
+            if self.peek_on(end) {
+                break;
+            }
+            nodes.push(f(self)?);
+        }
+        self.eat(end)?;
+        Ok(nodes)
     }
 }
 
@@ -217,126 +346,6 @@ pub trait Streaming {
             xs.push(f(self)?)
         }
         Ok(xs)
-    }
-}
-
-impl<'t> Parser<'t> {
-    pub fn new(src: &'t str, resource: Resource) -> Self {
-        Self {
-            lexer: Lexer::new(src),
-            resource,
-            queue: Deque::new(),
-            fixities: FixityTable::new(Ident::Infix),
-            pragmas: Vec::new(),
-        }
-    }
-
-    pub fn from_str(src: &'t str) -> Self {
-        Self {
-            lexer: Lexer::new(src),
-            resource: Resource::Stdin,
-            queue: Deque::new(),
-            fixities: FixityTable::new(Ident::Infix),
-            pragmas: Vec::new(),
-        }
-    }
-
-    /// Advance the underlying stream of tokens, retuning the unwrapped result
-    /// of `Lexer::next`. If `Lexer::next` returns `None`, then the token
-    /// corresponding to the `EOF` lexeme is returned.
-    ///
-    /// Note that this method first checks the internal lexeme queue before
-    /// calling the lexer. If the buffer is non-empty, it simply pops the next
-    /// element from the front of the qeueue.
-    pub fn bump(&mut self) -> Token {
-        if let Some(token) = self.queue.pop_front() {
-            token
-        } else {
-            self.lexer.bump()
-        }
-    }
-
-    pub fn srcloc(&mut self) -> SrcLoc {
-        let pathstr = self.resource.clone();
-        let coord = self.lexer.get_coord();
-        SrcLoc { pathstr, coord }
-    }
-
-    pub fn eat<T>(&mut self, item: T) -> Parsed<Token>
-    where
-        T: AsRef<Lexeme>,
-    {
-        let item: &Lexeme = item.as_ref();
-        match self.peek() {
-            None
-            | Some(Token {
-                lexeme: Lexeme::Eof,
-                ..
-            }) => Err(self.unexpected_eof()),
-
-            t if t.cmp_lex(item) => Ok(self.bump()),
-
-            Some(_) => match *item {
-                delim if delim.is_right_delim() => Err(self.unbalanced(delim)),
-                found => self.expected(LexKind::Specified(found)).err(),
-            },
-        }
-    }
-
-    pub fn text(&self) -> String {
-        let mut buf = String::new();
-        self.lexer.write_to_string(&mut buf);
-        buf
-    }
-
-    pub fn peek_ahead(&mut self) -> &Token {
-        let tok = self.bump();
-        self.queue.push_front(tok);
-        &self.queue[0]
-    }
-
-    pub fn lookahead<const N: usize>(&mut self) -> [Token; N] {
-        let mut array = [Token {
-            lexeme: Lexeme::Eof,
-            span: Span::DUMMY,
-        }; N];
-        for arr in &mut array {
-            let token = self.bump();
-            *arr = token;
-            self.queue.push_back(token);
-        }
-        array
-    }
-
-    /// Consumes an initial lexeme `start` and repeatedly alternates applying
-    /// the given closure `f` and consuming the separator lexeme `mid`,
-    /// terminating upon encountering (and consuming) the ending lexeme `end`.
-    ///
-    /// This method is ideal for parsing collections of delimited nodes, as in
-    /// tuples and arrays.
-    pub fn delimited<F, X>(&mut self, [start, mid, end]: [Lexeme; 3], mut f: F) -> Parsed<Vec<X>>
-    where
-        F: FnMut(&mut Self) -> Parsed<X>,
-    {
-        let mut nodes = vec![];
-        let mut first = true;
-        self.eat(start)?;
-        while !self.is_done() {
-            if self.peek_on(end) {
-                break;
-            }
-            if first {
-                first = false;
-            } else {
-                self.eat(mid)?;
-            }
-            if self.peek_on(end) {
-                break;
-            }
-            nodes.push(f(self)?);
-        }
-        self.eat(end)?;
-        Ok(nodes)
     }
 }
 
