@@ -5,8 +5,8 @@ mod test {
 
     #[test]
     fn qualify_prelude_ast_ids() {
-        let qualified = wy_parser::parse_standalone_file("../../language/prelude/src/container.wy")
-            .map(|program| {
+        let qualified =
+            wy_parser::parse_standalone("../../language/prelude/src/container.wy").map(|program| {
                 let modname = program.modname().clone();
                 program
                     .map_fst(&mut Func::Fresh(|id| modname.with_suffix(id).as_ident()))
