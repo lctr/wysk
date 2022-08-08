@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
-use wy_common::{poison_error, Mappable};
+use wy_common::poison_error;
+// use wy_common::Mappable;
 
 use crate::{
     chain::Chain,
@@ -63,7 +64,16 @@ impl Unique {
 
     pub fn intern_many_chains<const N: usize>(chains: [Chain<Ident>; N]) -> [Unique; N] {
         match CHAINS.lock() {
-            Ok(mut guard) => chains.fmap(move |chain| guard.push(chain)),
+            Ok(mut guard) => {
+                let mut uns = [Unique(0); N];
+                let mut i = 0;
+                for chain in chains {
+                    uns[i] = guard.push(chain);
+                    i += 1;
+                }
+                // chains.fmap(move |chain| guard.push(chain))
+                uns
+            }
             Err(err) => {
                 poison_error!(
                     #error = err;

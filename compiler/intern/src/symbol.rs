@@ -3,7 +3,7 @@ use std::mem;
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
-use wy_common::Mappable;
+// use wy_common::Mappable;
 
 /// Key used to reference stored strings. When a string is interened, a
 /// `Symbol` is returned, which can then be used to retrieve the original
@@ -425,7 +425,16 @@ pub fn intern_many_with<S: AsRef<str>, I, const N: usize>(
     mut f: impl FnMut(Symbol) -> I,
 ) -> [I; N] {
     match INTERNER.lock() {
-        Ok(mut guard) => strings.fmap(|s| f(guard.intern(s.as_ref()))),
+        Ok(mut guard) => {
+            // strings.fmap(|s| f(guard.intern(s.as_ref())))
+            let mut syms: [I; N] = unsafe { std::mem::zeroed() };
+            let mut i = 0;
+            for it in &mut syms[..] {
+                *it = f(guard.intern(strings[i].as_ref()));
+                i += 1;
+            }
+            syms
+        }
         Err(e) => {
             eprintln!("{}", e);
             panic!(

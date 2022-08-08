@@ -1,6 +1,6 @@
 // remove when no longer on nightly!
 // #![feature(explicit_generic_args_with_impl_trait)]
-#![feature(generic_associated_types)]
+// #![feature(generic_associated_types)]
 
 pub use serde;
 
@@ -11,7 +11,7 @@ pub mod mapstack;
 pub mod newtypes;
 pub mod text;
 
-pub use functor::Mappable;
+// pub use functor::Mappable;
 pub use iter::{Deque, HashMap, HashSet, Hashable, Map, Set, VecDeque};
 
 #[macro_export]

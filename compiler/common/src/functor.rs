@@ -302,142 +302,142 @@ where
 }
 
 // maybe delete later lol
-pub trait Mappable<X> {
-    type M<A>: Mappable<A>;
-    fn fmap<F, Y>(self, f: F) -> Self::M<Y>
-    where
-        F: FnMut(X) -> Y;
-}
+// pub trait Mappable<X> {
+//     type M<A>: Mappable<A>;
+//     fn fmap<F, Y>(self, f: F) -> Self::M<Y>
+//     where
+//         F: FnMut(X) -> Y;
+// }
 
-impl<X> Mappable<X> for Vec<X> {
-    type M<Y> = Vec<Y>;
-    fn fmap<F, Y>(self, f: F) -> Self::M<Y>
-    where
-        F: FnMut(X) -> Y,
-    {
-        self.into_iter().map(f).collect()
-    }
-}
+// impl<X> Mappable<X> for Vec<X> {
+//     type M<Y> = Vec<Y>;
+//     fn fmap<F, Y>(self, f: F) -> Self::M<Y>
+//     where
+//         F: FnMut(X) -> Y,
+//     {
+//         self.into_iter().map(f).collect()
+//     }
+// }
 
-impl<X> Mappable<X> for Deque<X> {
-    type M<Y> = Deque<Y>;
+// impl<X> Mappable<X> for Deque<X> {
+//     type M<Y> = Deque<Y>;
 
-    fn fmap<F, Y>(self, f: F) -> Self::M<Y>
-    where
-        F: FnMut(X) -> Y,
-    {
-        self.into_iter().map(f).collect()
-    }
-}
+//     fn fmap<F, Y>(self, f: F) -> Self::M<Y>
+//     where
+//         F: FnMut(X) -> Y,
+//     {
+//         self.into_iter().map(f).collect()
+//     }
+// }
 
-impl<K: Eq + std::hash::Hash, X> Mappable<X> for Map<K, X> {
-    type M<A> = Map<K, A>;
+// impl<K: Eq + std::hash::Hash, X> Mappable<X> for Map<K, X> {
+//     type M<A> = Map<K, A>;
 
-    fn fmap<F, Y>(self, mut f: F) -> Self::M<Y>
-    where
-        F: FnMut(X) -> Y,
-    {
-        self.into_iter().map(|(k, x)| (k, f(x))).collect()
-    }
-}
+//     fn fmap<F, Y>(self, mut f: F) -> Self::M<Y>
+//     where
+//         F: FnMut(X) -> Y,
+//     {
+//         self.into_iter().map(|(k, x)| (k, f(x))).collect()
+//     }
+// }
 
-impl<'x, X> Mappable<&'x X> for &'x [X] {
-    type M<A> = Vec<A>;
+// impl<'x, X> Mappable<&'x X> for &'x [X] {
+//     type M<A> = Vec<A>;
 
-    fn fmap<F, Y>(self, f: F) -> Self::M<Y>
-    where
-        F: FnMut(&'x X) -> Y,
-    {
-        self.into_iter().map(f).collect()
-    }
-}
+//     fn fmap<F, Y>(self, f: F) -> Self::M<Y>
+//     where
+//         F: FnMut(&'x X) -> Y,
+//     {
+//         self.into_iter().map(f).collect()
+//     }
+// }
 
-impl<X> Mappable<X> for Option<X> {
-    type M<A> = Option<A>;
+// impl<X> Mappable<X> for Option<X> {
+//     type M<A> = Option<A>;
 
-    fn fmap<F, Y>(self, f: F) -> Self::M<Y>
-    where
-        F: FnMut(X) -> Y,
-    {
-        self.map(f)
-    }
-}
+//     fn fmap<F, Y>(self, f: F) -> Self::M<Y>
+//     where
+//         F: FnMut(X) -> Y,
+//     {
+//         self.map(f)
+//     }
+// }
 
-impl<X, E> Mappable<X> for Result<X, E> {
-    type M<A> = Result<A, E>;
+// impl<X, E> Mappable<X> for Result<X, E> {
+//     type M<A> = Result<A, E>;
 
-    fn fmap<F, Y>(self, f: F) -> Self::M<Y>
-    where
-        F: FnMut(X) -> Y,
-    {
-        self.map(f)
-    }
-}
+//     fn fmap<F, Y>(self, f: F) -> Self::M<Y>
+//     where
+//         F: FnMut(X) -> Y,
+//     {
+//         self.map(f)
+//     }
+// }
 
-impl<X, const N: usize> Mappable<X> for [X; N] {
-    type M<A> = [A; N];
+// impl<X, const N: usize> Mappable<X> for [X; N] {
+//     type M<A> = [A; N];
 
-    fn fmap<F, Y>(self, f: F) -> Self::M<Y>
-    where
-        F: FnMut(X) -> Y,
-    {
-        let mut array: [Y; N] = unsafe { std::mem::zeroed() };
-        for (i, y) in self.into_iter().map(f).enumerate() {
-            array[i] = y;
-        }
-        array
-    }
-}
+//     fn fmap<F, Y>(self, f: F) -> Self::M<Y>
+//     where
+//         F: FnMut(X) -> Y,
+//     {
+//         let mut array: [Y; N] = unsafe { std::mem::zeroed() };
+//         for (i, y) in self.into_iter().map(f).enumerate() {
+//             array[i] = y;
+//         }
+//         array
+//     }
+// }
 
-impl<X> Mappable<X> for Box<X> {
-    type M<A> = Box<A>;
+// impl<X> Mappable<X> for Box<X> {
+//     type M<A> = Box<A>;
 
-    fn fmap<F, Y>(self, mut f: F) -> Self::M<Y>
-    where
-        F: FnMut(X) -> Y,
-    {
-        Box::new(f(*self))
-    }
-}
+//     fn fmap<F, Y>(self, mut f: F) -> Self::M<Y>
+//     where
+//         F: FnMut(X) -> Y,
+//     {
+//         Box::new(f(*self))
+//     }
+// }
 
-impl<U, V, X> Mappable<X> for (U, V)
-where
-    U: Mappable<X>,
-    V: Mappable<X>,
-{
-    type M<A> = (U::M<A>, V::M<A>);
+// impl<U, V, X> Mappable<X> for (U, V)
+// where
+//     U: Mappable<X>,
+//     V: Mappable<X>,
+// {
+//     type M<A> = (U::M<A>, V::M<A>);
 
-    fn fmap<F, Y>(self, mut f: F) -> Self::M<Y>
-    where
-        F: FnMut(X) -> Y,
-    {
-        let (u, v) = self;
-        (u.fmap(|x| f(x)), v.fmap(|x| f(x)))
-    }
-}
+//     fn fmap<F, Y>(self, mut f: F) -> Self::M<Y>
+//     where
+//         F: FnMut(X) -> Y,
+//     {
+//         let (u, v) = self;
+//         (u.fmap(|x| f(x)), v.fmap(|x| f(x)))
+//     }
+// }
 
-impl<X> Mappable<X> for () {
-    type M<A> = ();
+// impl<X> Mappable<X> for () {
+//     type M<A> = ();
 
-    fn fmap<F, Y>(self, _f: F) -> Self::M<Y>
-    where
-        F: FnMut(X) -> Y,
-    {
-        ()
-    }
-}
+//     fn fmap<F, Y>(self, _f: F) -> Self::M<Y>
+//     where
+//         F: FnMut(X) -> Y,
+//     {
+//         ()
+//     }
+// }
 
-impl<X> Mappable<X> for (X,) {
-    type M<A> = (A,);
+// impl<X> Mappable<X> for (X,) {
+//     type M<A> = (A,);
 
-    fn fmap<F, Y>(self, mut f: F) -> Self::M<Y>
-    where
-        F: FnMut(X) -> Y,
-    {
-        let (x,) = self;
-        (f(x),)
-    }
-}
+//     fn fmap<F, Y>(self, mut f: F) -> Self::M<Y>
+//     where
+//         F: FnMut(X) -> Y,
+//     {
+//         let (x,) = self;
+//         (f(x),)
+//     }
+// }
 
 #[cfg(test)]
 mod tests {}

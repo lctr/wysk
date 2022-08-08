@@ -1,7 +1,7 @@
 pub use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{self, Hash};
 
-use crate::Mappable;
+// use crate::Mappable;
 
 use indexmap::{IndexMap, IndexSet};
 
@@ -426,16 +426,16 @@ where
     }
 }
 
-impl<T> Mappable<T> for Deque<T> {
-    type M<A> = Deque<A>;
+// impl<T> Mappable<T> for Deque<T> {
+//     type M<A> = Deque<A>;
 
-    fn fmap<F, Y>(self, f: F) -> Self::M<Y>
-    where
-        F: FnMut(T) -> Y,
-    {
-        Deque(self.0.into_iter().map(f).collect())
-    }
-}
+//     fn fmap<F, Y>(self, f: F) -> Self::M<Y>
+//     where
+//         F: FnMut(T) -> Y,
+//     {
+//         Deque(self.0.into_iter().map(f).collect())
+//     }
+// }
 
 impl<T, I> From<I> for Deque<T>
 where
@@ -754,19 +754,19 @@ pub struct Envr<K, V> {
     pub store: HashMap<K, V>,
 }
 
-impl<K, V> Mappable<V> for Envr<K, V>
-where
-    K: Eq + Hash,
-{
-    type M<A> = Envr<K, A>;
+// impl<K, V> Mappable<V> for Envr<K, V>
+// where
+//     K: Eq + Hash,
+// {
+//     type M<A> = Envr<K, A>;
 
-    fn fmap<F, Y>(self, mut f: F) -> Self::M<Y>
-    where
-        F: FnMut(V) -> Y,
-    {
-        self.into_iter().map(|(k, v)| (k, f(v))).collect()
-    }
-}
+//     fn fmap<F, Y>(self, mut f: F) -> Self::M<Y>
+//     where
+//         F: FnMut(V) -> Y,
+//     {
+//         self.into_iter().map(|(k, v)| (k, f(v))).collect()
+//     }
+// }
 
 impl<K, V> Envr<K, V>
 where

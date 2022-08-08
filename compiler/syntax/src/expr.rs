@@ -887,7 +887,7 @@ impl<V> Expression<Ident, V> {
 
 #[cfg(test)]
 mod tests {
-    use wy_common::Mappable;
+    // use wy_common::Mappable;
     use wy_intern::symbol;
 
     use super::*;
@@ -895,9 +895,9 @@ mod tests {
     #[test]
     fn test_flatten_app() {
         let [f, g, h]: [RawExpression; 3] =
-            symbol::intern_many(["f", "g", "h"]).fmap(|sym| Expression::Ident(Ident::Lower(sym)));
-        let [one, three, four]: [RawExpression; 3] =
-            [1, 3, 4].fmap(|n| Expression::Lit(Literal::Int(n)));
+            symbol::intern_many_with(["f", "g", "h"], |sym| Expression::Ident(Ident::Lower(sym)));
+        let lit = |n| Expression::Lit(Literal::Int(n));
+        let [one, three, four]: [RawExpression; 3] = [lit(1), lit(3), lit(4)];
 
         // (((f (g 1)) h) 3) 4)
         let app = Expression::mk_app(

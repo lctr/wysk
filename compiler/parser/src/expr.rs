@@ -107,6 +107,7 @@ impl<'t> ExprParser<'t> {
         }
     }
 
+    #[inline]
     fn literal(&mut self) -> Parsed<RawExpression> {
         self.expect_literal().map(RawExpression::Lit)
     }
@@ -129,14 +130,15 @@ impl<'t> ExprParser<'t> {
 
     fn id_path_tail(&mut self) -> Parsed<Vec<Ident>> {
         self.many_while(
-            |p| p.bump_on(Lexeme::Dot) && p.peek_on(Lexeme::is_ident),
-            |p| match p.peek() {
-                Some(t) if t.is_lower() => p.expect_lower(),
-                Some(t) if t.is_upper() => p.expect_upper(),
-                Some(t) if t.is_infix() => p.expect_infix(),
-                _ => p.expected(LexKind::Identifier).err(),
-            },
+            |p| p.bump_or_peek_on(Lexeme::Dot, Lexeme::is_ident),
+            Self::expect_ident,
         )
+        // |p| match p.peek() {
+        //     Some(t) if t.is_lower() => p.expect_lower(),
+        //     Some(t) if t.is_upper() => p.expect_upper(),
+        //     Some(t) if t.is_infix() => p.expect_infix(),
+        //     _ => p.expected(LexKind::Identifier).err(),
+        // },
     }
 
     fn comma_section(&mut self) -> Parsed<RawExpression> {

@@ -4,7 +4,8 @@ use std::{fmt::Write, hash::Hash};
 use serde::{Deserialize, Serialize};
 use wy_common::functor::{MapFst, MapSnd};
 use wy_common::Set;
-use wy_common::{either::Either, push_if_absent, Map, Mappable};
+use wy_common::{either::Either, push_if_absent, Map};
+// use wy_common::Mappable;
 use wy_intern::{Symbol, Symbolic};
 use wy_name::ident::{Ident, Identifier};
 
@@ -852,9 +853,14 @@ impl<Id, V> Type<Id, V> {
     pub fn pre_simplify(self) -> Self {
         match self {
             a @ Type::Var(_) => a,
-            Type::Con(con, args) => Type::Con(con, args.fmap(|ty| ty.pre_simplify())),
+            Type::Con(con, args) => {
+                Type::Con(con, args.into_iter().map(|ty| ty.pre_simplify()).collect())
+            }
             Type::Fun(t1, t2) => Type::Con(Con::Arrow, vec![t1.pre_simplify(), t2.pre_simplify()]),
-            Type::Tup(ts) => Type::Con(Con::Tuple(ts.len() - 1), ts.fmap(|t| t.pre_simplify())),
+            Type::Tup(ts) => Type::Con(
+                Con::Tuple(ts.len() - 1),
+                ts.into_iter().map(|t| t.pre_simplify()).collect(),
+            ),
             Type::Vec(t) => Type::Con(Con::List, vec![t.pre_simplify()]),
             Type::Rec(_) => todo!(),
         }
@@ -1132,17 +1138,20 @@ impl<Id, V> Type<Id, V> {
             Type::Var(ref tv) => Type::Var(subst[tv]),
             Type::Con(con, args) => Type::Con(
                 con.map_t(|ref t| subst[t]),
-                args.fmap(|ty| ty.normalize(subst)),
+                args.into_iter().map(|ty| ty.normalize(subst)).collect(),
             ),
             Type::Fun(x, y) => {
                 Type::Fun(Box::new(x.normalize(subst)), Box::new(y.normalize(subst)))
             }
-            Type::Tup(ts) => Type::Tup(ts.fmap(|ty| ty.normalize(subst))),
-            Type::Vec(t) => Type::Vec(t.fmap(|ty| ty.normalize(subst))),
+            Type::Tup(ts) => Type::Tup(ts.into_iter().map(|ty| ty.normalize(subst)).collect()),
+            Type::Vec(t) => Type::Vec(Box::new(t.normalize(subst))),
             Type::Rec(rec) => Type::Rec(rec.map(|(ctor, fields)| {
                 (
                     ctor,
-                    fields.fmap(|field| field.map(|(k, v)| (k, v.map(|ty| ty.normalize(subst))))),
+                    fields
+                        .into_iter()
+                        .map(|field| field.map(|(k, v)| (k, v.map(|ty| ty.normalize(subst)))))
+                        .collect(),
                 )
             })),
         }
