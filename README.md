@@ -13,7 +13,7 @@ complete or as goals):
 - static type inference via Hindley-Milner
 - systematic overloading and polymorphism via type classes
 - a flexible module system
-- fearless concurrency afforded by lazy semantics and a run-time system written
+- robust concurrency afforded by lazy semantics and a run-time system written
   purely in Rust
 - leveraging the low-level power of Rust with the high-level semantics of
   Haskell
