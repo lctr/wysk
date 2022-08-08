@@ -6,7 +6,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-serde = { version = "1", features = ["derive"] }
 wy_common = { path = "../common" }
 wy_span = { path = "../span" }
+
 lazy_static = "1.4.0"
+unicode-normalization = "0.1.20"
+serde = { version = "1", features = ["derive"] }

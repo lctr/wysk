@@ -77,6 +77,11 @@ impl Symbol {
         intern_once(s.as_ref())
     }
 
+    pub fn intern_nfc_normalized<S: AsRef<str>>(s: S) -> Symbol {
+        use unicode_normalization::UnicodeNormalization;
+        intern_once(s.as_ref().nfc().collect::<String>())
+    }
+
     pub fn as_str(&self) -> &str {
         let guard = INTERNER.lock().unwrap();
         // Safety: we are extending the lifetime of the string, however since it
