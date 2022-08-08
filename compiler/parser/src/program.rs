@@ -1,14 +1,14 @@
 use wy_lexer::{Keyword, Lexeme};
 use wy_name::{Chain, Ident};
-use wy_sources::paths::Resource;
+
 use wy_syntax::decl::Declaration;
 use wy_syntax::{Import, ImportSpec, Module, Program};
 
 use crate::error::*;
 use crate::stream::*;
 
-pub type RawModule = Module<Ident, Resource, Ident>;
-pub type RawProgram = Program<Ident, Resource, Ident>;
+pub type RawModule<P = SrcPath> = Module<Ident, P, Ident>;
+pub type RawProgram<P = SrcPath> = Program<Ident, P, Ident>;
 
 // TOP-LEVEL
 type ModuleParser<'t> = Parser<'t>;
@@ -28,7 +28,7 @@ impl<'t> ModuleParser<'t> {
         let mut module = Module {
             modname,
             imports,
-            uid: self.resource.clone(),
+            uid: self.path.clone(),
             ..Default::default()
         };
 
@@ -197,8 +197,8 @@ import A.thing.from.Somewhere @ A { foo, bar }
     }
 
     #[test]
-    fn parse_prim_module() {
-        let src = include_str!("../../../language/prim.wy");
+    fn parse_prelude_module() {
+        let src = include_str!("../../../language/prelude/src/lib.wy");
         let result = Parser::from_str(src).parse_program();
         // let dcons = result.as_ref().map(|prog| prog.module.data_ctors());
         match result {
@@ -208,6 +208,6 @@ import A.thing.from.Somewhere @ A { foo, bar }
             Err(err) => {
                 println!("{}", err)
             }
-        }
+        };
     }
 }
