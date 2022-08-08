@@ -15,25 +15,11 @@ patterns:
     captures:
       '1': {name: punctuation.paren.wysk}
       '2': {name: punctuation.paren.wysk}
-  # - match: '(\()(#)\s*(#)(\))'
-  #   name: constant.language.unit.unboxed.wysk
-  #   captures:
-  #     '1': {name: punctuation.paren.wysk}
-  #     '2': {name: keyword.operator.hash.wysk}
-  #     '3': {name: keyword.operator.hash.wysk}
-  #     '4': {name: punctuation.paren.wysk}
   - match: '(\()\s*,[\s,]*(\))'
     name: support.constant.tuple.wysk
     captures:
       '1': {name: punctuation.paren.wysk}
       '2': {name: punctuation.paren.wysk}
-  # - match: '(\()(#)\s*,[\s,]*(#)(\))'
-  #   name: support.constant.tuple.unboxed.wysk
-  #   captures:
-  #     '1': {name: punctuation.paren.wysk}
-  #     '2': {name: keyword.operator.hash.wysk}
-  #     '3': {name: keyword.operator.hash.wysk}
-  #     '4': {name: punctuation.paren.wysk}
   - match: '(\[)\s*(\])'
     name: constant.language.empty-list.wysk
     captures:
@@ -66,7 +52,7 @@ patterns:
            | \s*        # - starts with whitespace, followed by:
              (?: $      #   - the end of the line (i.e. empty line), or
              |~\{[^@]   #   - the start of a block comment, or
-             |~~[\>|\<|\||\:|~| |.]       #   - the start of a single-line comment.
+             |~~[>|<|:~]?       #   - the start of a single-line comment.
                 (?![\p{S}\p{P}&&[^(),;\[\]{}`_"']]).*$) # non-symbol
                         # The double dash may not be followed by other operator characters
                         # (then it would be an operator, not a comment)
@@ -87,7 +73,7 @@ patterns:
         # the equals symbol or the start of a single-line comment, or
           (?:
             (?<![\p{S}\p{P}&&[^(),;\[\]`{}_"']]) # non-symbol
-            (?:=|~~[\>|\<|\||\:|~| |.])
+            (?:=|~~[>|<|:~]?)
             (?![\p{S}\p{P}&&[^(),;\[\]`{}_"']])  # non-symbol
           )
         # the "where" or "with" keywords, or
@@ -115,7 +101,7 @@ patterns:
            | \s*        # - starts with whitespace, followed by:
              (?: $      #   - the end of the line (i.e. empty line), or
              |\{-[^@]   #   - the start of a block comment, or
-             |~~[\>|\<|\||\:|~| ]       #   - the start of a single-line comment.
+             |~~[>|<|:~]?       #   - the start of a single-line comment.
                 (?![\p{S}\p{P}&&[^(),;\[\]{}`_"']]).*$) # non-symbol
                         # The double dash may not be followed by other operator characters
                         # (then it would be an operator, not a comment)
@@ -162,7 +148,7 @@ patterns:
           | \s*        # - starts with whitespace, followed by:
             (?: $      #   - the end of the line (i.e. empty line), or
             |~\{[^@]   #   - the start of a block comment, or
-            |~~[\>|\<|\||\:|~| |.]       #   - the start of a single-line comment.
+            |~~[>|<|:~]?       #   - the start of a single-line comment.
                (?![\p{S}\p{P}&&[^(),;\[\]{}`_"']]).*$) # non-symbol
                        # The double dash may not be followed by other operator characters
                        # (then it would be an operator, not a comment)
@@ -181,7 +167,7 @@ patterns:
           | \s*        # - starts with whitespace, followed by:
             (?: $      #   - the end of the line (i.e. empty line), or
             |~\{[^@]   #   - the start of a block comment, or
-            |~~[\>|\<|\||\:|~| ]       #   - the start of a single-line comment.
+            |~~[>|<|:~]?       #   - the start of a single-line comment.
                (?![\p{S}\p{P}&&[^(),;\[\]{}`_"']]).*$) # non-symbol
                        # The double dash may not be followed by other operator characters
                        # (then it would be an operator, not a comment)
@@ -198,7 +184,7 @@ patterns:
         # the equals symbol or the start of a single-line comment, or
           (?:
             (?<![\p{S}\p{P}&&[^(),;\[\]`{}_"']]) # non-symbol
-            (?:=|~~[\>|\<|\||\:|~| ])
+            (?:=|~~[>|<|:~]?)
             (?![\p{S}\p{P}&&[^(),;\[\]`{}_"']])  # non-symbol
           )
         # the "where" or "with" keywords, or
@@ -222,11 +208,9 @@ patterns:
              \1\s+\S    # - more indented, or
            | \s*        # - starts with whitespace, followed by:
              (?: $      #   - the end of the line (i.e. empty line), or
-             |~\{[^@]   #   - the start of a block comment, or
-             |~~[\>|\<|\||\:|~| |.]       #   - the start of a single-line comment.
+             |~\{   #   - the start of a block comment, or
+             |~~[>|<|:~]?       #   - the start of a single-line comment.
                 (?![\p{S}\p{P}&&[^(),;\[\]{}`_"']]).*$) # non-symbol
-                        # The double dash may not be followed by other operator characters
-                        # (then it would be an operator, not a comment)
            )
     patterns:
       - include: '#comment_like'
@@ -246,7 +230,7 @@ patterns:
         # the equals symbol or the start of a single-line comment, or
           (?:
             (?<![\p{S}\p{P}&&[^(),;\[\]`{}_"']]) # non-symbol
-            (?:=|~~[\>|\<|\||\:|~| ])
+            (?:=|~~[>|<|:~]?)
             (?![\p{S}\p{P}&&[^(),;\[\]`{}_"']])  # non-symbol
           )
         # the "where" keyword, or
@@ -271,7 +255,7 @@ patterns:
           | \s*        # - starts with whitespace, followed by:
             (?: $      #   - the end of the line (i.e. empty line), or
             |~\{[^@]   #   - the start of a block comment, or
-            |~~[\>|\<|\||\:|~| ]       #   - the start of a single-line comment.
+            |~~[>|<|:~]?       #   - the start of a single-line comment.
                (?![\p{S}\p{P}&&[^(),;\[\]{}`_"']]).*$) # non-symbol
                        # The double dash may not be followed by other operator characters
                        # (then it would be an operator, not a comment)
@@ -290,7 +274,7 @@ patterns:
         # the equals symbol, the start of a single-line comment, or a type signature
           (?:
             (?<![\p{S}\p{P}&&[^(),;\[\]`{}_"']]) # non-symbol
-            (?:=|~~[\>|\<|\||\:|~| ]|::|∷)
+            (?:=|~~[>|<|:~]?|::|∷)
             (?![\p{S}\p{P}&&[^(),;\[\]`{}_"']])  # non-symbol
           )
         # the start of a block comment.
@@ -310,11 +294,9 @@ patterns:
             \1\s+\S    # - more indented, or
           | \s*        # - starts with whitespace, followed by:
             (?: $      #   - the end of the line (i.e. empty line), or
-            |~\{[^@]   #   - the start of a block comment, or
-            |~~[\>|\<|\||\:|~| ]       #   - the start of a single-line comment.
+            |~\{   #   - the start of a block comment, or
+            |~~[>|<|:~]?       #   - the start of a single-line comment.
                (?![\p{S}\p{P}&&[^(),;\[\]{}`_"']]).*$) # non-symbol
-                       # The double dash may not be followed by other operator characters
-                       # (then it would be an operator, not a comment)
           )
     patterns:
       - include: '#type_signature'
@@ -331,8 +313,8 @@ patterns:
             \1\s+\S    # - more indented, or
           | \s*        # - starts with whitespace, followed by:
             (?: $      #   - the end of the line (i.e. empty line), or
-            |~\{[^@]   #   - the start of a block comment, or
-            |~~[\>|\<|\||\:|~| ]       #   - the start of a single-line comment.
+            |~\{   #   - the start of a block comment, or
+            |~~[>|<|:~]?       #   - the start of a single-line comment.
                (?![\p{S}\p{P}&&[^(),;\[\]{}`_"']]).*$) # non-symbol
                        # The double dash may not be followed by other operator characters
                        # (then it would be an operator, not a comment)
@@ -356,8 +338,8 @@ patterns:
             \1\s+\S    # - more indented, or
           | \s*        # - starts with whitespace, followed by:
             (?: $      #   - the end of the line (i.e. empty line), or
-            |~\{[^@]   #   - the start of a block comment, or
-            |~~[\>|\<|\||\:|~| ]       #   - the start of a single-line comment.
+            |~\{   #   - the start of a block comment, or
+            |~~[>|<|:~]       #   - the start of a single-line comment.
                (?![\p{S}\p{P}&&[^(),;\[\]{}`_"']]).*$) # non-symbol
                        # The double dash may not be followed by other operator characters
                        # (then it would be an operator, not a comment)
@@ -441,31 +423,31 @@ repository:
   comments:
     patterns:
       # Doc comments: `~~>` OR `~~|` OR `~~<` OR `~~:`
-      - begin: '^(\s*)(~~[>|\||\:|\<|~| ])'
+      - begin: '^(\s*)(~~>)'
         beginCaptures:
           '2': {name: punctuation.whitespace.comment.leading.wysk}
-        end: '(?=^(?!\1~~[\>|\<|\||\:|~| ](?![\p{S}\p{P}&&[^(),;\[\]`{}_"'']])))'
+        end: '(?=^(?!\1~~[|:<](?![\p{S}\p{P}&&[^(),;\[\]`{}_"'']])))'
         name: comment.block.documentation.wysk
       # Inline annotation (not necessarily at the start of a line)
-      - begin: '(^[ \t]+)?(~~[\:\*])'
+      - begin: '(^[ \t]+)?(~~:?)'
         beginCaptures:
           '1': {name: punctuation.whitespace.comment.leading.wysk}
         end: \n
         name: comment.line.documentation.wysk
       # Doc block using ~{ }~ comments
       - applyEndPatternLast: 1
-        begin: '~\{[\|\:\>\^]'
+        begin: '~\{'
         captures:
           '0': {name: punctuation.definition.comment.wysk}
-        end: '-\}'
+        end: '\}~'
         name: comment.block.documentation.wysk
         patterns:
           - include: '#block_comment'
       - begin: >-
-          (^[ \t]+)?(?=~~[\>|\<|\||\:|~| |.](?![\p{S}\p{P}&&[^(),;\[\]`{}_"']]))
+          (^[ \t]*)?(?=~~\|[ \t]+(?![\p{S}\p{P}&&[^(),;\[\]`{}_"']]))
         beginCaptures:
           '1': {name: punctuation.whitespace.comment.leading.wysk}
-        comment: 'Operators may begin with ''~~'' as long as they are not entirely composed of ''~'' characters. This means comments can''t be immediately followed by an allowable operator character.'
+        comment: 'Operators may begin with ''~~'' as long as they are not ''~~|'', ''~~|'', ''~~:'', or ''~~<'' nor entirely composed of ''~'' characters.'
         end: '(?!\G)'
         patterns:
           - begin: '~~'
@@ -473,6 +455,11 @@ repository:
               '0': {name: punctuation.definition.comment.wysk}
             end: \n
             name: comment.line.double-dash.wysk
+      - begin: '~~\|'
+        beginCaptures:
+          '0': {name: punctuation.definition.comment.wysk}
+        end: \n
+        name: comment.line.double-dash.wysk
       - {include: '#block_comment'}
   comment_like:
     patterns:
@@ -533,7 +520,7 @@ repository:
               | \s*        # - starts with whitespace, followed by:
                 (?: $      #   - the end of the line (i.e. empty line), or
                 |~\{[^@]   #   - the start of a block comment, or
-                |~~[\>|\<|\||\:|~| ]       #   - the start of a single-line comment.
+                |~~+[>|:<^ ]       #   - the start of a single-line comment.
                    (?![\p{S}\p{P}&&[^(),;\[\]{}`_"']]).*$) # non-symbol
                            # The double dash may not be followed by other operator characters
                            # (then it would be an operator, not a comment)
@@ -581,7 +568,7 @@ repository:
           instead, it should be matched as a comment.
         match: >-
           (?x)
-            (\()\s*(?!(?:~~[\>|\<|\||\:|~| ]|\.\.)\))(\#+|[\p{S}\p{P}&&[^(),;\[\]`{}_"']]+(?<!\#))\s*(\))
+            (\()\s*(?!(?:~~+[>|:<^]|\.\.)\))(\#+|[\p{S}\p{P}&&[^(),;\[\]`{}_"']]+(?<!\#))\s*(\))
         captures:
           '1': {name: punctuation.paren.wysk}
           '2': {name: entity.name.function.infix.wysk}
@@ -853,7 +840,7 @@ repository:
               | \s*        # - starts with whitespace, followed by:
                 (?: $      #   - the end of the line (i.e. empty line), or
                 |\{-[^@]   #   - the start of a block comment, or
-                |~~[\>|\<|\||\:|~| ]       #   - the start of a single-line comment.
+                |~~[>|:<^]       #   - the start of a single-line comment.
                    (?![\p{S}\p{P}&&[^(),;\[\]{}`_"']]).*$) # non-symbol
                            # The double dash may not be followed by other operator characters
                            # (then it would be an operator, not a comment)
@@ -872,7 +859,7 @@ repository:
           (?:
             [\p{Ll}_][\p{Ll}_\p{Lu}\p{Lt}\p{Nd}']*\#*
           | \(\s*
-              (?!~~[\>|\<|\||\:|~| ]\))
+              (?!~~[>|:<^]\))
               [\p{S}\p{P}&&[^(),:;\[\]`{}_"']]
               [\p{S}\p{P}&&[^(),;\[\]`{}_"']]*
             \s*\)
@@ -910,7 +897,7 @@ repository:
           | \s*        # - starts with whitespace, followed by:
             (?: $      #   - the end of the line (i.e. empty line), or
             |~\{[^@]   #   - the start of a block comment, or
-            |~~[\>|\<|\||\:|~| ]       #   - the start of a single-line comment.
+            |~~[>|:<^]       #   - the start of a single-line comment.
                (?![\p{S}\p{P}&&[^(),;\[\]{}`_"']]).*$) # non-symbol
                        # The double dash may not be followed by other operator characters
                        # (then it would be an operator, not a comment)
@@ -1028,7 +1015,7 @@ repository:
               | \s*        # - starts with whitespace, followed by:
                 (?: $      #   - the end of the line (i.e. empty line), or
                 |~\{[^@]   #   - the start of a block comment, or
-                |~~[\>|\<|\||\:|~| ]       #   - the start of a single-line comment.
+                |~~[>|:<^]       #   - the start of a single-line comment.
                    (?![\p{S}\p{P}&&[^(),;\[\]{}`_"']]).*$) # non-symbol
                            # The double dash may not be followed by other operator characters
                            # (then it would be an operator, not a comment)
@@ -1218,7 +1205,7 @@ repository:
                 | \s*        # - starts with whitespace, followed by:
                   (?: $      #   - the end of the line (i.e. empty line), or
                   |~\{[^@]   #   - the start of a block comment, or
-                  |~~[\>|\<|\||\:|~| ]   #  - the start of a single-line comment.
+                  |~~[>|:<^]   #  - the start of a single-line comment.
                      (?![\p{S}\p{P}&&[^(),;\[\]{}`_"']]).*$) # non-symbol
                              # The double dash may not be followed by other operator characters
                              # (then it would be an operator, not a comment)
@@ -1531,7 +1518,7 @@ repository:
       - include: '#float_literals'
       - include: '#integer_literals'
   ffi:
-    begin: '^(\s*)(extern)\s+(import|export)\s+'
+    begin: '^(\s*)(extern)\s+(import|extern)\s+'
     beginCaptures:
       '2': {name: keyword.other.extern.wysk}
       '3': {name: "keyword.other.$3.wysk"}
@@ -1544,7 +1531,7 @@ repository:
           | \s*        # - starts with whitespace, followed by:
             (?: $      #   - the end of the line (i.e. empty line), or
             |~\{[^@]   #   - the start of a block comment, or
-            |~~[\>|\<|\||\:|~| ]       #   - the start of a single-line comment.
+            |~~[>|:<^]       #   - the start of a single-line comment.
                (?![\p{S}\p{P}&&[^(),;\[\]{}`_"']]).*$) # non-symbol
                        # The double dash may not be followed by other operator characters
                        # (then it would be an operator, not a comment)
@@ -1575,7 +1562,7 @@ repository:
                 \s*
                 (?:
                   (?:\b(?<!'')([\p{Ll}_][\p{Ll}_\p{Lu}\p{Lt}\p{Nd}']*)\b(?!'))
-                 |(?:\(\s*(?!~~[\>|\<|\||\:|~| ]\))([\p{S}\p{P}&&[^(),;\[\]`{}_"']]+)\s*\))
+                 |(?:\(\s*(?!~~[>|:<^]\))([\p{S}\p{P}&&[^(),;\[\]`{}_"']]+)\s*\))
                 )
             captures:
               '1': {name: "keyword.other.safety.$1.wysk"}
@@ -1609,7 +1596,7 @@ repository:
           - match: |
               (?x)
                  (?:\b(?<!'')([\p{Ll}_][\p{Ll}_\p{Lu}\p{Lt}\p{Nd}']*)\b(?!'))
-                |(?:(\()\s*(?!~~[\>|\<|\||\:|~| ]\))([\p{S}\p{P}&&[^(),;\[\]`{}_"']]+)\s*(\)))
+                |(?:(\()\s*(?!~~[>|:<^]\))([\p{S}\p{P}&&[^(),;\[\]`{}_"']]+)\s*(\)))
             captures:
               '1': {name: entity.name.function.wysk}
               '2': {name: punctuation.paren.wysk}

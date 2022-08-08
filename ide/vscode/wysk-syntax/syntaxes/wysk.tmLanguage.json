@@ -95,7 +95,7 @@
           "name": "keyword.other.class.wysk"
         }
       },
-      "end": "(?x) # Detect end of class declaration:\n         # 'where' keyword\n   (?=(?<!')\\b\\{\\b(?!'))\n         # Decreasing indentation\n   |(?=\\}|;)      # Explicit indentation\n   |^(?!          # Implicit indentation: end match on newline *unless* the new line is either:\n       \\1\\s+\\S    # - more indented, or\n     | \\s*        # - starts with whitespace, followed by:\n       (?: $      #   - the end of the line (i.e. empty line), or\n       |~\\{[^@]   #   - the start of a block comment, or\n       |~~[\\>|\\<|\\||\\:|~| |.]       #   - the start of a single-line comment.\n          (?![\\p{S}\\p{P}&&[^(),;\\[\\]{}`_\"']]).*$) # non-symbol\n                  # The double dash may not be followed by other operator characters\n                  # (then it would be an operator, not a comment)\n     )",
+      "end": "(?x) # Detect end of class declaration:\n         # 'where' keyword\n   (?=(?<!')\\b\\{\\b(?!'))\n         # Decreasing indentation\n   |(?=\\}|;)      # Explicit indentation\n   |^(?!          # Implicit indentation: end match on newline *unless* the new line is either:\n       \\1\\s+\\S    # - more indented, or\n     | \\s*        # - starts with whitespace, followed by:\n       (?: $      #   - the end of the line (i.e. empty line), or\n       |~\\{[^@]   #   - the start of a block comment, or\n       |~~[>|<|:~]?       #   - the start of a single-line comment.\n          (?![\\p{S}\\p{P}&&[^(),;\\[\\]{}`_\"']]).*$) # non-symbol\n                  # The double dash may not be followed by other operator characters\n                  # (then it would be an operator, not a comment)\n     )",
       "name": "meta.declaration.class.wysk",
       "patterns": [
         {
@@ -110,7 +110,7 @@
       ]
     },
     {
-      "begin": "(?x)\n  ^(\\s*)(data|newtype)(?:\\s+(impl))?\\s+\n  # Keep consuming characters until:\n  ((?:(?!\n  # the equals symbol or the start of a single-line comment, or\n    (?:\n      (?<![\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']]) # non-symbol\n      (?:=|~~[\\>|\\<|\\||\\:|~| |.])\n      (?![\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']])  # non-symbol\n    )\n  # the \"where\" or \"with\" keywords, or\n  | (?:\\b(?<!')(?:with)\\b(?!'))\n  # the start of a block comment.\n  | {-\n  #\n  ).)*)\n  (?=\\b(?<!'')with\\b(?!''))",
+      "begin": "(?x)\n  ^(\\s*)(data|newtype)(?:\\s+(impl))?\\s+\n  # Keep consuming characters until:\n  ((?:(?!\n  # the equals symbol or the start of a single-line comment, or\n    (?:\n      (?<![\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']]) # non-symbol\n      (?:=|~~[>|<|:~]?)\n      (?![\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']])  # non-symbol\n    )\n  # the \"where\" or \"with\" keywords, or\n  | (?:\\b(?<!')(?:with)\\b(?!'))\n  # the start of a block comment.\n  | {-\n  #\n  ).)*)\n  (?=\\b(?<!'')with\\b(?!''))",
       "beginCaptures": {
         "2": {
           "name": "keyword.other.$2.wysk"
@@ -127,7 +127,7 @@
         }
       },
       "name": "meta.declaration.$2.generalized.wysk",
-      "end": "(?x) # Detect end of data declaration:\n         # with clause\n   (?=(?<!')\\bwith\\b(?!'))\n         # Decreasing indentation\n   |(?=\\}|;)      # Explicit indentation\n   |^(?!          # Implicit indentation: end match on newline *unless* the new line is either:\n       \\1\\s+\\S    # - more indented, or\n     | \\s*        # - starts with whitespace, followed by:\n       (?: $      #   - the end of the line (i.e. empty line), or\n       |\\{-[^@]   #   - the start of a block comment, or\n       |~~[\\>|\\<|\\||\\:|~| ]       #   - the start of a single-line comment.\n          (?![\\p{S}\\p{P}&&[^(),;\\[\\]{}`_\"']]).*$) # non-symbol\n                  # The double dash may not be followed by other operator characters\n                  # (then it would be an operator, not a comment)\n     )\n",
+      "end": "(?x) # Detect end of data declaration:\n         # with clause\n   (?=(?<!')\\bwith\\b(?!'))\n         # Decreasing indentation\n   |(?=\\}|;)      # Explicit indentation\n   |^(?!          # Implicit indentation: end match on newline *unless* the new line is either:\n       \\1\\s+\\S    # - more indented, or\n     | \\s*        # - starts with whitespace, followed by:\n       (?: $      #   - the end of the line (i.e. empty line), or\n       |\\{-[^@]   #   - the start of a block comment, or\n       |~~[>|<|:~]?       #   - the start of a single-line comment.\n          (?![\\p{S}\\p{P}&&[^(),;\\[\\]{}`_\"']]).*$) # non-symbol\n                  # The double dash may not be followed by other operator characters\n                  # (then it would be an operator, not a comment)\n     )\n",
       "patterns": [
         {
           "include": "#comment_like"
@@ -197,7 +197,7 @@
           "name": "keyword.operator.double-colon.wysk"
         }
       },
-      "end": "(?x) # Detect end of pattern type definition by decreasing indentation:\n  (?=\\}|;)       # Explicit indentation\n  |^(?!          # Implicit indentation: end match on newline *unless* the new line is either:\n      \\1\\s+\\S    # - more indented, or\n    | \\s*        # - starts with whitespace, followed by:\n      (?: $      #   - the end of the line (i.e. empty line), or\n      |~\\{[^@]   #   - the start of a block comment, or\n      |~~[\\>|\\<|\\||\\:|~| |.]       #   - the start of a single-line comment.\n         (?![\\p{S}\\p{P}&&[^(),;\\[\\]{}`_\"']]).*$) # non-symbol\n                 # The double dash may not be followed by other operator characters\n                 # (then it would be an operator, not a comment)\n    )\n",
+      "end": "(?x) # Detect end of pattern type definition by decreasing indentation:\n  (?=\\}|;)       # Explicit indentation\n  |^(?!          # Implicit indentation: end match on newline *unless* the new line is either:\n      \\1\\s+\\S    # - more indented, or\n    | \\s*        # - starts with whitespace, followed by:\n      (?: $      #   - the end of the line (i.e. empty line), or\n      |~\\{[^@]   #   - the start of a block comment, or\n      |~~[>|<|:~]?       #   - the start of a single-line comment.\n         (?![\\p{S}\\p{P}&&[^(),;\\[\\]{}`_\"']]).*$) # non-symbol\n                 # The double dash may not be followed by other operator characters\n                 # (then it would be an operator, not a comment)\n    )\n",
       "patterns": [
         {
           "include": "#type_signature"
@@ -212,7 +212,7 @@
           "name": "keyword.other.pattern.wysk"
         }
       },
-      "end": "(?x) # Detect end of pattern type definition by decreasing indentation:\n  (?=\\}|;)       # Explicit indentation\n  |^(?!          # Implicit indentation: end match on newline *unless* the new line is either:\n      \\1\\s+\\S    # - more indented, or\n    | \\s*        # - starts with whitespace, followed by:\n      (?: $      #   - the end of the line (i.e. empty line), or\n      |~\\{[^@]   #   - the start of a block comment, or\n      |~~[\\>|\\<|\\||\\:|~| ]       #   - the start of a single-line comment.\n         (?![\\p{S}\\p{P}&&[^(),;\\[\\]{}`_\"']]).*$) # non-symbol\n                 # The double dash may not be followed by other operator characters\n                 # (then it would be an operator, not a comment)\n    )\n",
+      "end": "(?x) # Detect end of pattern type definition by decreasing indentation:\n  (?=\\}|;)       # Explicit indentation\n  |^(?!          # Implicit indentation: end match on newline *unless* the new line is either:\n      \\1\\s+\\S    # - more indented, or\n    | \\s*        # - starts with whitespace, followed by:\n      (?: $      #   - the end of the line (i.e. empty line), or\n      |~\\{[^@]   #   - the start of a block comment, or\n      |~~[>|<|:~]?       #   - the start of a single-line comment.\n         (?![\\p{S}\\p{P}&&[^(),;\\[\\]{}`_\"']]).*$) # non-symbol\n                 # The double dash may not be followed by other operator characters\n                 # (then it would be an operator, not a comment)\n    )\n",
       "patterns": [
         {
           "include": "$self"
@@ -220,7 +220,7 @@
       ]
     },
     {
-      "begin": "(?x)\n  # Data declaration\n  ^(\\s*)(data|newtype)(?:\\s+(family|impl))?\\s+\n  # Keep consuming characters until:\n  (((?!\n  # the equals symbol or the start of a single-line comment, or\n    (?:\n      (?<![\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']]) # non-symbol\n      (?:=|~~[\\>|\\<|\\||\\:|~| ])\n      (?![\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']])  # non-symbol\n    )\n  # the \"where\" or \"with\" keywords, or\n  | (?:\\b(?<!')(?:with)\\b(?!'))\n  # the start of a block comment.\n  | ~{\n  #\n  ).)*)",
+      "begin": "(?x)\n  # Data declaration\n  ^(\\s*)(data|newtype)(?:\\s+(family|impl))?\\s+\n  # Keep consuming characters until:\n  (((?!\n  # the equals symbol or the start of a single-line comment, or\n    (?:\n      (?<![\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']]) # non-symbol\n      (?:=|~~[>|<|:~]?)\n      (?![\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']])  # non-symbol\n    )\n  # the \"where\" or \"with\" keywords, or\n  | (?:\\b(?<!')(?:with)\\b(?!'))\n  # the start of a block comment.\n  | ~{\n  #\n  ).)*)",
       "beginCaptures": {
         "2": {
           "name": "keyword.other.$2.wysk"
@@ -237,7 +237,7 @@
         }
       },
       "name": "meta.declaration.$2.algebraic.wysk",
-      "end": "(?x) # Detect end of data declaration:\n     # Decreasing indentation\n   (?=\\}|;)      # Explicit indentation\n   |^(?!          # Implicit indentation: end match on newline *unless* the new line is either:\n       \\1\\s+\\S    # - more indented, or\n     | \\s*        # - starts with whitespace, followed by:\n       (?: $      #   - the end of the line (i.e. empty line), or\n       |~\\{[^@]   #   - the start of a block comment, or\n       |~~[\\>|\\<|\\||\\:|~| |.]       #   - the start of a single-line comment.\n          (?![\\p{S}\\p{P}&&[^(),;\\[\\]{}`_\"']]).*$) # non-symbol\n                  # The double dash may not be followed by other operator characters\n                  # (then it would be an operator, not a comment)\n     )",
+      "end": "(?x) # Detect end of data declaration:\n     # Decreasing indentation\n   (?=\\}|;)      # Explicit indentation\n   |^(?!          # Implicit indentation: end match on newline *unless* the new line is either:\n       \\1\\s+\\S    # - more indented, or\n     | \\s*        # - starts with whitespace, followed by:\n       (?: $      #   - the end of the line (i.e. empty line), or\n       |~\\{   #   - the start of a block comment, or\n       |~~[>|<|:~]?       #   - the start of a single-line comment.\n          (?![\\p{S}\\p{P}&&[^(),;\\[\\]{}`_\"']]).*$) # non-symbol\n     )",
       "patterns": [
         {
           "include": "#comment_like"
@@ -264,7 +264,7 @@
     },
     {
       "name": "meta.declaration.type.family.wysk",
-      "begin": "(?x)\n  # Type family\n  ^(\\s*)(type)\\s+(family)\\b(?!')\n  # Keep consuming characters until:\n  (((?!\n  # the equals symbol or the start of a single-line comment, or\n    (?:\n      (?<![\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']]) # non-symbol\n      (?:=|~~[\\>|\\<|\\||\\:|~| ])\n      (?![\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']])  # non-symbol\n    )\n  # the \"where\" keyword, or\n  | \\b(?<!')where\\b(?!')\n  # the start of a block comment.\n  | ~{\n  #\n  ).)*)",
+      "begin": "(?x)\n  # Type family\n  ^(\\s*)(type)\\s+(family)\\b(?!')\n  # Keep consuming characters until:\n  (((?!\n  # the equals symbol or the start of a single-line comment, or\n    (?:\n      (?<![\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']]) # non-symbol\n      (?:=|~~[>|<|:~]?)\n      (?![\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']])  # non-symbol\n    )\n  # the \"where\" keyword, or\n  | \\b(?<!')where\\b(?!')\n  # the start of a block comment.\n  | ~{\n  #\n  ).)*)",
       "beginCaptures": {
         "2": {
           "name": "keyword.other.type.wysk"
@@ -286,7 +286,7 @@
           ]
         }
       },
-      "end": "(?x) # Detect end of type family by decreasing indentation:\n  (?=\\}|;)       # Explicit indentation\n  |^(?!          # Implicit indentation: end match on newline *unless* the new line is either:\n      \\1\\s+\\S    # - more indented, or\n    | \\s*        # - starts with whitespace, followed by:\n      (?: $      #   - the end of the line (i.e. empty line), or\n      |~\\{[^@]   #   - the start of a block comment, or\n      |~~[\\>|\\<|\\||\\:|~| ]       #   - the start of a single-line comment.\n         (?![\\p{S}\\p{P}&&[^(),;\\[\\]{}`_\"']]).*$) # non-symbol\n                 # The double dash may not be followed by other operator characters\n                 # (then it would be an operator, not a comment)\n    )\n",
+      "end": "(?x) # Detect end of type family by decreasing indentation:\n  (?=\\}|;)       # Explicit indentation\n  |^(?!          # Implicit indentation: end match on newline *unless* the new line is either:\n      \\1\\s+\\S    # - more indented, or\n    | \\s*        # - starts with whitespace, followed by:\n      (?: $      #   - the end of the line (i.e. empty line), or\n      |~\\{[^@]   #   - the start of a block comment, or\n      |~~[>|<|:~]?       #   - the start of a single-line comment.\n         (?![\\p{S}\\p{P}&&[^(),;\\[\\]{}`_\"']]).*$) # non-symbol\n                 # The double dash may not be followed by other operator characters\n                 # (then it would be an operator, not a comment)\n    )\n",
       "patterns": [
         {
           "include": "#comment_like"
@@ -301,7 +301,7 @@
     },
     {
       "name": "meta.declaration.type.wysk",
-      "begin": "(?x)\n  # Type declaration\n  ^(\\s*)(type)(?:\\s+(impl))?\\s+\n  # Keep consuming characters until:\n  (((?!\n  # the equals symbol, the start of a single-line comment, or a type signature\n    (?:\n      (?<![\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']]) # non-symbol\n      (?:=|~~[\\>|\\<|\\||\\:|~| ]|::|∷)\n      (?![\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']])  # non-symbol\n    )\n  # the start of a block comment.\n  | ~{\n  #\n  ).)*)",
+      "begin": "(?x)\n  # Type declaration\n  ^(\\s*)(type)(?:\\s+(impl))?\\s+\n  # Keep consuming characters until:\n  (((?!\n  # the equals symbol, the start of a single-line comment, or a type signature\n    (?:\n      (?<![\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']]) # non-symbol\n      (?:=|~~[>|<|:~]?|::|∷)\n      (?![\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']])  # non-symbol\n    )\n  # the start of a block comment.\n  | ~{\n  #\n  ).)*)",
       "beginCaptures": {
         "2": {
           "name": "keyword.other.type.wysk"
@@ -317,7 +317,7 @@
           ]
         }
       },
-      "end": "(?x) # Detect end of type definition by decreasing indentation:\n  (?=\\}|;)       # Explicit indentation\n  |^(?!          # Implicit indentation: end match on newline *unless* the new line is either:\n      \\1\\s+\\S    # - more indented, or\n    | \\s*        # - starts with whitespace, followed by:\n      (?: $      #   - the end of the line (i.e. empty line), or\n      |~\\{[^@]   #   - the start of a block comment, or\n      |~~[\\>|\\<|\\||\\:|~| ]       #   - the start of a single-line comment.\n         (?![\\p{S}\\p{P}&&[^(),;\\[\\]{}`_\"']]).*$) # non-symbol\n                 # The double dash may not be followed by other operator characters\n                 # (then it would be an operator, not a comment)\n    )\n",
+      "end": "(?x) # Detect end of type definition by decreasing indentation:\n  (?=\\}|;)       # Explicit indentation\n  |^(?!          # Implicit indentation: end match on newline *unless* the new line is either:\n      \\1\\s+\\S    # - more indented, or\n    | \\s*        # - starts with whitespace, followed by:\n      (?: $      #   - the end of the line (i.e. empty line), or\n      |~\\{   #   - the start of a block comment, or\n      |~~[>|<|:~]?       #   - the start of a single-line comment.\n         (?![\\p{S}\\p{P}&&[^(),;\\[\\]{}`_\"']]).*$) # non-symbol\n    )\n",
       "patterns": [
         {
           "include": "#type_signature"
@@ -331,7 +331,7 @@
           "name": "keyword.other.impl.wysk"
         }
       },
-      "end": "(?x) # Detect end of impl declaration:\n  # 'where' keyword or opening curly brace\n  (?=\\b(?<!')(where|\\{)\\b(?!'))\n  # Decreasing indentation\n  |(?=\\}|;)      # Explicit indentation\n  |^(?!          # Implicit indentation: end match on newline *unless* the new line is either:\n      \\1\\s+\\S    # - more indented, or\n    | \\s*        # - starts with whitespace, followed by:\n      (?: $      #   - the end of the line (i.e. empty line), or\n      |~\\{[^@]   #   - the start of a block comment, or\n      |~~[\\>|\\<|\\||\\:|~| ]       #   - the start of a single-line comment.\n         (?![\\p{S}\\p{P}&&[^(),;\\[\\]{}`_\"']]).*$) # non-symbol\n                 # The double dash may not be followed by other operator characters\n                 # (then it would be an operator, not a comment)\n    )\n",
+      "end": "(?x) # Detect end of impl declaration:\n  # 'where' keyword or opening curly brace\n  (?=\\b(?<!')(where|\\{)\\b(?!'))\n  # Decreasing indentation\n  |(?=\\}|;)      # Explicit indentation\n  |^(?!          # Implicit indentation: end match on newline *unless* the new line is either:\n      \\1\\s+\\S    # - more indented, or\n    | \\s*        # - starts with whitespace, followed by:\n      (?: $      #   - the end of the line (i.e. empty line), or\n      |~\\{   #   - the start of a block comment, or\n      |~~[>|<|:~]?       #   - the start of a single-line comment.\n         (?![\\p{S}\\p{P}&&[^(),;\\[\\]{}`_\"']]).*$) # non-symbol\n                 # The double dash may not be followed by other operator characters\n                 # (then it would be an operator, not a comment)\n    )\n",
       "name": "meta.declaration.impl.wysk",
       "patterns": [
         {
@@ -352,7 +352,7 @@
           "name": "keyword.other.import.wysk"
         }
       },
-      "end": "(?x) # Detect end of import\n  # 'where' keyword\n  (?=\\b(?<!')(where)\\b(?!'))\n  # Decreasing indentation\n  |(?=\\}|;)      # Explicit indentation\n  |^(?!          # Implicit indentation: end match on newline *unless* the new line is either:\n      \\1\\s+\\S    # - more indented, or\n    | \\s*        # - starts with whitespace, followed by:\n      (?: $      #   - the end of the line (i.e. empty line), or\n      |~\\{[^@]   #   - the start of a block comment, or\n      |~~[\\>|\\<|\\||\\:|~| ]       #   - the start of a single-line comment.\n         (?![\\p{S}\\p{P}&&[^(),;\\[\\]{}`_\"']]).*$) # non-symbol\n                 # The double dash may not be followed by other operator characters\n                 # (then it would be an operator, not a comment)\n    )\n",
+      "end": "(?x) # Detect end of import\n  # 'where' keyword\n  (?=\\b(?<!')(where)\\b(?!'))\n  # Decreasing indentation\n  |(?=\\}|;)      # Explicit indentation\n  |^(?!          # Implicit indentation: end match on newline *unless* the new line is either:\n      \\1\\s+\\S    # - more indented, or\n    | \\s*        # - starts with whitespace, followed by:\n      (?: $      #   - the end of the line (i.e. empty line), or\n      |~\\{   #   - the start of a block comment, or\n      |~~[>|<|:~]       #   - the start of a single-line comment.\n         (?![\\p{S}\\p{P}&&[^(),;\\[\\]{}`_\"']]).*$) # non-symbol\n                 # The double dash may not be followed by other operator characters\n                 # (then it would be an operator, not a comment)\n    )\n",
       "name": "meta.import.wysk",
       "patterns": [
         {
@@ -545,17 +545,17 @@
     "comments": {
       "patterns": [
         {
-          "begin": "^(\\s*)(~~[>|\\||\\:|\\<|~| ])",
+          "begin": "^(\\s*)(~~>)",
           "beginCaptures": {
             "2": {
               "name": "punctuation.whitespace.comment.leading.wysk"
             }
           },
-          "end": "(?=^(?!\\1~~[\\>|\\<|\\||\\:|~| ](?![\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']])))",
+          "end": "(?=^(?!\\1~~[|:<](?![\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']])))",
           "name": "comment.block.documentation.wysk"
         },
         {
-          "begin": "(^[ \\t]+)?(~~[\\:\\*])",
+          "begin": "(^[ \\t]+)?(~~:?)",
           "beginCaptures": {
             "1": {
               "name": "punctuation.whitespace.comment.leading.wysk"
@@ -566,13 +566,13 @@
         },
         {
           "applyEndPatternLast": 1,
-          "begin": "~\\{[\\|\\:\\>\\^]",
+          "begin": "~\\{",
           "captures": {
             "0": {
               "name": "punctuation.definition.comment.wysk"
             }
           },
-          "end": "-\\}",
+          "end": "\\}~",
           "name": "comment.block.documentation.wysk",
           "patterns": [
             {
@@ -581,13 +581,13 @@
           ]
         },
         {
-          "begin": "(^[ \\t]+)?(?=~~[\\>|\\<|\\||\\:|~| ](?![\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']]))",
+          "begin": "(^[ \\t]*)?(?=~~\\|[ \\t]+(?![\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']]))",
           "beginCaptures": {
             "1": {
               "name": "punctuation.whitespace.comment.leading.wysk"
             }
           },
-          "comment": "Operators may begin with '~~' as long as they are not entirely composed of '~' characters. This means comments can't be immediately followed by an allowable operator character.",
+          "comment": "Operators may begin with '~~' as long as they are not '~~|', '~~|', '~~:', or '~~<' nor entirely composed of '~' characters.",
           "end": "(?!\\G)",
           "patterns": [
             {
@@ -601,6 +601,16 @@
               "name": "comment.line.double-dash.wysk"
             }
           ]
+        },
+        {
+          "begin": "~~\\|",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.comment.wysk"
+            }
+          },
+          "end": "\\n",
+          "name": "comment.line.double-dash.wysk"
         },
         {
           "include": "#block_comment"
@@ -703,7 +713,7 @@
               "name": "keyword.other.with.strategy.$3.wysk"
             }
           },
-          "end": "(?x) # Detect end of with statement\n  # Decreasing indentation\n   (?=\\}|;)      # Explicit indentation\n  |^(?!          # Implicit indentation: end match on newline *unless* the new line is either:\n      \\1\\s+\\S    # - more indented, or\n    | \\s*        # - starts with whitespace, followed by:\n      (?: $      #   - the end of the line (i.e. empty line), or\n      |~\\{[^@]   #   - the start of a block comment, or\n      |~~[\\>|\\<|\\||\\:|~| ]       #   - the start of a single-line comment.\n         (?![\\p{S}\\p{P}&&[^(),;\\[\\]{}`_\"']]).*$) # non-symbol\n                 # The double dash may not be followed by other operator characters\n                 # (then it would be an operator, not a comment)\n    )",
+          "end": "(?x) # Detect end of with statement\n  # Decreasing indentation\n   (?=\\}|;)      # Explicit indentation\n  |^(?!          # Implicit indentation: end match on newline *unless* the new line is either:\n      \\1\\s+\\S    # - more indented, or\n    | \\s*        # - starts with whitespace, followed by:\n      (?: $      #   - the end of the line (i.e. empty line), or\n      |~\\{[^@]   #   - the start of a block comment, or\n      |~~+[>|:<^ ]       #   - the start of a single-line comment.\n         (?![\\p{S}\\p{P}&&[^(),;\\[\\]{}`_\"']]).*$) # non-symbol\n                 # The double dash may not be followed by other operator characters\n                 # (then it would be an operator, not a comment)\n    )",
           "patterns": [
             {
               "include": "#comment_like"
@@ -791,7 +801,7 @@
       "patterns": [
         {
           "comment": "An operator cannot be composed entirely of '~' characters; instead, it should be matched as a comment.\n",
-          "match": "(?x)\n  (\\()\\s*(?!(?:~~[\\>|\\<|\\||\\:|~| ]|\\.\\.)\\))(\\#+|[\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']]+(?<!\\#))\\s*(\\))",
+          "match": "(?x)\n  (\\()\\s*(?!(?:~~+[>|:<^]|\\.\\.)\\))(\\#+|[\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']]+(?<!\\#))\\s*(\\))",
           "captures": {
             "1": {
               "name": "punctuation.paren.wysk"
@@ -1257,7 +1267,7 @@
               "name": "keyword.other.role.wysk"
             }
           },
-          "end": "(?x) # Detect end of block by decreasing indentation:\n  (?=\\}|;)       # Explicit indentation\n  |^(?!          # Implicit indentation: end match on newline *unless* the new line is either:\n      \\1\\s+\\S    # - more indented, or\n    | \\s*        # - starts with whitespace, followed by:\n      (?: $      #   - the end of the line (i.e. empty line), or\n      |\\{-[^@]   #   - the start of a block comment, or\n      |~~[\\>|\\<|\\||\\:|~| ]       #   - the start of a single-line comment.\n         (?![\\p{S}\\p{P}&&[^(),;\\[\\]{}`_\"']]).*$) # non-symbol\n                 # The double dash may not be followed by other operator characters\n                 # (then it would be an operator, not a comment)\n    )",
+          "end": "(?x) # Detect end of block by decreasing indentation:\n  (?=\\}|;)       # Explicit indentation\n  |^(?!          # Implicit indentation: end match on newline *unless* the new line is either:\n      \\1\\s+\\S    # - more indented, or\n    | \\s*        # - starts with whitespace, followed by:\n      (?: $      #   - the end of the line (i.e. empty line), or\n      |\\{-[^@]   #   - the start of a block comment, or\n      |~~[>|:<^]       #   - the start of a single-line comment.\n         (?![\\p{S}\\p{P}&&[^(),;\\[\\]{}`_\"']]).*$) # non-symbol\n                 # The double dash may not be followed by other operator characters\n                 # (then it would be an operator, not a comment)\n    )",
           "name": "meta.role-annotation.wysk",
           "patterns": [
             {
@@ -1279,7 +1289,7 @@
       ]
     },
     "fun_decl": {
-      "begin": "(?x)^(\\s*)(fn|def)\\s+\n  (?<fn>\n    (?:\n      [\\p{Ll}_][\\p{Ll}_\\p{Lu}\\p{Lt}\\p{Nd}']*\\#*\n    | \\(\\s*\n        (?!~~[\\>|\\<|\\||\\:|~| ]\\))\n        [\\p{S}\\p{P}&&[^(),:;\\[\\]`{}_\"']]\n        [\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']]*\n      \\s*\\)\n    )\n    (?:\\s*,\\s*\\g<fn>)?\n  )\n  \\s*(?<![\\p{S}\\p{P}&&[^\\),;\\]`}_\"']])(::|∷)(?![\\p{S}\\p{P}&&[^\\(,;\\[`{_\"']])\n",
+      "begin": "(?x)^(\\s*)(fn|def)\\s+\n  (?<fn>\n    (?:\n      [\\p{Ll}_][\\p{Ll}_\\p{Lu}\\p{Lt}\\p{Nd}']*\\#*\n    | \\(\\s*\n        (?!~~[>|:<^]\\))\n        [\\p{S}\\p{P}&&[^(),:;\\[\\]`{}_\"']]\n        [\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']]*\n      \\s*\\)\n    )\n    (?:\\s*,\\s*\\g<fn>)?\n  )\n  \\s*(?<![\\p{S}\\p{P}&&[^\\),;\\]`}_\"']])(::|∷)(?![\\p{S}\\p{P}&&[^\\(,;\\[`{_\"']])\n",
       "beginCaptures": {
         "2": {
           "name": "keyword.other.$2.wysk"
@@ -1305,7 +1315,7 @@
           "include": "#type_signature"
         }
       ],
-      "end": "(?x)\n  # End of type annotation:\n    # To the left of a reserved symbolic keyword such as = or <-\n  (?=\n      # non-symbolic character\n      (?<![\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']])\n      # symbolic keyword except (->)\n      ((<-|←)|(=)|(-<|↢)|(-<<|⤛))\n      # non-symbolic character\n      ([(),;\\[\\]`{}_\"']|[^\\p{S}\\p{P}])\n  )\n  # Decreasing indentation:\n  |(?=\\}|;)      # Explicit indentation\n  |^(?!          # Implicit indentation: end match on newline *unless* the new line is either:\n      \\1\\s+\\S    # - more indented, or\n    | \\s*        # - starts with whitespace, followed by:\n      (?: $      #   - the end of the line (i.e. empty line), or\n      |~\\{[^@]   #   - the start of a block comment, or\n      |~~[\\>|\\<|\\||\\:|~| ]       #   - the start of a single-line comment.\n         (?![\\p{S}\\p{P}&&[^(),;\\[\\]{}`_\"']]).*$) # non-symbol\n                 # The double dash may not be followed by other operator characters\n                 # (then it would be an operator, not a comment)\n    )\n"
+      "end": "(?x)\n  # End of type annotation:\n    # To the left of a reserved symbolic keyword such as = or <-\n  (?=\n      # non-symbolic character\n      (?<![\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']])\n      # symbolic keyword except (->)\n      ((<-|←)|(=)|(-<|↢)|(-<<|⤛))\n      # non-symbolic character\n      ([(),;\\[\\]`{}_\"']|[^\\p{S}\\p{P}])\n  )\n  # Decreasing indentation:\n  |(?=\\}|;)      # Explicit indentation\n  |^(?!          # Implicit indentation: end match on newline *unless* the new line is either:\n      \\1\\s+\\S    # - more indented, or\n    | \\s*        # - starts with whitespace, followed by:\n      (?: $      #   - the end of the line (i.e. empty line), or\n      |~\\{[^@]   #   - the start of a block comment, or\n      |~~[>|:<^]       #   - the start of a single-line comment.\n         (?![\\p{S}\\p{P}&&[^(),;\\[\\]{}`_\"']]).*$) # non-symbol\n                 # The double dash may not be followed by other operator characters\n                 # (then it would be an operator, not a comment)\n    )\n"
     },
     "adt_constructor": {
       "patterns": [
@@ -1313,7 +1323,7 @@
           "include": "#comment_like"
         },
         {
-          "begin": "(?x)\n  (?<![\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']]) # non-symbol\n  (?:(=)|(\\|))\n  (?![\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']])  # non-symbol",
+          "begin": "(?x)\n  (?<![\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']]) # non-symbol\n  (?:(=|\\|))\n  (?![\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']])  # non-symbol",
           "beginCaptures": {
             "1": {
               "name": "keyword.operator.eq.wysk"
@@ -1411,7 +1421,7 @@
               "name": "punctuation.paren.wysk"
             }
           },
-          "end": "(?x)\n  # GADT constructor ends\n  (?=\\b(?<!'')with\\b(?!'))\n        # Decreasing indentation\n  |(?=\\}|;)      # Explicit indentation\n  |^(?!          # Implicit indentation: end match on newline *unless* the new line is either:\n      \\1\\s+\\S    # - more indented, or\n    | \\s*        # - starts with whitespace, followed by:\n      (?: $      #   - the end of the line (i.e. empty line), or\n      |~\\{[^@]   #   - the start of a block comment, or\n      |~~[\\>|\\<|\\||\\:|~| ]       #   - the start of a single-line comment.\n         (?![\\p{S}\\p{P}&&[^(),;\\[\\]{}`_\"']]).*$) # non-symbol\n                 # The double dash may not be followed by other operator characters\n                 # (then it would be an operator, not a comment)\n    )\n",
+          "end": "(?x)\n  # GADT constructor ends\n  (?=\\b(?<!'')with\\b(?!'))\n        # Decreasing indentation\n  |(?=\\}|;)      # Explicit indentation\n  |^(?!          # Implicit indentation: end match on newline *unless* the new line is either:\n      \\1\\s+\\S    # - more indented, or\n    | \\s*        # - starts with whitespace, followed by:\n      (?: $      #   - the end of the line (i.e. empty line), or\n      |~\\{[^@]   #   - the start of a block comment, or\n      |~~[>|:<^]       #   - the start of a single-line comment.\n         (?![\\p{S}\\p{P}&&[^(),;\\[\\]{}`_\"']]).*$) # non-symbol\n                 # The double dash may not be followed by other operator characters\n                 # (then it would be an operator, not a comment)\n    )\n",
           "patterns": [
             {
               "include": "#comment_like"
@@ -1790,7 +1800,7 @@
               "name": "keyword.operator.double-colon.wysk"
             }
           },
-          "end": "(?x)\n  # End type annotation when seeing one of:\n  (?=\n    \\#?\\)                             # closing parenthesis\n    |\\]                               # closing bracket\n    |,                                # comma\n    |(?<!')\\b(in|then|else|of)\\b(?!') # keyword\n    |                                 # symbolic keyword except (->)\n      (?<![\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']])\n      (?:\n         (\\\\|λ)\n        |(<-|←)\n        |(=)\n        |(-<|↢)\n        |(-<<|⤛)\n      )\n      ([(),;\\[\\]`{}_\"']|[^\\p{S}\\p{P}])\n    |(\\#|@)-\\}                             # End of annotation block (LiquidWysk or pragma)\n    # Decreasing indentation:\n    | (?=\\}|;)     # Explicit indentation\n    |^(?!          # Implicit indentation: end match on newline *unless* the new line is either:\n        \\1\\s*\\S    # - equally indented, or\n      | \\s*        # - starts with whitespace, followed by:\n        (?: $      #   - the end of the line (i.e. empty line), or\n        |~\\{[^@]   #   - the start of a block comment, or\n        |~~[\\>|\\<|\\||\\:|~| ]   #  - the start of a single-line comment.\n           (?![\\p{S}\\p{P}&&[^(),;\\[\\]{}`_\"']]).*$) # non-symbol\n                   # The double dash may not be followed by other operator characters\n                   # (then it would be an operator, not a comment)\n      )\n  )",
+          "end": "(?x)\n  # End type annotation when seeing one of:\n  (?=\n    \\#?\\)                             # closing parenthesis\n    |\\]                               # closing bracket\n    |\\}\n    |,                                # comma\n    |(?<!')\\b(def|fn|in|then|else|of)\\b(?!') # keyword\n    |                                 # symbolic keyword except (->)\n      (?<![\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']])\n      (?:\n         (\\\\|λ)\n        |(<-|←)\n        |(=)\n        |(\\|)\n        |(-<|↢)\n        |(-<<|⤛)\n      )\n      ([(),;\\[\\]`{}_\"']|[^\\p{S}\\p{P}])\n    |(\\#|@)-\\}                             # End of annotation block (LiquidWysk or pragma)\n    # Decreasing indentation:\n    | (?=\\}|;)     # Explicit indentation\n    |^(?!          # Implicit indentation: end match on newline *unless* the new line is either:\n        \\1\\s*\\S    # - equally indented, or\n      | \\s*        # - starts with whitespace, followed by:\n        (?: $      #   - the end of the line (i.e. empty line), or\n        |~\\{[^@]   #   - the start of a block comment, or\n        |~~[>|:<^]   #  - the start of a single-line comment.\n           (?![\\p{S}\\p{P}&&[^(),;\\[\\]{}`_\"']]).*$) # non-symbol\n                   # The double dash may not be followed by other operator characters\n                   # (then it would be an operator, not a comment)\n      )\n  )",
           "patterns": [
             {
               "include": "#type_signature"
@@ -1805,7 +1815,7 @@
               "name": "keyword.operator.double-colon.wysk"
             }
           },
-          "end": "(?x)\n  # End type annotation when seeing one of:\n  (?=\n    \\#?\\)                             # closing parenthesis\n    |\\]                               # closing bracket\n    |,                                # comma\n    |\\b(?<!')(in|then|else|of)\\b(?!') # keyword\n    |(\\#|@)-\\}                        # End of annotation block (LiquidWysk or pragma)\n    |                                 # symbolic keyword except (->)\n      (?<![\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']])\n      (?:\n         (\\\\|λ)\n        |(<-|←)\n        |(=)\n        |(-<|↢)\n        |(-<<|⤛)\n      )\n      ([(),;\\[\\]`{}_\"']|[^\\p{S}\\p{P}])\n    # Indentation\n    |(?=\\}|;)      # Explicit indentation\n    |$             # End of line\n  )",
+          "end": "(?x)\n  # End type annotation when seeing one of:\n  (?=\n    \\#?\\)                             # closing parenthesis\n    |\\]                               # closing bracket\n    |\\}\n    |,                                # comma\n    |\\b(?<!')(def|fn|in|then|else|of)\\b(?!') # keyword\n    |(\\#|@)-\\}                        # End of annotation block (LiquidWysk or pragma)\n    |                                 # symbolic keyword except (->)\n      (?<![\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']])\n      (?:\n         (\\\\|λ)\n        |(<-|←)\n        |(=)\n        |(=>)\n        |(\\|)\n        |(-<|↢)\n        |(-<<|⤛)\n      )\n      ([(),;\\[\\]`{}_\"']|[^\\p{S}\\p{P}])\n    # Indentation\n    |(?=\\}|;)      # Explicit indentation\n    |$             # End of line\n  )",
           "patterns": [
             {
               "include": "#type_signature"
@@ -2139,7 +2149,7 @@
       ]
     },
     "ffi": {
-      "begin": "^(\\s*)(extern)\\s+(import|export)\\s+",
+      "begin": "^(\\s*)(extern)\\s+(import|extern)\\s+",
       "beginCaptures": {
         "2": {
           "name": "keyword.other.extern.wysk"
@@ -2149,7 +2159,7 @@
         }
       },
       "name": "meta.$3.extern.wysk",
-      "end": "(?x) # Detect end of FFI block by decreasing indentation:\n  (?=\\}|;)       # Explicit indentation\n  |^(?!          # Implicit indentation: end match on newline *unless* the new line is either:\n      \\1\\s+\\S    # - more indented, or\n    | \\s*        # - starts with whitespace, followed by:\n      (?: $      #   - the end of the line (i.e. empty line), or\n      |~\\{[^@]   #   - the start of a block comment, or\n      |~~[\\>|\\<|\\||\\:|~| ]       #   - the start of a single-line comment.\n         (?![\\p{S}\\p{P}&&[^(),;\\[\\]{}`_\"']]).*$) # non-symbol\n                 # The double dash may not be followed by other operator characters\n                 # (then it would be an operator, not a comment)\n    )\n",
+      "end": "(?x) # Detect end of FFI block by decreasing indentation:\n  (?=\\}|;)       # Explicit indentation\n  |^(?!          # Implicit indentation: end match on newline *unless* the new line is either:\n      \\1\\s+\\S    # - more indented, or\n    | \\s*        # - starts with whitespace, followed by:\n      (?: $      #   - the end of the line (i.e. empty line), or\n      |~\\{[^@]   #   - the start of a block comment, or\n      |~~[>|:<^]       #   - the start of a single-line comment.\n         (?![\\p{S}\\p{P}&&[^(),;\\[\\]{}`_\"']]).*$) # non-symbol\n                 # The double dash may not be followed by other operator characters\n                 # (then it would be an operator, not a comment)\n    )\n",
       "patterns": [
         {
           "include": "#comment_like"
@@ -2170,7 +2180,7 @@
               "include": "#comment_like"
             },
             {
-              "match": "(?x)\n  \\b(?<!')(safe|unsafe)\\b(?!')\n  \\s*\n  (\"(?:\\\\\"|[^\"])*\")?\n  \\s*\n  (?:\n    (?:\\b(?<!'')([\\p{Ll}_][\\p{Ll}_\\p{Lu}\\p{Lt}\\p{Nd}']*)\\b(?!'))\n   |(?:\\(\\s*(?!~~[\\>|\\<|\\||\\:|~| ]\\))([\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']]+)\\s*\\))\n  )\n",
+              "match": "(?x)\n  \\b(?<!')(safe|unsafe)\\b(?!')\n  \\s*\n  (\"(?:\\\\\"|[^\"])*\")?\n  \\s*\n  (?:\n    (?:\\b(?<!'')([\\p{Ll}_][\\p{Ll}_\\p{Lu}\\p{Lt}\\p{Nd}']*)\\b(?!'))\n   |(?:\\(\\s*(?!~~[>|:<^]\\))([\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']]+)\\s*\\))\n  )\n",
               "captures": {
                 "1": {
                   "name": "keyword.other.safety.$1.wysk"
@@ -2221,7 +2231,7 @@
               }
             },
             {
-              "match": "(?x)\n   (?:\\b(?<!'')([\\p{Ll}_][\\p{Ll}_\\p{Lu}\\p{Lt}\\p{Nd}']*)\\b(?!'))\n  |(?:(\\()\\s*(?!~~[\\>|\\<|\\||\\:|~| ]\\))([\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']]+)\\s*(\\)))\n",
+              "match": "(?x)\n   (?:\\b(?<!'')([\\p{Ll}_][\\p{Ll}_\\p{Lu}\\p{Lt}\\p{Nd}']*)\\b(?!'))\n  |(?:(\\()\\s*(?!~~[>|:<^]\\))([\\p{S}\\p{P}&&[^(),;\\[\\]`{}_\"']]+)\\s*(\\)))\n",
               "captures": {
                 "1": {
                   "name": "entity.name.function.wysk"
