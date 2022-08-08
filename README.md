@@ -59,44 +59,6 @@ fn factorial :: Int -> Int
   | n = n * factorial (n - 1)
 ```
 
-## Todo
-
-- [x] Implement project manifest serializer/deserializer
-- [x] Design spans to allow for byte-indexing the source code
-- [x] Thread-safe handwritten string interner.
-- [x] Separate lexeme and token definitions to minimize footprint and facilitate
-      error reporting
-- [x] Modify lexer to depend on byte positions rather than character indices
-- [x] Design module-friendly and polymorphic AST to facilitate later
-      simplification and semantic analysis phases
-- [x] Implement parser to allow for code-reuse in later syntactic analysis
-- [x] Implement post-parse pass to reflect user-defined operator precedence and
-      associativity (either from definitions within the same module or from
-      dependencies)
-- [ ] Implement identifier renaming pass to identify name clashes and generate
-      unique names for entities involved
-- [ ] Implement support for (hygienic) macros in lexing and parsing
-- [x] Improve lexer error reporting to include context
-- [ ] Unify error handling into its own library
-- [x] Prettify error messages
-- [ ] Add suggestions to error messages
-- [ ] Implement optimizer passes, with importance on tail-call optimization(s).
-- [x] Implement static type inference engine (Hindley-Milner+)
-- [ ] Extend Hindley-Milner type inference to include type classes and
-      polymorphic records
-- [ ] Implement dependency analysis for global (module-level) and local (entity
-      definition-level) scopes
-- [x] Model entities as a graph and find strongly connected components (SCCs) to
-      identify recursive dependencies
-- [ ] Implement STG graph reduction scheme
-- [ ] Model bytecode (and implement simple stack-based VM?)
-- [ ] Implement REPL as bytecode interpreter
-- [ ] Implement primitives in Rust/C along with stdlib/prelude
-- [ ] Implement spineless tagless G-machine (STG)
-- [ ] Implement compiler interface
-- [ ] Add support for LLVM
-- [ ] Implement documentation generation and integrate with doc comments
-
 ## Some reading
 
 The following may not necessarily be directly involved within the development of
