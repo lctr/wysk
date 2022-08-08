@@ -1,12 +1,12 @@
 use std::{
     env,
     ffi::OsStr,
-    fmt, fs,
+    fs,
+    ops::Mul,
     path::{Path, PathBuf},
 };
 
 use serde::{Deserialize, Serialize};
-use wy_intern::Symbol;
 
 // use wy_failure::{Failure, Outcome};
 
@@ -16,7 +16,7 @@ pub const PRELUDE_PATH: &'static str = "../../language";
 
 pub const WY_FILE_EXT: &'static str = "wy";
 
-type IoResult<X> = Result<X, std::io::Error>;
+pub type IoResult<X> = Result<X, std::io::Error>;
 
 pub fn ext_str(p: &impl AsRef<Path>) -> Option<&str> {
     p.as_ref().extension().and_then(OsStr::to_str)
@@ -145,23 +145,51 @@ impl Atlas {
     pub fn new_within_dir(dir: impl AsRef<Path>) -> IoResult<Self> {
         let mut atlas = Self::new();
         let paths = Self::walk_path(dir.as_ref())?;
-        atlas.add_paths(paths);
+        let _ = atlas.add_paths(paths);
         Ok(atlas)
     }
 
-    pub fn add_paths(&mut self, pbs: impl IntoIterator<Item = PathBuf>) {
-        for path in pbs {
-            let fid = FileId(self.sources.len());
-            self.sources.push(FilePath { fid, path })
+    pub fn contains_path(&self, path: impl AsRef<Path>) -> bool {
+        let path = path.as_ref();
+        self.sources.iter().any(|fp| fp.path() == path)
+    }
+
+    pub fn add_path<P: AsRef<Path>>(&mut self, path: P) -> Option<FileId> {
+        let path = path.as_ref();
+        if let Some(n) = self.sources.iter().position(|fp| fp.path() == path) {
+            return Some(FileId(n));
+        } else if is_target_file(&path) && !self.contains_path(path) {
+            let file_id = FileId(self.len());
+            self.sources.push(FilePath {
+                fid: file_id,
+                path: path.to_path_buf(),
+            });
+            Some(file_id)
+        } else {
+            None
         }
     }
 
-    pub fn add_source(&mut self, src: FilePath) {
-        if !self.sources.contains(&src) {
+    pub fn add_paths<'a, P: AsRef<Path>, I: IntoIterator<Item = P> + 'a>(
+        &'a mut self,
+        paths: I,
+    ) -> impl Iterator<Item = FileId> + 'a {
+        paths.into_iter().flat_map(|p| self.add_path(p))
+    }
+
+    pub fn add_source(&mut self, path: impl AsRef<Path>) {
+        let path = path.as_ref();
+        if is_target_file(&path) && !self.contains_path(path) {
             self.sources.push(FilePath {
                 fid: FileId(self.len()),
-                path: src.path,
+                path: path.to_path_buf(),
             })
+        }
+    }
+
+    pub fn add_sources<P: AsRef<Path>>(&mut self, sources: impl Iterator<Item = P>) {
+        for path in sources {
+            self.add_source(path)
         }
     }
 
@@ -172,16 +200,6 @@ impl Atlas {
     pub fn add_dirs(&mut self, dirs: impl IntoIterator<Item = Directory>) {
         dirs.into_iter()
             .for_each(|dir| self.extend(dir.all_wysk_files()))
-    }
-
-    pub fn add_sources(&mut self, sources: impl Iterator<Item = FilePath>) {
-        let len = self.len();
-        for (n, FilePath { path, .. }) in sources.enumerate() {
-            self.add_source(FilePath {
-                fid: FileId(len + n),
-                path,
-            })
-        }
     }
 
     pub fn sources(&self) -> &[FilePath] {
@@ -198,7 +216,17 @@ impl Atlas {
         self.sources.iter_mut()
     }
 
-    pub fn walk_dir(dir: Directory) -> Self {
+    pub fn relative_depth(root: impl AsRef<Path>, other: impl AsRef<Path>) -> IoResult<isize> {
+        root.as_ref().canonicalize().and_then(|root_p| {
+            other.as_ref().canonicalize().map(|other_p| {
+                let root_len = root_p.components().count();
+                let other_len = other_p.components().count();
+                if root_len < other_len { 1 } else { -1 }.mul(root_len.abs_diff(other_len) as isize)
+            })
+        })
+    }
+
+    pub fn walk_dir(dir: &Directory) -> Self {
         Self::walk_path(dir.path()).into_iter().flatten().collect()
     }
 
@@ -272,20 +300,9 @@ impl std::ops::Index<FileId> for Atlas {
     }
 }
 
-impl Extend<FilePath> for Atlas {
-    fn extend<T: IntoIterator<Item = FilePath>>(&mut self, iter: T) {
+impl<P: AsRef<Path>> Extend<P> for Atlas {
+    fn extend<T: IntoIterator<Item = P>>(&mut self, iter: T) {
         self.add_sources(iter.into_iter())
-    }
-}
-
-impl<S> Extend<S> for Atlas
-where
-    S: IntoIterator<Item = FilePath>,
-{
-    fn extend<T: IntoIterator<Item = S>>(&mut self, iter: T) {
-        for sources in iter {
-            self.add_sources(sources.into_iter())
-        }
     }
 }
 
@@ -729,21 +746,6 @@ impl Directory {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct FileName(Symbol);
-
-impl fmt::Debug for FileName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "FileName({})", &self.0)
-    }
-}
-
-impl fmt::Display for FileName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", &self.0)
-    }
-}
-
 /// Represents the kind of resource from which input will be sourced.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Resource {
@@ -784,38 +786,15 @@ impl Resource {
     }
 
     /// If the resource corresponds to the standard input, then it
-    /// will read from the standard input, terminating only on input
-    /// ending in two semicolons (`";;"`). If the resource corresponds
-    /// to a filepath ending in `.wy`, then it will read the file.
-    ///
-    /// ## Note: Windows Portability Considerations
-    /// When operating in a console, the Windows implementation of
-    /// this stream does not support non-UTF-8 byte sequences.
-    /// Attempting to read bytes that are not valid UTF-8 will return
-    /// an error.
-    ///
-    /// In a process with a detached console, such as one using
-    /// #![windows_subsystem = "windows"], or in a child process
-    /// spawned from such a process, the contained handle will be
-    /// null. In such cases, the standard library's Read and Write
-    /// will do nothing and silently succeed. All other I/O
-    /// operations, via the standard library or via raw Windows API
-    /// calls, will fail.
-    pub fn read_text(&self) -> std::io::Result<String> {
+    /// will return `None` and IO will need to be done separately. If
+    /// the resource corresponds to a filepath ending in `.wy`, then
+    /// it will read the file and return the text contents -- if the
+    /// file is valid -- as an owned string wrapped in a `Some` variant..
+    pub fn read_text(&self) -> Option<String> {
         match self {
-            Resource::Stdin => {
-                use std::io::{self, BufRead};
-
-                let mut buffer = String::new();
-                let stdin = io::stdin();
-                let mut handle = stdin.lock();
-                while !buffer.ends_with(";;\n") {
-                    handle.read_line(&mut buffer)?;
-                }
-                Ok(buffer)
-            }
+            Resource::Stdin => None,
             Resource::ModuleFile { path, .. } | Resource::Standalone { path, .. } => {
-                std::fs::read_to_string(path)
+                std::fs::read_to_string(path).ok()
             }
         }
     }
@@ -963,7 +942,7 @@ mod test {
         };
         let subdirs = root.all_sub_dirs();
         println!("subdirectories: {:#?}", &subdirs);
-        assert!(subdirs[2].is_src_dir());
+        assert!(subdirs[3].is_src_dir());
         println!("{:?}", root.imm_wysk_files().collect::<Vec<_>>());
         println!("all {:?}", root.all_wysk_files().collect::<Vec<_>>());
         println!(
@@ -985,11 +964,13 @@ mod test {
 
     #[test]
     fn test_dir_filepath_qualified_names() {
-        let actual = Resource::within_dir("../../", ".wy")
+        let actual = Resource::within_dir("../../language/prelude", ".wy")
             .inspect(|s| println!("{s:?}"))
             .flat_map(|fp| fp.guess_qualified_name(0))
             .collect::<Vec<_>>();
-        let expected = [
+        // zip since we only want to look at the following
+
+        [
             "List",
             "Lib",
             "Function",
@@ -999,19 +980,17 @@ mod test {
         ]
         .into_iter()
         .map(String::from)
-        .collect::<Vec<_>>();
-        assert_eq!(actual, expected)
+        .zip(actual)
+        .for_each(|(expected, actual)| assert_eq!(actual, expected));
     }
 
     #[test]
-    fn test_dir_filepath_qualified_names_with_offset_1() {
-        let actual = Resource::within_dir("../../", ".wy")
+    fn test_dir_filepath_qualified_names_with_offset_2() {
+        let actual = Resource::within_dir("../../language/prelude", ".wy")
             .inspect(|s| println!("{s:?}"))
-            .flat_map(|fp| fp.guess_qualified_name(1))
+            .flat_map(|fp| fp.guess_qualified_name(2))
             .collect::<Vec<_>>();
         let expected = [
-            "Prim",
-            "Sample",
             "Prelude.List",
             "Prelude.Lib",
             "Prelude.Function",
