@@ -72,10 +72,10 @@ impl NumPrefix {
     }
 
     pub fn from_char(c: &char) -> Option<Self> {
-        match c {
-            &('b' | 'B') => Some(Self::Bin),
-            &('x' | 'X') => Some(Self::Hex),
-            &('o' | 'O') => Some(Self::Oct),
+        match *c {
+            'b' | 'B' => Some(Self::Bin),
+            'x' | 'X' => Some(Self::Hex),
+            'o' | 'O' => Some(Self::Oct),
             _ => None,
         }
     }

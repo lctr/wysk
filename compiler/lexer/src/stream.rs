@@ -71,7 +71,7 @@ impl<'t> Source<'t> {
     /// `row` by 1 if encountering a line-feed `\n`, and otherwise incrementing
     /// the `column` by 1. If there are no characters left, no side effects are
     /// performed and `None` is returned.
-    pub fn next(&mut self) -> Option<char> {
+    pub fn bump(&mut self) -> Option<char> {
         if let Some(c) = self.chars.peek() {
             self.pos += if c == &'\n' {
                 self.coord.incr_row()
@@ -88,7 +88,7 @@ impl<'t> Source<'t> {
     /// whether the predicate passed (and hence advanced the iterator).
     pub fn bump_on(&mut self, f: impl Character) -> bool {
         if matches!(self.peek(), Some(c) if f.cmp_char(*c)) {
-            self.next();
+            self.bump();
             true
         } else {
             false
@@ -131,7 +131,7 @@ impl<'t> Source<'t> {
         let start_pos = self.get_pos();
         let start_loc = self.get_coord();
         while matches!(self.peek(), Some(c) if c.is_whitespace()) {
-            self.next();
+            self.bump();
         }
         Position::new(
             Span(start_pos, self.get_pos()),
@@ -165,7 +165,7 @@ impl<'t> Source<'t> {
         let start_pos = self.get_pos();
         let start_loc = self.get_coord();
         while matches!(self.peek(), Some(c) if f(*c)) {
-            self.next();
+            self.bump();
         }
         Position::new(self.span_from(start_pos), self.location_from(start_loc))
     }
@@ -281,10 +281,7 @@ impl Character for Option<&char> {
 
 impl Character for &[u8] {
     fn cmp_char(&self, c: char) -> bool {
-        for b in *self {
-            return c as u8 == *b;
-        }
-        false
+        self.iter().any(|b| *b == c as u8)
     }
 
     fn cmp_str(&self, s: &str) -> bool {
@@ -310,13 +307,10 @@ impl<'t> std::ops::Index<Span> for Source<'t> {
         let start = a.as_usize();
         let end = b.as_usize();
         debug_assert!(start <= len && end <= len);
-        if start == end {
-            ""
-        } else if start > end {
-            // allow for inverted spans?
-            &self.src[end..start]
-        } else {
-            &self.src[start..end]
+        match (start, end) {
+            (start, end) if start == end => "",
+            // allow for inverted spans??
+            _ => &self.src[if start > end { end..start } else { start..end }],
         }
     }
 }
@@ -469,6 +463,8 @@ impl<'t> Lexer<'t> {
         }
     }
 
+    // reason = "need to mutably borrow `self.current` if `None`"
+    #[allow(clippy::match_as_ref)]
     pub fn peek(&mut self) -> Option<&Token> {
         match self.current {
             Some(ref t) => Some(t),
@@ -577,7 +573,7 @@ mod tests {
 
         let text = "this \na text-test";
         let mut source = Source::new(text);
-        let first = source.next();
+        let first = source.bump();
         assert_eq!(first, Some('t'));
         let (span, loc) = source.eat_until_whitespace().parts();
         let one = BytePos::ONE;
@@ -596,13 +592,13 @@ mod tests {
             }
         );
         assert_eq!(source.peek(), Some(&' '));
-        assert_eq!(source.next(), Some(' '));
-        assert_eq!(source.next(), Some('\n'));
+        assert_eq!(source.bump(), Some(' '));
+        assert_eq!(source.bump(), Some('\n'));
         assert_eq!(source.get_row(), Row::new(2));
         source.eat_while_on(|c: char| c.is_whitespace() || c == 'a');
-        assert_eq!(source.next(), Some('t'));
+        assert_eq!(source.bump(), Some('t'));
         let (span, _) = source.eat_until_whitespace().parts();
-        assert_eq!(source.next(), None);
+        assert_eq!(source.bump(), None);
         assert!(source.is_done());
         assert_eq!(&source[span], "ext-test")
     }
