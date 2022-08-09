@@ -1,7 +1,3 @@
-pub trait Newtype<T, Inner = T> {
-    type Inner;
-}
-
 // Simplify generating newtype definitions and implementations
 // (predominantly for numeric indexing purposes)
 #[macro_export]
@@ -18,19 +14,20 @@ macro_rules! newtype {
     (
         $($(#[$com:meta])+)?
         $tipo:ident in $name:ident
+        $({ fmt $fmt_str:literal } )?
         $($(#[$coms2:meta])+)?
         | $($ts:tt)*
     ) => {
-        $crate::newtype!{ $($(#[$com])+)? $name => $tipo }
+        $crate::newtype!{ $($(#[$com])+)? $name => $tipo $({ fmt $fmt_str })? }
         $($(#[$coms2])+)?
         $(
             $crate::newtype!{ $name |$tipo| $ts }
         )*
     };
-    ($($(#[$com:meta])+)? $name:ident => $tipo:ty) => {
+    ($($(#[$com:meta])+)? $name:ident => $tipo:ty $({ fmt $fmt_str:literal } )?) => {
         $($(#[$com])+)?
         #[derive(
-            Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord
+            Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize
         )]
         pub struct $name($tipo);
 
@@ -46,11 +43,11 @@ macro_rules! newtype {
             }
         }
 
-        impl std::fmt::Debug for $name where $tipo: std::fmt::Debug {
+        $(impl std::fmt::Debug for $name where $tipo: std::fmt::Debug {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                write!(f, "{}({})", stringify!($name), &self.0)
+                write!(f, $fmt_str, &self.0)
             }
-        }
+        })?
     };
     ($($(#[$com:meta])+)? $name:ident |$tipo:ty| $trait:tt $($ts:tt)+) => {
         $crate::newtype! { $name |$tipo| $trait }
