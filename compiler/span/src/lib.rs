@@ -1,15 +1,16 @@
+use serde::{Deserialize, Serialize};
 use wy_common::newtype;
 
 newtype! {
-    { u32 in Row | New Show Usize Deref (+=) (-)
+    { u32 in Row { fmt "Row({})" } | New Show Usize Deref (+=) (-)
         (+ usize |rhs| rhs as u32)
         (- usize |rhs| rhs as u32)
     }
-    { u32 in Col | New Show Usize Deref (+=) (-)
+    { u32 in Col { fmt "Col({})" } | New Show Usize Deref (+=) (-)
         (+ usize |rhs| rhs as u32)
         (- usize |rhs| rhs as u32)
     }
-    { u32 in BytePos | Show Usize Deref (+=) (-)
+    { u32 in BytePos { fmt "BytePos({})" } | New Show Usize Deref (+=) (-)
         (+= char |rhs| rhs.len_utf8() as u32)
         (+ &str |rhs| rhs.len() as u32)
     }
@@ -267,7 +268,7 @@ impl Dummy for Col {
     }
 }
 
-#[derive(Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Span(pub BytePos, pub BytePos);
 
 impl std::fmt::Display for Span {
@@ -390,12 +391,28 @@ impl Span {
     }
 }
 
-impl std::ops::Sub<Span> for Span {
-    type Output = Span;
+impl std::ops::Add for Span {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Span(self.start() + rhs.start(), self.end() + rhs.start())
+    }
+}
+
+impl std::ops::Add<BytePos> for Span {
+    type Output = Self;
+
+    fn add(self, rhs: BytePos) -> Self::Output {
+        Span(self.start() + rhs, self.end() + rhs)
+    }
+}
+
+impl std::ops::Sub for Span {
+    type Output = Self;
 
     /// Shift a span to the left by subtracting the starting point
     /// of the subtrahend from the start and endpoint of this span
-    fn sub(self, rhs: Span) -> Self::Output {
+    fn sub(self, rhs: Self) -> Self::Output {
         assert!(self.contains(rhs));
         Span(self.start() - rhs.start(), self.end() - rhs.start())
     }
