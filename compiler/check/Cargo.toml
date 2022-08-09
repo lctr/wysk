@@ -19,4 +19,3 @@ wy_pretty = { path = "../pretty" }
 
 [dev-dependencies]
 wy_parser = { path = "../parser" }
-wy_session = { path = "../session" }
