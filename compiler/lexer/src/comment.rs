@@ -3,7 +3,7 @@ use wy_span::Span;
 
 // Unique identifiers for each comment
 wy_common::newtype! {
-    usize in CommentId | New Show AsUsize [Comment]
+    usize in CommentId { fmt "CommentId({})" } | New Show AsUsize [Comment]
 }
 
 /// Comment kinds. Note that *all* line comments are preceded by `~~` unless
