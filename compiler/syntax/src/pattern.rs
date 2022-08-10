@@ -37,6 +37,7 @@ pub enum Pattern<Id, V> {
     /// Describes a literal as a pattern and is the one variant of patterns with
     /// specific restrictions.
     Lit(Literal),
+    Neg(Box<Pattern<Id, V>>),
     /// Describes the pattern formed by a data constructor and its arguments
     /// (data). In particular, the data constructor *must* be an
     /// uppercase-initial identifier.
@@ -53,7 +54,6 @@ pub enum Pattern<Id, V> {
     Or(Vec<Pattern<Id, V>>),
     Rec(Record<Id, Pattern<Id, V>>),
     Cast(Box<Pattern<Id, V>>, Type<Id, V>),
-    Rng(Box<Pattern<Id, V>>, Option<Box<Pattern<Id, V>>>),
 }
 
 impl<Id, V> Pattern<Id, V> {
@@ -77,12 +77,12 @@ impl<Id, V> Pattern<Id, V> {
             Pattern::Tup(ps) => ps.into_iter().all(Self::is_valid_lambda_pat),
             Pattern::At(_, p) | Pattern::Cast(p, _) => p.is_valid_lambda_pat(),
             Pattern::Lit(_)
+            | Pattern::Neg(_)
             | Pattern::Dat(_, _)
             | Pattern::Vec(_)
             | Pattern::Lnk(_, _)
             | Pattern::Or(_)
-            | Pattern::Rec(_)
-            | Pattern::Rng(_, _) => false,
+            | Pattern::Rec(_) => false,
         }
     }
 
@@ -111,6 +111,7 @@ impl<Id, V> Pattern<Id, V> {
         }
         match self {
             Pattern::Wild | Pattern::Var(_) | Pattern::Lit(_) => (),
+            Pattern::Neg(pat) => check(&mut set, pat.as_ref(), &mut dupe),
             Pattern::Dat(k, ps) => {
                 if set.contains(k) {
                     dupe = true
@@ -174,14 +175,6 @@ impl<Id, V> Pattern<Id, V> {
                 }
             }
             Pattern::Cast(p, _) => check(&mut set, p.as_ref(), &mut dupe),
-            Pattern::Rng(pa, pb) => {
-                check(&mut set, pa.as_ref(), &mut dupe);
-                if !dupe {
-                    if let Some(p) = pb {
-                        check(&mut set, p.as_ref(), &mut dupe)
-                    }
-                }
-            }
         };
         dupe
     }
@@ -195,6 +188,7 @@ impl<Id, V> Pattern<Id, V> {
         Id: Eq + Copy + std::hash::Hash,
     {
         match self {
+            Self::Neg(pat) => pat.uniformly_bound_ors(),
             Self::Or(alts) => match &alts[..] {
                 [] => true,
                 [first, rest @ ..] => {
@@ -218,8 +212,6 @@ impl<Id, V> Pattern<Id, V> {
                     .get_value()
                     .map_or_else(|| true, Self::uniformly_bound_ors)
             }),
-            Self::Rng(a, None) => a.uniformly_bound_ors(),
-            Self::Rng(a, Some(b)) => a.uniformly_bound_ors() && b.uniformly_bound_ors(),
             Self::Wild | Self::Var(_) | Self::Lit(_) => true,
         }
     }
@@ -240,13 +232,15 @@ impl<Id, V> Pattern<Id, V> {
         let mut vars = Set::new();
         match self {
             Pattern::Wild | Pattern::Lit(_) => (),
+            Pattern::Neg(pat) => vars.extend(pat.idents()),
             Pattern::Var(id) => {
                 vars.insert(id);
             }
             Pattern::Dat(_, ps) | Pattern::Tup(ps) | Pattern::Vec(ps) | Pattern::Or(ps) => {
-                for p in ps {
-                    vars.extend(p.idents())
-                }
+                vars.extend(ps.into_iter().flat_map(Self::idents))
+                // for p in ps {
+                //     vars.extend(p.idents())
+                // }
             }
             Pattern::Lnk(x, y) => {
                 vars.extend(x.idents());
@@ -267,12 +261,6 @@ impl<Id, V> Pattern<Id, V> {
             Pattern::Cast(p, _) => {
                 vars.extend(p.idents());
             }
-            Pattern::Rng(a, b) => {
-                vars.extend(a.idents());
-                if let Some(c) = b {
-                    vars.extend(c.idents())
-                }
-            }
         };
         vars
     }
@@ -286,13 +274,12 @@ impl<Id, V> Pattern<Id, V> {
         let mut vars = Vec::new();
         match self {
             Pattern::Wild | Pattern::Lit(_) => (),
+            Pattern::Neg(pat) => vars.extend(pat.binders()),
             Pattern::Var(id) => {
                 vars.push(id);
             }
             Pattern::Dat(_, ps) | Pattern::Tup(ps) | Pattern::Vec(ps) | Pattern::Or(ps) => {
-                for p in ps {
-                    vars.extend(p.binders())
-                }
+                vars.extend(ps.into_iter().flat_map(Self::binders));
             }
             Pattern::Lnk(x, y) => {
                 vars.extend(x.binders());
@@ -313,12 +300,6 @@ impl<Id, V> Pattern<Id, V> {
             Pattern::Cast(p, _) => {
                 vars.extend(p.binders());
             }
-            Pattern::Rng(a, b) => {
-                vars.extend(a.binders());
-                if let Some(c) = b {
-                    vars.extend(c.binders())
-                }
-            }
         };
         vars
     }
@@ -329,6 +310,7 @@ impl<Id, V> Pattern<Id, V> {
         match self {
             Pattern::Wild | Pattern::At(_, _) | Pattern::Or(_) => false,
             Pattern::Var(_) | Pattern::Lit(_) => true,
+            Pattern::Neg(pat) => pat.valid_expr(),
             Pattern::Dat(_, xs) | Pattern::Tup(xs) | Pattern::Vec(xs) => {
                 xs.into_iter().all(|pat| pat.valid_expr())
             }
@@ -340,9 +322,6 @@ impl<Id, V> Pattern<Id, V> {
                     .unwrap_or_else(|| false)
             }),
             Pattern::Cast(pat, _) => pat.valid_expr(),
-            Pattern::Rng(a, b) => {
-                a.valid_expr() && b.as_ref().map(|p| p.valid_expr()).unwrap_or_else(|| true)
-            }
         }
     }
 }
@@ -358,6 +337,7 @@ impl<Id, V, X> MapFst<Id, X> for Pattern<Id, V> {
             Pattern::Wild => Pattern::Wild,
             Pattern::Var(id) => Pattern::Var(f.apply(id)),
             Pattern::Lit(lit) => Pattern::Lit(lit),
+            Pattern::Neg(pat) => Pattern::Neg(Box::new(pat.map_fst(f))),
             Pattern::Dat(id, args) => Pattern::Dat(f.apply(id), args.map_fst(f)),
             Pattern::Tup(pats) => Pattern::Tup(pats.map_fst(f)),
             Pattern::Vec(pats) => Pattern::Vec(pats.map_fst(f)),
@@ -374,11 +354,6 @@ impl<Id, V, X> MapFst<Id, X> for Pattern<Id, V> {
             Pattern::Or(pats) => Pattern::Or(pats.map_fst(f)),
             Pattern::Rec(rec) => Pattern::Rec(rec.map_fst(f)),
             Pattern::Cast(pat, ty) => Pattern::Cast(Box::new(pat.map_fst(f)), ty.map_fst(f)),
-            Pattern::Rng(a, b) => {
-                let a = Box::new(a.map_fst(f));
-                let b = b.map(|p| Box::new(p.map_fst(f)));
-                Pattern::Rng(a, b)
-            }
         }
     }
 }
@@ -394,6 +369,7 @@ impl<Id, V, X> MapSnd<V, X> for Pattern<Id, V> {
             Pattern::Wild => Pattern::Wild,
             Pattern::Var(id) => Pattern::Var(id),
             Pattern::Lit(lit) => Pattern::Lit(lit),
+            Pattern::Neg(pat) => Pattern::Neg(Box::new(pat.map_snd(f))),
             Pattern::Dat(id, args) => Pattern::Dat(id, args.map_snd(f)),
             Pattern::Tup(pats) => Pattern::Tup(pats.map_snd(f)),
             Pattern::Vec(pats) => Pattern::Vec(pats.map_snd(f)),
@@ -406,11 +382,6 @@ impl<Id, V, X> MapSnd<V, X> for Pattern<Id, V> {
             Pattern::Or(pats) => Pattern::Or(pats.map_snd(f)),
             Pattern::Rec(rec) => Pattern::Rec(rec.map_snd(f)),
             Pattern::Cast(pat, ty) => Pattern::Cast(Box::new(pat.map_snd(f)), ty.map_snd(f)),
-            Pattern::Rng(a, b) => {
-                let a = Box::new(a.map_snd(f));
-                let b = b.map(|p| Box::new(p.map_snd(f)));
-                Pattern::Rng(a, b)
-            }
         }
     }
 }
@@ -440,7 +411,7 @@ mod tests {
                         Var(e),
                         Var(f),
                         Wild,
-                        Rng(Box::new(Var(f)), Some(Box::new(Var(a)))),
+                        Lnk(Box::new(Var(f)), Box::new(Var(a))),
                     ])),
                 ),
             ]),
