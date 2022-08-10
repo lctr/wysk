@@ -91,6 +91,7 @@ pub enum ParseError {
     Expected(SrcLoc, LexKind, Token, String),
     InvalidLexeme(SrcLoc, Token, String),
     InvalidPrec(SrcLoc, Token, String),
+    InvalidNegatedPattern(SrcLoc, Token, String),
     InvalidPattern(SrcLoc, Token, String),
     InvalidExpression(SrcLoc, Token, String),
     InvalidType(SrcLoc, Token, String),
@@ -120,6 +121,7 @@ impl ParseError {
             | ParseError::Expected(srcloc, ..)
             | ParseError::InvalidLexeme(srcloc, ..)
             | ParseError::InvalidPrec(srcloc, ..)
+            | ParseError::InvalidNegatedPattern(srcloc, ..)
             | ParseError::InvalidPattern(srcloc, ..)
             | ParseError::InvalidExpression(srcloc, ..)
             | ParseError::InvalidType(srcloc, ..)
@@ -163,8 +165,8 @@ impl std::fmt::Display for ParseError {
                 &found.lexeme
             )
             .map(|_| src),
-            ParseError::InvalidPattern(_, tok, src) if tok.is_minus_sign() => {
-                write!(f, "only numeric literals are allowed as negated ungrouped patterns: all other patterns must be wrapped in parentheses").and(Ok(src))
+            ParseError::InvalidNegatedPattern(_, tok, src)  => {
+                write!(f, "only numeric literals are allowed as negated ungrouped patterns, but `{tok}` is not a numeric literal: all other patterns must be wrapped in parentheses").and(Ok(src))
             }
             ParseError::InvalidPattern(_, tok, src) => write!(
                 f,

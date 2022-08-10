@@ -19,6 +19,19 @@ impl<'t> PatParser<'t> {
         };
 
         let genpat = match self.peek() {
+            // only numbers are allowed as negated patterns without
+            // needing parentheses surroundthing them
+            Some(t) if t.is_minus_sign() => {
+                let neg = self.bump();
+                if self.peek_on(Lexeme::is_numeric) {
+                    Ok(RawPattern::Neg(Box::new(self.lit_pattern()?)))
+                } else {
+                    self.queue.push_front(neg);
+                    Err(self.snapshot()).map_err(|(srcloc, token, txt)| {
+                        ParseError::InvalidNegatedPattern(srcloc, token, txt)
+                    })
+                }
+            }
             lexpat!(~[parenL]) => self.grouped_pattern(),
 
             lexpat!(~[brackL]) => self
@@ -86,7 +99,7 @@ impl<'t> PatParser<'t> {
     }
 
     fn grouped_pattern(&mut self) -> Parsed<RawPattern> {
-        use Lexeme::{ParenL, ParenR};
+        use Lexeme::{Comma, ParenL, ParenR};
 
         let pat_err = |this: &mut Self| {
             Err(ParseError::Unbalanced {
@@ -103,6 +116,19 @@ impl<'t> PatParser<'t> {
             lexpat!(~[parenR]) => {
                 self.bump();
                 Ok(RawPattern::UNIT)
+            }
+
+            // (-a) or (-a, <rest>)
+            Some(t) if t.is_minus_sign() => {
+                self.bump();
+                let negpat = RawPattern::Neg(Box::new(self.pattern()?));
+                if self.bump_on(ParenR) {
+                    Ok(negpat)
+                } else if self.peek_on(Comma) {
+                    self.tuple_pattern_tail(negpat)
+                } else {
+                    self.unbalanced_paren().err()
+                }
             }
 
             lexpat!(~[Var]) => {
@@ -206,7 +232,7 @@ impl<'t> PatParser<'t> {
             .map(|ps| RawPattern::Rec(Record::Anon(ps)))
     }
 
-    /// List cons patterns
+    /// List cons (linked list) patterns
     ///
     /// *Identity:* `[a, b, c] = a:b:c:[] = (a:b:c)`
     ///
@@ -296,6 +322,22 @@ mod test {
         let lnk = |px, py| Pattern::Lnk(Box::new(px), Box::new(py));
         let pairs = [
             ("(a, b)", Pattern::Tup(vec![id(a), id(b)])),
+            (
+                "(-a)",
+                Pattern::Neg(Box::new(Pattern::Var(Ident::Lower(a)))),
+            ),
+            (
+                "-3",
+                Pattern::Neg(Box::new(Pattern::Lit(Literal::mk_simple_integer(3)))),
+            ),
+            (
+                "(-1, -2, -3)",
+                Pattern::Tup(vec![
+                    Pattern::Neg(Box::new(Pattern::Lit(Literal::mk_simple_integer(1)))),
+                    Pattern::Neg(Box::new(Pattern::Lit(Literal::mk_simple_integer(2)))),
+                    Pattern::Neg(Box::new(Pattern::Lit(Literal::mk_simple_integer(3)))),
+                ]),
+            ),
             ("(a:b:(c:d))", lnk(id(a), lnk(id(b), lnk(id(c), id(d))))),
             (
                 "a @ [1, 2, 3]",
