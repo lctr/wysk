@@ -147,52 +147,55 @@ impl std::fmt::Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Parse error: ")?;
         let src = match self {
-            ParseError::UnexpectedEof(_srcloc, src) => write!(f, "unexpected EOF").map(|_| src),
+            ParseError::UnexpectedEof(_srcloc, src) => write!(f, "unexpected EOF").and(Ok(src)),
             ParseError::Expected(_, kind, found, src) => {
-                write!(f, "expected `{}`, but found `{}`", kind, &found.lexeme).map(|_| src)
+                write!(f, "expected `{}`, but found `{}`", kind, &found.lexeme).and(Ok(src))
             }
             ParseError::InvalidLexeme(_, b, src) => write!(
                 f,
                 "invalid lexeme `{}` found",
                 &Source::new(src.as_str())[b.span]
             )
-            .map(|_| src),
+            .and(Ok(src)),
             ParseError::InvalidPrec(_, found, src) => write!(
                 f,
                 "expected a precedence value between 0 and 9, but found `{}`",
                 &found.lexeme
             )
             .map(|_| src),
+            ParseError::InvalidPattern(_, tok, src) if tok.is_minus_sign() => {
+                write!(f, "only numeric literals are allowed as negated ungrouped patterns: all other patterns must be wrapped in parentheses").and(Ok(src))
+            }
             ParseError::InvalidPattern(_, tok, src) => write!(
                 f,
                 "expected a pattern, but found `{}` which does not begin a valid pattern",
                 tok
             )
-            .map(|_| src),
+            .and(Ok(src)),
             ParseError::InvalidExpression(_, tok, src) => write!(
                 f,
                 "expected an expression, but found `{}` which does not begin a valid expression",
                 tok
             )
-            .map(|_| src),
+            .and(Ok(src)),
             ParseError::InvalidType(_, tok, src) => write!(
                 f,
                 "expected a type, but found `{}` which does not begin a valid type",
                 tok
             )
-            .map(|_| src),
+            .and(Ok(src)),
             ParseError::FixityExists(_, infix, _, src) => {
                 write!(f, "multiple fixities defined for `{}`", &infix).map(|_| src)
             }
             ParseError::Custom(_, found, msg, src) => {
-                write!(f, "unexpected token `{}` {}", found.lexeme, msg).map(|_| src)
+                write!(f, "unexpected token `{}` {}", found.lexeme, msg).and(Ok(src))
             }
             ParseError::BadContext(_, id, span, src) => write!(
                 f,
                 "invalid token `{}` found while parsing type context on {}",
                 id, span
             )
-            .map(|_| src),
+            .and(Ok(src)),
             ParseError::Unbalanced {
                 found,
                 delim,
@@ -203,7 +206,7 @@ impl std::fmt::Display for ParseError {
                 "found `{}` but expected closing delimiter `{}`",
                 found.lexeme, delim
             )
-            .map(|_| src),
+            .and(Ok(src)),
         }?;
         let srcloc = self.srcloc();
         // Parse error: #{MESSAGE}
