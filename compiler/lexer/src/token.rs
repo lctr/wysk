@@ -120,6 +120,7 @@ wy_common::variant_preds! {
     Lexeme
     | is_kw => Kw (_)
     | is_lit => Lit (_)
+    | is_numeric => Lit(Literal::Integral { .. } | Literal::Fractional { .. })
     /// Tests whether a lexeme is an identifier beginning with a lowercase
     /// character OR an underscore. Note that a single underscore is NOT lexed
     /// as a `Lower` lexeme variant.
