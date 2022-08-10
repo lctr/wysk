@@ -175,6 +175,71 @@ impl<Id, V, X> MapSnd<V, X> for Section<Id, V> {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Range<Id, V> {
+    /// An infinite sequence with a starting point and no endpoint.
+    From(Expression<Id, V>),
+    /// An infinite arithmetic sequence, i.e. a sequence with a
+    /// starting point and an increment, where the increment is
+    /// defined by the difference between the first and second points.
+    ///
+    /// For example, the range `[a, b..]` is equivalent to the
+    /// sequence `[a + 0 * (b - a), a + (b - a), a + 2 * (b - a),
+    /// ..]`.
+    FromThen([Expression<Id, V>; 2]),
+    /// A finite sequence with a starting point and an endpoint
+    /// (non-inclusive).
+    FromTo([Expression<Id, V>; 2]),
+    /// A finite sequence with a starting point, an increment, and an
+    /// endpoint (non-inclusive), where the increment is defined by
+    /// the difference between the starting point and the left-hand
+    /// element of the second point, terminating on the last element
+    /// that is strictly less than the endpoint for `a < b` or
+    /// strictly greater than the endpoint for `a > b`. If `a == b`,
+    /// then this will be equivalent to the `Range::From` variant.
+    ///
+    /// For example, if we suppose `a, b, c` are of a type defining an
+    /// ordered field, then the range `[a, b..c]` is equivalent to the
+    /// sequence `[a + 0 * (b - a), a + (b a), a + 2 * (b - a), ..., a
+    /// + k * (b - a)]` where `k * (b - a) < c`.
+    FromThenTo([Expression<Id, V>; 3]),
+}
+
+impl<Id, V, X> MapFst<Id, X> for Range<Id, V> {
+    type WrapFst = Range<X, V>;
+
+    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(Id) -> X,
+    {
+        match self {
+            Range::From(x) => Range::From(x.map_fst(f)),
+            Range::FromThen([x, y]) => Range::FromThen([x.map_fst(f), y.map_fst(f)]),
+            Range::FromTo([x, y]) => Range::FromTo([x.map_fst(f), y.map_fst(f)]),
+            Range::FromThenTo([x, y, z]) => {
+                Range::FromThenTo([x.map_fst(f), y.map_fst(f), z.map_fst(f)])
+            }
+        }
+    }
+}
+impl<Id, V, X> MapSnd<V, X> for Range<Id, V> {
+    type WrapSnd = Range<Id, X>;
+
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(V) -> X,
+    {
+        match self {
+            Range::From(x) => Range::From(x.map_snd(f)),
+            Range::FromThen([x, y]) => Range::FromThen([x.map_snd(f), y.map_snd(f)]),
+            Range::FromTo([x, y]) => Range::FromTo([x.map_snd(f), y.map_snd(f)]),
+            Range::FromThenTo([x, y, z]) => {
+                Range::FromThenTo([x.map_snd(f), y.map_snd(f), z.map_snd(f)])
+            }
+        }
+    }
+}
+
 pub type RawExpression = Expression<Ident, Ident>;
 pub type Expr<V> = Expression<Ident, V>;
 
@@ -252,7 +317,7 @@ pub enum Expression<Id, V> {
     Case(Box<Expression<Id, V>>, Vec<Alternative<Id, V>>),
     Cast(Box<Expression<Id, V>>, Type<Id, V>),
     Do(Vec<Statement<Id, V>>, Box<Expression<Id, V>>),
-    Range(Box<Expression<Id, V>>, Option<Box<Expression<Id, V>>>),
+    Range(Box<Range<Id, V>>),
     Group(Box<Expression<Id, V>>),
 }
 
@@ -287,8 +352,8 @@ variant_preds! {
     | is_group => Group (_)
     | is_cast => Cast (..)
     | is_range => Range (..)
-    | is_open_range => Range(_, None)
-    | is_closed_range => Range(_, Some(_))
+    | is_open_range => Range(rng) [if matches!(rng.as_ref(), Range::From(..) | Range::FromThen(..))]
+    | is_closed_range => Range(rng) [if matches!(rng.as_ref(), Range::FromTo(..) | Range::FromThenTo(..))]
     | is_do => Do (..)
     | is_simple_do => Do (stmts, _) [if stmts.is_empty()]
 }
@@ -339,9 +404,7 @@ impl<Id, V, X> MapFst<Id, X> for Expression<Id, V> {
             Expression::Case(e, a) => Expression::Case(Box::new(e.map_fst(f)), a.map_fst(f)),
             Expression::Cast(e, ty) => Expression::Cast(Box::new(e.map_fst(f)), ty.map_fst(f)),
             Expression::Do(stmts, e) => Expression::Do(stmts.map_fst(f), Box::new(e.map_fst(f))),
-            Expression::Range(a, b) => {
-                Expression::Range(Box::new(a.map_fst(f)), b.map(|x| Box::new(x.map_fst(f))))
-            }
+            Expression::Range(rng) => Expression::Range(Box::new(rng.map_fst(f))),
             Expression::Group(e) => Expression::Group(Box::new(e.map_fst(f))),
         }
     }
@@ -388,9 +451,7 @@ impl<Id, V, X> MapSnd<V, X> for Expression<Id, V> {
             Expression::Case(e, a) => Expression::Case(Box::new(e.map_snd(f)), a.map_snd(f)),
             Expression::Cast(e, ty) => Expression::Cast(Box::new(e.map_snd(f)), ty.map_snd(f)),
             Expression::Do(stmts, e) => Expression::Do(stmts.map_snd(f), Box::new(e.map_snd(f))),
-            Expression::Range(a, b) => {
-                Expression::Range(Box::new(a.map_snd(f)), b.map(|x| Box::new(x.map_snd(f))))
-            }
+            Expression::Range(rng) => Expression::Range(Box::new(rng.map_snd(f))),
             Expression::Group(e) => Expression::Group(Box::new(e.map_snd(f))),
         }
     }
@@ -594,14 +655,12 @@ impl<Id, V> Expression<Id, V> {
                 }
             }
             Expression::Cast(x, _) => x.valid_pat(),
-            Expression::Range(a, b) => {
-                let va = a.valid_pat();
-                if let Some(vb) = b {
-                    va && vb.valid_pat()
-                } else {
-                    va
-                }
-            }
+            Expression::Range(rng) => match rng.as_ref() {
+                Range::From(a) => a.valid_pat(),
+                Range::FromThen(_) => todo!(),
+                Range::FromTo([a, b]) => a.valid_pat() && b.valid_pat(),
+                Range::FromThenTo(_) => todo!(),
+            },
         }
     }
 
@@ -671,12 +730,19 @@ impl<Id, V> Expression<Id, V> {
             Expression::Do(stmts, x) => {
                 idents.extend(stmts.into_iter().flat_map(|s| s.idents()).chain(x.idents()))
             }
-            Expression::Range(a, b) => {
-                idents.extend(
-                    a.idents()
-                        .into_iter()
-                        .chain(b.into_iter().flat_map(|x| x.idents())),
-                );
+            Expression::Range(rng) => {
+                match rng.as_ref() {
+                    Range::From(a) => idents.extend(a.idents()),
+                    Range::FromThen(xs) | Range::FromTo(xs) => {
+                        idents.extend(xs.into_iter().flat_map(Self::idents))
+                    }
+                    Range::FromThenTo(xs) => idents.extend(xs.into_iter().flat_map(Self::idents)),
+                }
+                // idents.extend(
+                //     a.idents()
+                //         .into_iter()
+                //         .chain(b.into_iter().flat_map(|x| x.idents())),
+                // );
             }
         };
         idents
@@ -762,13 +828,20 @@ impl<Id, V> Expression<Id, V> {
             }
             Expression::Do(stmts, x) => {
                 stmts.into_iter().for_each(|s| vars.extend(s.free_vars()));
-                vars.extend(x.idents());
-            }
-            Expression::Range(x, y) => {
                 vars.extend(x.free_vars());
-                if let Some(y) = y {
-                    vars.extend(y.free_vars())
-                }
+            }
+            Expression::Range(rng) => {
+                match rng.as_ref() {
+                    Range::From(x) => vars.extend(x.free_vars()),
+                    Range::FromThen(xs) | Range::FromTo(xs) => {
+                        vars.extend(xs.into_iter().flat_map(Self::free_vars))
+                    }
+                    Range::FromThenTo(xs) => vars.extend(xs.into_iter().flat_map(Self::free_vars)),
+                };
+                // vars.extend(x.free_vars());
+                // if let Some(y) = y {
+                //     vars.extend(y.free_vars())
+                // }
             }
             Expression::Cast(x, _) | Expression::Neg(x) | Expression::Group(x) => {
                 vars.extend(x.free_vars())
@@ -799,79 +872,6 @@ impl<Id, V> Expression<Id, V> {
                 None
             }
         })
-    }
-}
-
-pub fn try_expr_into_pat<Id: Identifier, V>(expr: Expression<Id, V>) -> Option<Pattern<Id, V>> {
-    fn iters<A: Identifier, B>(exprs: Vec<Expression<A, B>>) -> Option<Vec<Pattern<A, B>>> {
-        exprs.into_iter().fold(Some(vec![]), |a, c| match a {
-            Some(mut acc) => try_expr_into_pat(c).map(|pat| {
-                acc.push(pat);
-                acc
-            }),
-            None => None,
-        })
-    }
-    match expr {
-        Expression::Ident(id) => Some(Pattern::Var(id)),
-        Expression::Path(_, _)
-        | Expression::Infix { .. }
-        | Expression::Lambda(_, _)
-        | Expression::Let(_, _)
-        | Expression::Section(_)
-        | Expression::List(_, _)
-        | Expression::Cond(_)
-        | Expression::Case(_, _)
-        | Expression::Do(_, _) => None,
-        Expression::Lit(lit) => Some(Pattern::Lit(lit)),
-        Expression::Neg(_) => todo!(),
-        Expression::Tuple(ts) => iters(ts).map(Pattern::Tup),
-        Expression::Array(ts) => iters(ts).map(Pattern::Vec),
-        Expression::Dict(rec) => Some(Pattern::Rec(rec.map(|(con, fields)| {
-            let mut flds = vec![];
-            for field in fields {
-                let f = field.map(|(id, expr)| (id, expr.and_then(try_expr_into_pat)));
-                flds.push(f);
-            }
-            (con, flds)
-        }))),
-        Expression::App(x, y) => {
-            let mut left = *x;
-            let mut right = *y;
-            let mut args = vec![];
-            loop {
-                if let Some(py) = try_expr_into_pat(right) {
-                    args.push(py);
-                    match left {
-                        Expression::App(x2, y2) => {
-                            left = *x2;
-                            right = *y2;
-                            continue;
-                        }
-                        Expression::Ident(id) if id.is_upper() => break Some(id),
-                        _ => break None,
-                    }
-                }
-                break None;
-            }
-            .map(|id| {
-                Pattern::Dat(id, {
-                    args.reverse();
-                    args
-                })
-            })
-        }
-        Expression::Cast(x, ty) => {
-            try_expr_into_pat(*x).map(|pat| Pattern::Cast(Box::new(pat), ty))
-        }
-        Expression::Range(a, Some(b)) => match (try_expr_into_pat(*a), try_expr_into_pat(*b)) {
-            (Some(x), Some(y)) => Some(Pattern::Rng(Box::new(x), Some(Box::new(y)))),
-            _ => None,
-        },
-        Expression::Range(a, None) => {
-            try_expr_into_pat(*a).map(|p| Pattern::Rng(Box::new(p), None))
-        }
-        Expression::Group(x) => try_expr_into_pat(*x),
     }
 }
 

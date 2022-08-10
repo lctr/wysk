@@ -4,7 +4,7 @@ use wy_lexer::token::{LexKind, Not};
 use wy_lexer::*;
 use wy_name::ident::Ident;
 use wy_span::WithLoc;
-use wy_syntax::expr::{RawExpression, Section};
+use wy_syntax::expr::{Range, RawExpression, Section};
 use wy_syntax::pattern::RawPattern;
 use wy_syntax::record::{Field, Record};
 use wy_syntax::stmt::{Binding, RawAlternative, RawBinding, RawMatch, RawStatement};
@@ -233,31 +233,47 @@ impl<'t> ExprParser<'t> {
         }
 
         let first = self.expression()?;
-
-        if self.bump_on(Dot2) {
-            return Ok(RawExpression::Range(
-                Box::new(first),
-                if self.bump_on(BrackR) {
-                    None
-                } else {
-                    let end = self.subexpression()?;
-                    self.eat(BrackR)?;
-                    Some(Box::new(end))
-                },
-            ));
-        };
-
         match self.peek() {
+            // [a]
             lexpat!(~[brackR]) => {
                 self.bump();
                 Ok(RawExpression::Array(vec![first]))
             }
+            // [a | stmts]
             lexpat!(~[|]) => self.list_comprehension(first),
-
-            lexpat!(~[,]) => self
-                .delimited([Comma, Comma, BrackR], Self::expression)
-                .map(|xs| std::iter::once(first).chain(xs).collect::<Vec<_>>())
-                .map(RawExpression::Array),
+            // [a..] or [a..b]
+            lexpat!(~[..]) => {
+                self.bump();
+                let range = if self.bump_on(BrackR) {
+                    Range::From(first)
+                } else {
+                    self.expression()
+                        .map(|second| Range::FromTo([first, second]))
+                        .map(|range| self.bumped(range))?
+                };
+                Ok(RawExpression::Range(Box::new(range)))
+            }
+            lexpat!(~[,]) => {
+                self.bump();
+                let second = self.expression()?;
+                if self.peek_on(Comma) {
+                    // [a, b, <rest>]
+                    self.delimited([Comma, Comma, BrackR], Self::expression)
+                        .map(|xs| [first, second].into_iter().chain(xs).collect::<Vec<_>>())
+                        .map(RawExpression::Array)
+                } else if self.bump_on(Dot2) {
+                    // [a, b..c]
+                    let third = self.expression()?;
+                    self.eat(BrackR)?;
+                    Ok(RawExpression::Range(Box::new(Range::FromThenTo([
+                        first, second, third,
+                    ]))))
+                } else {
+                    // [a, b]
+                    self.eat(BrackR)?;
+                    Ok(RawExpression::Array(vec![first, second]))
+                }
+            }
 
             _ => self.unbalanced_brack().err(),
         }
@@ -582,7 +598,11 @@ impl<'t> ExprParser<'t> {
 #[cfg(test)]
 mod test {
     use wy_intern::Symbol;
-    use wy_syntax::{expr::Expression, pattern::Pattern, stmt::Alternative};
+    use wy_syntax::{
+        expr::Expression,
+        pattern::Pattern,
+        stmt::{Alternative, Match, Statement},
+    };
 
     use super::*;
 
@@ -700,33 +720,185 @@ y -> y;
         , bar | x y = (x, y) where y = x + 2
         in bar (foo 1) (foo 2)
     "#;
-        let result = Parser::from_str(src).expression();
-        println!("showing let:\n{:#?}", &result)
-    }
-
-    #[test]
-    fn test_lambda_expr() {
-        let src = r#"\x -> f x"#;
-        let [x, f] = Symbol::intern_many(["x", "f"]);
-        let expr = Parser::from_str(src).expression().unwrap();
-        let expected = Expression::Lambda(
-            Pattern::Var(Ident::Lower(x)),
+        let [foo, bar, x, y] = Symbol::intern_many_with(["foo", "bar", "x", "y"], Ident::Lower);
+        let actual = Parser::from_str(src).expression().unwrap();
+        let expected = Expression::Let(
+            vec![
+                Binding {
+                    name: foo,
+                    tsig: Signature::Implicit,
+                    arms: vec![
+                        Match {
+                            args: vec![Pattern::Lit(Literal::mk_simple_integer(1))],
+                            cond: None,
+                            body: Expression::Lit(Literal::mk_simple_integer(2)),
+                            wher: vec![],
+                        },
+                        Match {
+                            args: vec![Pattern::Lit(Literal::mk_simple_integer(3))],
+                            cond: None,
+                            body: Expression::Lit(Literal::mk_simple_integer(4)),
+                            wher: vec![],
+                        },
+                    ],
+                },
+                Binding {
+                    name: bar,
+                    tsig: Signature::Implicit,
+                    arms: vec![Match {
+                        args: vec![Pattern::Var(x), Pattern::Var(y)],
+                        cond: None,
+                        body: Expression::Tuple(vec![Expression::Ident(x), Expression::Ident(y)]),
+                        wher: vec![Binding {
+                            name: y,
+                            tsig: Signature::Implicit,
+                            arms: vec![Match {
+                                args: vec![],
+                                cond: None,
+                                body: Expression::Infix {
+                                    left: Box::new(Expression::Ident(x)),
+                                    infix: Ident::Infix(Symbol::intern("+")),
+                                    right: Box::new(Expression::Lit(Literal::mk_simple_integer(2))),
+                                },
+                                wher: vec![],
+                            }],
+                        }],
+                    }],
+                },
+            ],
             Box::new(Expression::App(
-                Box::new(Expression::Ident(Ident::Lower(f))),
-                Box::new(Expression::Ident(Ident::Lower(x))),
+                Box::new(Expression::App(
+                    Box::new(Expression::Ident(bar)),
+                    Box::new(Expression::App(
+                        Box::new(Expression::Ident(foo)),
+                        Box::new(Expression::Lit(Literal::mk_simple_integer(1))),
+                    )),
+                )),
+                Box::new(Expression::App(
+                    Box::new(Expression::Ident(foo)),
+                    Box::new(Expression::Lit(Literal::mk_simple_integer(2))),
+                )),
             )),
         );
-        assert_eq!(expr, expected);
-        println!("{:?}", &expr);
+        assert_eq!(actual, expected);
     }
 
     #[test]
-    fn test_list_comprehension() {
-        let src = "[ f x | x <- [0..n] ]";
-        let mut parser = Parser::from_str(src);
-        let expr = parser.expression();
-        println!("{:?}", &expr);
-        println!("{:?}", &parser);
+    fn test_lambda_exprs() {
+        let [f, x, y, z] = Symbol::intern_many_with(["f", "x", "y", "z"], Ident::Lower);
+        let pairs = [
+            (
+                r#"\x -> f x"#,
+                Expression::Lambda(
+                    Pattern::Var(x),
+                    Box::new(Expression::App(
+                        Box::new(Expression::Ident(f)),
+                        Box::new(Expression::Ident(x)),
+                    )),
+                ),
+            ),
+            (
+                r#"\(x, y) -> (f x, f y, \z -> f z)"#,
+                Expression::Lambda(
+                    Pattern::Tup(vec![Pattern::Var(x), Pattern::Var(y)]),
+                    Box::new(Expression::Tuple(vec![
+                        Expression::App(
+                            Box::new(Expression::Ident(f)),
+                            Box::new(Expression::Ident(x)),
+                        ),
+                        Expression::App(
+                            Box::new(Expression::Ident(f)),
+                            Box::new(Expression::Ident(y)),
+                        ),
+                        Expression::Lambda(
+                            Pattern::Var(z),
+                            Box::new(Expression::App(
+                                Box::new(Expression::Ident(f)),
+                                Box::new(Expression::Ident(z)),
+                            )),
+                        ),
+                    ])),
+                ),
+            ),
+            (
+                r#"\x y z -> f x y z"#,
+                Expression::Lambda(
+                    Pattern::Var(x),
+                    Box::new(Expression::Lambda(
+                        Pattern::Var(y),
+                        Box::new(Expression::Lambda(
+                            Pattern::Var(z),
+                            Box::new(Expression::App(
+                                Box::new(Expression::App(
+                                    Box::new(Expression::App(
+                                        Box::new(Expression::Ident(f)),
+                                        Box::new(Expression::Ident(x)),
+                                    )),
+                                    Box::new(Expression::Ident(y)),
+                                )),
+                                Box::new(Expression::Ident(z)),
+                            )),
+                        )),
+                    )),
+                ),
+            ),
+        ];
+        for (src, expected) in pairs {
+            assert_eq!(Parser::from_str(src).expression().unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn test_list_comprehensions() {
+        let [f, x, y, n] = Symbol::intern_many_with(["f", "x", "y", "n"], Ident::Lower);
+        let pairs = [
+            (
+                "[ f x | x <- [0..n] ]",
+                Expression::List(
+                    Box::new(Expression::App(
+                        Box::new(Expression::Ident(f)),
+                        Box::new(Expression::Ident(x)),
+                    )),
+                    vec![Statement::Generator(
+                        Pattern::Var(x),
+                        Expression::Range(Box::new(Range::FromTo([
+                            Expression::Lit(Literal::DIGIT_ZERO),
+                            Expression::Ident(n),
+                        ]))),
+                    )],
+                ),
+            ),
+            (
+                "[f x | x <- [0, 5..10], y <- [0 .. n]]",
+                Expression::List(
+                    Box::new(Expression::App(
+                        Box::new(Expression::Ident(f)),
+                        Box::new(Expression::Ident(x)),
+                    )),
+                    vec![
+                        Statement::Generator(
+                            Pattern::Var(x),
+                            Expression::Range(Box::new(Range::FromThenTo([
+                                Expression::Lit(Literal::DIGIT_ZERO),
+                                Expression::Lit(Literal::mk_simple_integer(5)),
+                                Expression::Lit(Literal::mk_simple_integer(10)),
+                            ]))),
+                        ),
+                        Statement::Generator(
+                            Pattern::Var(y),
+                            Expression::Range(Box::new(Range::FromTo([
+                                Expression::Lit(Literal::DIGIT_ZERO),
+                                Expression::Ident(n),
+                            ]))),
+                        ),
+                    ],
+                ),
+            ),
+        ];
+        for (src, expected) in pairs {
+            let actual = Parser::from_str(src).expression().unwrap();
+            assert_eq!(actual, expected);
+        }
     }
 
     #[test]
