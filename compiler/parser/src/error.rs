@@ -273,7 +273,7 @@ impl<P: AsRef<Path>> Default for SrcPath<P> {
 impl<P: AsRef<Path>> std::fmt::Display for SrcPath<P> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SrcPath::Direct => write!(f, "<INTERACTIVE>"),
+            SrcPath::Direct => write!(f, "<STDIN>"),
             SrcPath::File(p) => write!(f, "{}", p.as_ref().display()),
         }
     }
