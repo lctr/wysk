@@ -42,10 +42,16 @@ impl<'t> ExprParser<'t> {
         F: FnMut(&mut Self) -> Parsed<RawExpression>,
     {
         let head = f(self)?;
-        Ok(self
-            .many_while_on(Lexeme::begins_expr, f)?
-            .into_iter()
-            .fold(head, RawExpression::mk_app))
+        // TODO: maybe simplify this to checking that `head` isn't a
+        // literal, list, tuple, range, or record
+        if head.maybe_callable() {
+            Ok(self
+                .many_while_on(Lexeme::begins_expr, f)?
+                .into_iter()
+                .fold(head, RawExpression::mk_app))
+        } else {
+            Ok(head)
+        }
     }
 
     /// Applies a the given parser and, if encountering an operator, will
