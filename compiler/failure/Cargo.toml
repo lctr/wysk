@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 wy_span = { path = "../span" }
 wy_intern = { path = "../intern" }
+wy_pretty = { path = "../pretty" }
