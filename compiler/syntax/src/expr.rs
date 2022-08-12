@@ -461,6 +461,45 @@ impl<Id, V> Expression<Id, V> {
     pub const UNIT: Self = Self::Tuple(vec![]);
     pub const NULL: Self = Self::Array(vec![]);
 
+    /// This method returns whether the general syntactic form of an
+    /// expression *may* be callable, i.e., it will return `true`
+    /// UNLESS it is known to be impossible for the expression to be callable.
+    pub fn maybe_callable(&self) -> bool {
+        match self {
+            Expression::Lit(_) |
+            Expression::Neg(_) |
+            Expression::Tuple(_) |
+            Expression::Array(_) |
+            Expression::List(_, _) |
+            Expression::Dict(_) |
+            Expression::Range(_) => false,
+            Expression::Ident(_) |
+            Expression::Path(_, _) |
+            // since infixes are also (customizable) functions, they
+            // may be callable. For example, the composition operator
+            // from the prelude in the expression `x \> y`, where (\>) :: (b
+            // -> c) -> (a -> b) -> (a -> c), is callable
+            Expression::Infix { .. } |
+            Expression::Section(_) |
+            Expression::Lambda(_, _) => true,
+            // maybe wait until after parsing to care about this?
+            Expression::App(x, _y) => {
+                // applied lambda
+                if let Self::Lambda(_, body) = x.as_ref() {
+                    body.maybe_callable()
+                } else { true }
+            }
+            Expression::Let(_, x) => x.maybe_callable(),
+            Expression::Cond(xyz) => xyz.as_ref()[1..].into_iter().all(Self::maybe_callable),
+            Expression::Case(_, alts) => alts.into_iter().all(|alt| alt.body.maybe_callable()),
+            Expression::Cast(x, _)
+            | Expression::Do(_, x)
+            | Expression::Group(x)
+            => x.maybe_callable(),
+            
+        }
+    }
+
     /// If an expression is a `Group` variant, return the inner node.
     /// Otherwise, returns `Self`.
     pub fn ungroup(self) -> Self {
