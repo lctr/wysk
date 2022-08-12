@@ -44,7 +44,11 @@ impl<'t> Report for Parser<'t> {
     }
 
     fn next_token(&mut self) -> Token {
-        *self.peek_ahead()
+        let pos = self.get_pos();
+        self.peek_ahead().copied().unwrap_or_else(|| Token {
+            lexeme: Lexeme::Eof,
+            span: Span(pos, pos),
+        })
     }
 }
 
@@ -124,10 +128,19 @@ impl<'t> Parser<'t> {
         buf
     }
 
-    pub fn peek_ahead(&mut self) -> &Token {
-        let tok = self.bump();
-        self.queue.push_front(tok);
-        &self.queue[0]
+    /// Bumps the lexer twice, storing the two tokens returns, and
+    /// then returns a reference to the second token bumped.
+    pub fn peek_ahead(&mut self) -> Option<&Token> {
+        let first = self.bump();
+        if first.is_eof() {
+            return None;
+        }
+        let second = self.bump();
+        self.queue.push_back(first);
+        if !second.is_eof() {
+            self.queue.push_back(second);
+        }
+        self.queue.front()
     }
 
     pub fn lookahead<const N: usize>(&mut self) -> [Token; N] {
@@ -138,7 +151,12 @@ impl<'t> Parser<'t> {
         for arr in &mut array {
             let token = self.bump();
             *arr = token;
-            self.queue.push_back(token);
+            // self.queue.push_back(token);
+        }
+        for tok in array {
+            if !tok.is_eof() {
+                self.queue.push_back(tok);
+            }
         }
         array
     }
