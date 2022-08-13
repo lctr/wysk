@@ -407,6 +407,14 @@ impl std::ops::Add<BytePos> for Span {
     }
 }
 
+impl std::ops::AddAssign<BytePos> for Span {
+    fn add_assign(&mut self, rhs: BytePos) {
+        let Span(lo, hi) = self;
+        *lo += rhs;
+        *hi += rhs;
+    }
+}
+
 impl std::ops::Sub for Span {
     type Output = Self;
 
@@ -522,6 +530,14 @@ impl<T> Spanned<T> {
     #[inline]
     pub fn span(&self) -> Span {
         self.1
+    }
+
+    pub fn span_mut(&mut self) -> &mut Span {
+        &mut self.1
+    }
+
+    pub fn shift_right(&mut self, offset: BytePos) {
+        *self.span_mut() += offset;
     }
 
     pub fn mapf<F, U>(self, f: &mut wy_common::functor::Func<F>) -> Spanned<U>
@@ -1229,11 +1245,20 @@ impl<X, E> Positioned<Result<X, E>> {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     #[test]
-//     fn it_works() {
-//         let result = 2 + 2;
-//         assert_eq!(result, 4);
-//     }
-// }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_shift_span_by_bytepos() {
+        let span0 = Span(BytePos::new(0), BytePos::new(15));
+        let offset = BytePos::new(4);
+        let mut spanned0 = Spanned("foo", span0);
+
+        spanned0.shift_right(offset);
+        assert_eq!(
+            spanned0,
+            Spanned("foo", Span(BytePos::new(4), BytePos::new(19)))
+        )
+    }
+}
