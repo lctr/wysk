@@ -29,7 +29,7 @@ impl<'t> DeclParser<'t> {
             lexpat!(~[class]) => self.class_decl().map(D::Class),
             lexpat!(~[impl]) => self.inst_decl().map(D::Instance),
             lexpat!(~[newtype]) => self.newtype_decl().map(D::Newtype),
-            lexpat!(~[#]) => self.attribute().map(D::Attribute),
+            lexpat!(~[#]) => todo!(),
             _ => Err(self.expected(LexKind::Keyword)),
         }
     }
@@ -80,12 +80,14 @@ impl<'t> DeclParser<'t> {
         let prec = self.fixity_prec()?;
         let fixity = Fixity { prec, assoc };
         let infixes = self.with_fixity(fixity)?;
+        let from_pragma = false;
         let end = self.get_pos();
         let span = Span(start, end);
         Ok(FixityDecl {
             span,
             infixes,
             fixity,
+            from_pragma,
         })
     }
 

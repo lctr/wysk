@@ -487,6 +487,7 @@ mod tests {
                     assoc: Assoc::Left,
                     prec: Prec(6),
                 },
+                from_pragma: false,
             },
             FixityDecl {
                 span: Span::DUMMY,
@@ -495,6 +496,7 @@ mod tests {
                     assoc: Assoc::Left,
                     prec: Prec(7),
                 },
+                from_pragma: false,
             },
         ];
         let mut fixities = FixityTable::from(&decls[..]);
