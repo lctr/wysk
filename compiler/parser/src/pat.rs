@@ -1,7 +1,7 @@
 use wy_common::Deque;
 use wy_lexer::lexpat;
 use wy_lexer::{Lexeme, Token};
-use wy_name::ident::Ident;
+
 use wy_syntax::pattern::RawPattern;
 use wy_syntax::record::{Field, Record};
 use wy_syntax::SpannedIdent;
@@ -312,6 +312,7 @@ mod test {
     use wy_common::functor::{Func, MapFst, MapSnd};
     use wy_intern::Symbol;
     use wy_lexer::Literal;
+    use wy_name::Ident;
     use wy_span::Spanned;
     use wy_syntax::pattern::Pattern;
 
