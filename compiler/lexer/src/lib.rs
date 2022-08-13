@@ -1,4 +1,4 @@
-use meta::{Attr, Placement, Pragma};
+use meta::{Attr, Meta, Placement};
 use stream::Mode;
 // use stream::Mode;
 use wy_intern as intern;
@@ -37,8 +37,8 @@ impl<'t> Lexer<'t> {
         if let Some(t) = self.stack.pop() {
             t
         } else {
-            self.prev_pos = self.source.get_pos();
             self.source.eat_whitespace();
+            self.prev_pos = self.source.get_pos();
             if let Some(c) = self.source.peek().copied() {
                 self.tokenize(c)
             } else {
@@ -364,9 +364,9 @@ impl<'t> Lexer<'t> {
         ));
         let txt = &self.source[span];
         let pragma = if let Some(attr) = Attr::from_str(txt) {
-            Pragma::BuiltIn(attr)
+            Meta::BuiltIn(attr)
         } else {
-            Pragma::Custom(Symbol::intern(txt))
+            Meta::Custom(Symbol::intern(txt))
         };
         if let Mode::Meta { attr_seen, .. } = &mut self.mode {
             *attr_seen = true
@@ -1070,7 +1070,7 @@ mod test {
         assert_eq!(
             lexer.next(),
             Some(Token {
-                lexeme: Lexeme::Meta(Pragma::BuiltIn(Attr::Test)),
+                lexeme: Lexeme::Meta(Meta::BuiltIn(Attr::Test)),
                 span: Span(BytePos::strlen("hi #["), BytePos::strlen("hi #[test"))
             })
         );

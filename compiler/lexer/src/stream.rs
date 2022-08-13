@@ -430,13 +430,15 @@ impl<'t> WithLoc for Lexer<'t> {
 
 impl<'t> WithSpan for Lexer<'t> {
     fn get_pos(&self) -> BytePos {
-        // self.bytepos
-        if let Some(ref tok) = self.current {
-            // since we've already got the next token in our `current` field, should we return the beginning or end of that token?
-            tok.span.start()
-        } else if !self.stack.is_empty() {
-            self.stack[self.stack.len() - 1].span.start()
+        if self.current.is_some() || !self.stack.is_empty() {
+            self.prev_pos
         } else {
+            // if let Some(ref tok) = self.current {
+            //     // since we've already got the next token in our `current` field, should we return the beginning or end of that token?
+            //     tok.span.start()
+            // } else if !self.stack.is_empty() {
+            //     self.stack[self.stack.len() - 1].span.start()
+            // } else {
             self.source.get_pos()
         }
     }
@@ -507,7 +509,7 @@ impl<'t> Lexer<'t> {
                 if !self.stack.is_empty() {
                     Some(&self.stack[0])
                 } else {
-                    self.prev_pos = self.source.get_pos();
+                    // self.prev_pos = self.source.get_pos();
                     let token = self.token();
                     self.current.replace(token);
                     self.current.as_ref()
