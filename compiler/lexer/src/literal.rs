@@ -185,6 +185,41 @@ impl Literal {
         }
     }
 
+    pub fn is_integral(&self) -> bool {
+        matches!(self, Self::Integral { .. })
+    }
+
+    pub fn is_fractional(&self) -> bool {
+        matches!(self, Self::Fractional { .. })
+    }
+
+    /// Returns `true` if the literal is an `Integral` variant with
+    /// decimal base and no suffixes or prefixes.
+    pub fn is_bare_int(&self) -> bool {
+        matches!(
+            self,
+            Self::Integral {
+                base: Base::Dec,
+                prefix: None,
+                suffix: None,
+                ..
+            }
+        )
+    }
+
+    pub fn has_decimal_base(&self) -> bool {
+        matches!(
+            self,
+            Self::Integral {
+                base: Base::Dec,
+                ..
+            } | Self::Fractional {
+                base: Base::Dec,
+                ..
+            }
+        )
+    }
+
     pub fn try_simple_digit_byte(&self) -> Option<u8> {
         match self {
             Self::Integral { symbol, .. } if symbol.is_digit() => {
