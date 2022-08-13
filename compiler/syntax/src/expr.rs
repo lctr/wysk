@@ -8,7 +8,7 @@ use wy_lexer::Literal;
 use wy_name::ident::{Ident, Identifier};
 use wy_span::Spanned;
 
-use crate::{decl::Arity, record::Record, stmt::Alternative, tipo::Type, Binding};
+use crate::{decl::Arity, record::Record, stmt::Alternative, tipo::Type, Binding, SpannedIdent};
 
 use super::{Pattern, Statement};
 
@@ -305,7 +305,7 @@ impl<Id, V, X> MapSnd<V, X> for Range<Id, V> {
 pub type RawExpression = Expression<Spanned<Ident>, Spanned<Ident>>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Expression<Id, V> {
+pub enum Expression<Id = SpannedIdent, V = SpannedIdent> {
     /// Identifier expressions; these can contain either *lowercase*-initial
     /// identifiers (corresponding to values), *uppercase*-initial identifiers
     /// (correstpondingo constructors), OR infix identifiers (corresponding to
