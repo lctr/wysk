@@ -622,7 +622,7 @@ mod tests {
         lexer.next();
         assert_eq!(
             posns(&mut lexer),
-            (BytePos::new(3), BytePos::new(7), BytePos::new(8))
+            (BytePos::new(4), BytePos::new(7), BytePos::new(8))
         );
     }
 
