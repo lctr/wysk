@@ -37,6 +37,7 @@ impl<'t> Lexer<'t> {
         if let Some(t) = self.stack.pop() {
             t
         } else {
+            self.prev_pos = self.source.get_pos();
             self.source.eat_whitespace();
             if let Some(c) = self.source.peek().copied() {
                 self.tokenize(c)
@@ -835,6 +836,25 @@ mod test {
             println!("peek #{}: {:?}", i, lexer.peek());
             println!("bump #{}: {}", i - 1, lexer.bump());
             println!("post-bump peek #{}: {:?}", i - 1, lexer.peek());
+        }
+    }
+
+    #[test]
+    fn inspect_positions() {
+        let src = r#"fn 4..5 foo :: a -> b;"#;
+        let mut lexer = Lexer::new(src);
+        let mut i = 1;
+        while !lexer.is_done() {
+            i += 1;
+            println!("prev-pos #{}/pre-peek:\n\t{}", i - 1, lexer.prev_pos());
+            println!("  peek #{}:\n\t{:?}", i, lexer.peek());
+            println!(
+                "prev-pos #{}/post-peek/pre-bump:\n\t{}",
+                i - 1,
+                lexer.prev_pos()
+            );
+            println!("  bump #{}:\n\t{}", i - 1, lexer.bump());
+            println!("prev-pos #{}/post-bump:\n\t{}\n", i - 1, lexer.prev_pos());
         }
     }
 

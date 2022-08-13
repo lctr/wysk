@@ -414,6 +414,8 @@ pub struct Lexer<'t> {
     pub current: Option<Token>,
     pub mode: Mode,
     pub shebang: Option<Span>,
+    pub prev_pos: BytePos,
+    // nextpos: Option<BytePos>
 }
 
 impl<'t> WithLoc for Lexer<'t> {
@@ -428,9 +430,12 @@ impl<'t> WithLoc for Lexer<'t> {
 
 impl<'t> WithSpan for Lexer<'t> {
     fn get_pos(&self) -> BytePos {
+        // self.bytepos
         if let Some(ref tok) = self.current {
             // since we've already got the next token in our `current` field, should we return the beginning or end of that token?
             tok.span.start()
+        } else if !self.stack.is_empty() {
+            self.stack[self.stack.len() - 1].span.start()
         } else {
             self.source.get_pos()
         }
@@ -447,9 +452,39 @@ impl<'t> Lexer<'t> {
             current: None,
             mode: Mode::Default,
             shebang: None,
+            prev_pos: BytePos::ZERO,
         };
         this.read_shebang();
         this
+    }
+
+    /// Returns the `BytePos` that existed prior to the `BytePos` held
+    /// by the next token.
+    ///
+    /// Suppose we are in the beginning of lexing the following:
+    /// ```text
+    /// "foo bar baz"
+    ///  ^              <- curr pos AND prev_pos
+    ///     ^           <-
+    /// ```
+    pub fn prev_pos(&self) -> BytePos {
+        self.prev_pos
+    }
+
+    /// Returns the current `BytePos` of the underlying character stream.
+    pub fn curr_pos(&self) -> BytePos {
+        self.source.get_pos()
+    }
+
+    /// Returns the `BytePos` of token returned by calling `peek`.
+    pub fn next_pos(&self) -> BytePos {
+        if let Some(tok) = self.current.as_ref() {
+            tok.span.end()
+        } else if self.stack.len() > 0 {
+            self.stack[self.stack.len() - 1].span.end()
+        } else {
+            self.clone().token().span.start()
+        }
     }
 
     pub fn span_from(&self, start: BytePos) -> Span {
@@ -472,6 +507,7 @@ impl<'t> Lexer<'t> {
                 if !self.stack.is_empty() {
                     Some(&self.stack[0])
                 } else {
+                    self.prev_pos = self.source.get_pos();
                     let token = self.token();
                     self.current.replace(token);
                     self.current.as_ref()
@@ -566,6 +602,27 @@ impl<'t> Lexer<'t> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_positions() {
+        let text = "foo bar baz";
+        let mut lexer = Lexer::new(text);
+        let posns = |lex: &mut Lexer| (lex.prev_pos(), lex.curr_pos(), lex.next_pos());
+        assert_eq!(
+            posns(&mut lexer),
+            (BytePos::new(0), BytePos::new(0), BytePos::new(0))
+        );
+        lexer.next();
+        assert_eq!(
+            posns(&mut lexer),
+            (BytePos::new(0), BytePos::new(3), BytePos::new(4))
+        );
+        lexer.next();
+        assert_eq!(
+            posns(&mut lexer),
+            (BytePos::new(3), BytePos::new(7), BytePos::new(8))
+        );
+    }
 
     #[test]
     fn test_stream() {
