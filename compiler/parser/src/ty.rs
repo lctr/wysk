@@ -28,7 +28,7 @@ impl<'t> TypeParser<'t> {
     /// signature of function declarations). It is illegal for a type to contain
     /// any type constraints in a cast expression or in data declaration
     /// constructor arguments.
-    pub(crate) fn ty_signature(&mut self) -> Parsed<Signature<SpannedIdent, SpannedIdent>> {
+    pub(crate) fn ty_signature(&mut self) -> Parsed<Signature> {
         Ok(if self.bump_on(Lexeme::Colon2) {
             Signature::Explicit(self.ty_annotation()?)
         } else {
@@ -36,7 +36,7 @@ impl<'t> TypeParser<'t> {
         })
     }
 
-    pub(crate) fn ty_annotation(&mut self) -> Parsed<Annotation<SpannedIdent, SpannedIdent>> {
+    pub(crate) fn ty_annotation(&mut self) -> Parsed<Annotation> {
         let quant = self.maybe_quantified()?;
         let qual = self.maybe_qualified()?;
         Ok(Annotation { quant, qual })
@@ -51,13 +51,13 @@ impl<'t> TypeParser<'t> {
         Ok(quants.into_iter().map(|id| (id, id)).collect())
     }
 
-    pub(crate) fn maybe_qualified(&mut self) -> Parsed<Qualified<SpannedIdent, SpannedIdent>> {
+    pub(crate) fn maybe_qualified(&mut self) -> Parsed<Qualified> {
         let pred = self.ty_predicates()?;
         let tipo = self.ty_node()?;
         Ok(Qualified { pred, tipo })
     }
 
-    pub(crate) fn ty_predicates(&mut self) -> Parsed<Vec<Predicate<SpannedIdent, SpannedIdent>>> {
+    pub(crate) fn ty_predicates(&mut self) -> Parsed<Vec<Predicate>> {
         use Lexeme::{Comma, Pipe};
 
         let mut ctxts = vec![];
@@ -72,7 +72,7 @@ impl<'t> TypeParser<'t> {
     }
 
     #[allow(unused)]
-    fn ty_predicate(&mut self) -> Parsed<Predicate<SpannedIdent, SpannedIdent>> {
+    fn ty_predicate(&mut self) -> Parsed<Predicate> {
         let class = self.expect_upper()?;
         let head = self.predicate_parameter()?;
         Ok(Predicate { class, head })
@@ -94,7 +94,7 @@ impl<'t> TypeParser<'t> {
     ///
     /// Thus it follows that this method returns a vector of
     /// predicates, all of which are to be flattened together.
-    fn ty_predicates_sugared(&mut self) -> Parsed<Vec<Predicate<SpannedIdent, SpannedIdent>>> {
+    fn ty_predicates_sugared(&mut self) -> Parsed<Vec<Predicate>> {
         let class = self.expect_upper()?;
         if self.peek_on(Lexeme::CurlyL) {
             self.delimited(
@@ -113,13 +113,13 @@ impl<'t> TypeParser<'t> {
         }
     }
 
-    pub(crate) fn ty_simple(&mut self) -> Parsed<SimpleType<SpannedIdent, SpannedIdent>> {
+    pub(crate) fn ty_simple(&mut self) -> Parsed<SimpleType> {
         let con = self.expect_upper()?;
         let vars = self.many_while_on(Lexeme::is_lower, Self::expect_lower)?;
         Ok(SimpleType(con, vars))
     }
 
-    pub(crate) fn ty_node(&mut self) -> Parsed<Type<SpannedIdent, SpannedIdent>> {
+    pub(crate) fn ty_node(&mut self) -> Parsed<Type> {
         let coord = self.get_coord();
         let ty = self.ty_atom()?;
         if self.peek_on(Lexeme::ArrowR) {
@@ -134,14 +134,8 @@ impl<'t> TypeParser<'t> {
         }
     }
 
-    fn maybe_ty_app(
-        &mut self,
-        head: Type<SpannedIdent, SpannedIdent>,
-    ) -> Parsed<Type<SpannedIdent, SpannedIdent>> {
-        fn var_or_con(
-            id: SpannedIdent,
-        ) -> impl FnMut(Vec<Type<SpannedIdent, SpannedIdent>>) -> Type<SpannedIdent, SpannedIdent>
-        {
+    fn maybe_ty_app(&mut self, head: Type) -> Parsed<Type> {
+        fn var_or_con(id: SpannedIdent) -> impl FnMut(Vec<Type>) -> Type {
             move |args| {
                 if args.is_empty() {
                     if id.item().is_lower() {
@@ -173,7 +167,7 @@ impl<'t> TypeParser<'t> {
         }
     }
 
-    pub(crate) fn ty_atom(&mut self) -> Parsed<Type<SpannedIdent, SpannedIdent>> {
+    pub(crate) fn ty_atom(&mut self) -> Parsed<Type> {
         match self.peek() {
             Some(t) if t.is_lower() => self.expect_lower().map(Type::Var),
             Some(t) if t.is_upper() => self
@@ -186,10 +180,7 @@ impl<'t> TypeParser<'t> {
         }
     }
 
-    fn arrow_ty(
-        &mut self,
-        head: Type<SpannedIdent, SpannedIdent>,
-    ) -> Parsed<Type<SpannedIdent, SpannedIdent>> {
+    fn arrow_ty(&mut self, head: Type) -> Parsed<Type> {
         let mut rest = vec![];
         while self.bump_on(Lexeme::ArrowR) {
             rest.push(self.ty_atom().and_then(|right| self.maybe_ty_app(right))?);
@@ -206,7 +197,7 @@ impl<'t> TypeParser<'t> {
         })
     }
 
-    fn paren_ty(&mut self) -> Parsed<Type<SpannedIdent, SpannedIdent>> {
+    fn paren_ty(&mut self) -> Parsed<Type> {
         use Lexeme::{Comma, ParenL, ParenR};
         self.eat(ParenL)?;
 
@@ -274,16 +265,13 @@ impl<'t> TypeParser<'t> {
         Ok(ty)
     }
 
-    fn tuple_ty_tail(
-        &mut self,
-        head: Type<SpannedIdent, SpannedIdent>,
-    ) -> Parsed<Type<SpannedIdent, SpannedIdent>> {
+    fn tuple_ty_tail(&mut self, head: Type) -> Parsed<Type> {
         use Lexeme::{Comma, ParenR};
         self.delimited([Comma, Comma, ParenR], Self::ty_node)
             .map(|rest| Type::Tup(std::iter::once(head).chain(rest).collect()))
     }
 
-    fn brack_ty(&mut self) -> Parsed<Type<SpannedIdent, SpannedIdent>> {
+    fn brack_ty(&mut self) -> Parsed<Type> {
         let start = self.get_pos();
         self.eat(Lexeme::BrackL)?;
         if self.bump_on(Lexeme::BrackR) {
@@ -309,7 +297,7 @@ impl<'t> TypeParser<'t> {
         }
     }
 
-    pub fn curly_ty(&mut self) -> Parsed<Type<SpannedIdent, SpannedIdent>> {
+    pub fn curly_ty(&mut self) -> Parsed<Type> {
         use Lexeme::{Comma, CurlyL, CurlyR};
 
         Ok(Type::Rec(Record::Anon(
@@ -319,12 +307,9 @@ impl<'t> TypeParser<'t> {
         )))
     }
 
-    fn record_entry_ty<F>(
-        &mut self,
-        mut f: F,
-    ) -> Parsed<Field<SpannedIdent, Type<SpannedIdent, SpannedIdent>>>
+    fn record_entry_ty<F>(&mut self, mut f: F) -> Parsed<Field<SpannedIdent, Type>>
     where
-        F: FnMut(&mut Self) -> Parsed<Type<SpannedIdent, SpannedIdent>>,
+        F: FnMut(&mut Self) -> Parsed<Type>,
     {
         let key = self.expect_lower()?;
         self.eat(Lexeme::Colon2)?;
@@ -336,7 +321,7 @@ impl<'t> TypeParser<'t> {
 #[cfg(test)]
 mod test {
     use wy_common::functor::{Func, MapFst, MapSnd};
-    use wy_syntax::tipo::Var;
+    use wy_syntax::{ast::spanless_eq::Spanless, tipo::Var};
 
     use super::*;
 
@@ -457,10 +442,11 @@ mod test {
     fn test_parse_predicate_syntax_sugar() {
         let one = ":: |A a, A b, A c| (a, b, c)";
         let two = ":: |A {a, b, c}| (a, b, c)";
-        assert_eq!(
-            Parser::from_str(one).ty_signature().unwrap(),
-            Parser::from_str(two).ty_signature().unwrap()
-        )
+        // testing without regards to span since these two syntactic
+        // forms are different but their resulting data (span-aside)
+        // should be the same
+        Spanless(Parser::from_str(one).ty_signature().unwrap())
+            .assert_eq(Parser::from_str(two).ty_signature().unwrap())
     }
 
     #[test]
