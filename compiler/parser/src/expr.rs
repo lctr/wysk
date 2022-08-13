@@ -4,7 +4,7 @@ use wy_lexer::token::{LexKind, Not};
 use wy_lexer::*;
 use wy_name::ident::Ident;
 use wy_span::{Span, Spanned, WithLoc, WithSpan};
-use wy_syntax::expr::{Range, RawExpression, Section};
+use wy_syntax::expr::{Expression, Range, Section};
 use wy_syntax::pattern::RawPattern;
 use wy_syntax::record::{Field, Record};
 use wy_syntax::stmt::{Binding, RawAlternative, RawArm, RawBinding, RawStatement};
@@ -27,20 +27,24 @@ impl<'t> ExprParser<'t> {
     /// Notice that the order above is contravariant to the methods called when
     /// parsing: this is because a binary expression will first try and parse an
     /// application for both left and right-hand sides.
-    pub fn expression(&mut self) -> Parsed<RawExpression> {
+    pub fn expression(&mut self) -> Parsed<Expression> {
         self.maybe_binary(&mut Self::subexpression)
     }
 
     /// A subexpression is synonymous to an application not only because a
     /// single terminal may be interpreted as a trivial application, but also
     /// because applications have higher precedence than infix operators do.
-    fn subexpression(&mut self) -> Parsed<RawExpression> {
+    ///
+    /// This method will parse expression application but NOT infix
+    /// ("binary") expressions! In order words, applying this method
+    /// to the source text `foo a b + 3` will only parse `foo a b`.
+    fn subexpression(&mut self) -> Parsed<Expression> {
         self.maybe_apply(Self::atom)
     }
 
-    fn maybe_apply<F>(&mut self, mut f: F) -> Parsed<RawExpression>
+    fn maybe_apply<F>(&mut self, mut f: F) -> Parsed<Expression>
     where
-        F: FnMut(&mut Self) -> Parsed<RawExpression>,
+        F: FnMut(&mut Self) -> Parsed<Expression>,
     {
         let head = f(self)?;
         // TODO: maybe simplify this to checking that `head` isn't a
@@ -49,7 +53,7 @@ impl<'t> ExprParser<'t> {
             Ok(self
                 .many_while_on(Lexeme::begins_expr, f)?
                 .into_iter()
-                .fold(head, RawExpression::mk_app))
+                .fold(head, Expression::mk_app))
         } else {
             Ok(head)
         }
@@ -66,14 +70,14 @@ impl<'t> ExprParser<'t> {
     /// The only instance in which this does not happen is when expressions
     /// are *grouped*, where they are (from a separate method) parsed as
     /// `Grouped` nodes regardless as to whether they contain infix expressions.
-    fn maybe_binary<F>(&mut self, f: &mut F) -> Parsed<RawExpression>
+    fn maybe_binary<F>(&mut self, f: &mut F) -> Parsed<Expression>
     where
-        F: FnMut(&mut Self) -> Parsed<RawExpression>,
+        F: FnMut(&mut Self) -> Parsed<Expression>,
     {
         let mut left = f(self)?;
         while self.peek_on(Lexeme::is_infix) {
             let infix = self.expect_infix()?;
-            left = RawExpression::Infix {
+            left = Expression::Infix {
                 left: Box::new(left),
                 infix,
                 right: self.maybe_binary(f).map(Box::new)?,
@@ -82,21 +86,21 @@ impl<'t> ExprParser<'t> {
 
         if self.bump_on(Lexeme::Colon2) {
             self.ty_node()
-                .map(|tipo| RawExpression::Cast(Box::new(left), tipo))
+                .map(|tipo| Expression::Cast(Box::new(left), tipo))
         } else {
             Ok(left)
         }
     }
 
-    fn negation(&mut self) -> Parsed<RawExpression> {
+    fn negation(&mut self) -> Parsed<Expression> {
         if self.bump_on(Lexeme::is_minus_sign) {
-            self.negation().map(Box::new).map(RawExpression::Neg)
+            self.negation().map(Box::new).map(Expression::Neg)
         } else {
             self.atom()
         }
     }
 
-    fn atom(&mut self) -> Parsed<RawExpression> {
+    fn atom(&mut self) -> Parsed<Expression> {
         match self.peek() {
             Some(t) if t.is_minus_sign() => self.negation(),
             lexpat!(~[parenL]) => self.paren_expr(),
@@ -115,11 +119,11 @@ impl<'t> ExprParser<'t> {
     }
 
     #[inline]
-    fn literal(&mut self) -> Parsed<RawExpression> {
-        self.expect_literal().map(RawExpression::Lit)
+    fn literal(&mut self) -> Parsed<Expression> {
+        self.expect_literal().map(Expression::Lit)
     }
 
-    fn identifier(&mut self) -> Parsed<RawExpression> {
+    fn identifier(&mut self) -> Parsed<Expression> {
         let ident = match self.peek() {
             lexpat!(~[var]) => self.expect_lower(),
             lexpat!(~[Var]) => self.expect_upper(),
@@ -128,10 +132,10 @@ impl<'t> ExprParser<'t> {
         match self.peek() {
             lexpat!(~[.]) => {
                 let tail = self.id_path_tail()?;
-                Ok(RawExpression::Path(ident, tail))
+                Ok(Expression::Path(ident, tail))
             }
-            lexpat!(~[curlyL]) => Ok(RawExpression::Dict(Record::Data(ident, self.curly_expr()?))),
-            _ => Ok(RawExpression::Ident(ident)),
+            lexpat!(~[curlyL]) => Ok(Expression::Dict(Record::Data(ident, self.curly_expr()?))),
+            _ => Ok(Expression::Ident(ident)),
         }
     }
 
@@ -142,7 +146,7 @@ impl<'t> ExprParser<'t> {
         )
     }
 
-    fn comma_section(&mut self) -> Parsed<RawExpression> {
+    fn comma_section(&mut self) -> Parsed<Expression> {
         use Lexeme::{Comma, ParenR};
         let mut commas = 0;
         let start = self.get_pos();
@@ -152,7 +156,7 @@ impl<'t> ExprParser<'t> {
         let prefix = Spanned(Ident::mk_tuple_commas(commas), Span(start, self.get_pos()));
 
         Ok(if self.bump_on(ParenR) {
-            RawExpression::Ident(prefix)
+            Expression::Ident(prefix)
         } else {
             let section = self
                 .expression()
@@ -163,32 +167,32 @@ impl<'t> ExprParser<'t> {
         })
     }
 
-    fn maybe_prefix_section(&mut self) -> Parsed<RawExpression> {
+    fn maybe_prefix_section(&mut self) -> Parsed<Expression> {
         let prefix = self.expect_infix()?;
         if !self.peek_on(Lexeme::ParenR) {
             let right = self.subexpression().map(Box::new)?;
             self.eat(Lexeme::ParenR)?;
-            return Ok(RawExpression::Section(Section::Prefix { prefix, right }));
+            return Ok(Expression::Section(Section::Prefix { prefix, right }));
         }
         self.eat(Lexeme::ParenR)?;
-        Ok(RawExpression::mk_group(RawExpression::Ident(prefix)))
+        Ok(Expression::mk_group(Expression::Ident(prefix)))
     }
 
-    fn suffix_section(&mut self, left: RawExpression) -> Parsed<RawExpression> {
+    fn suffix_section(&mut self, left: Expression) -> Parsed<Expression> {
         let suffix = self.expect_infix()?;
         self.eat(Lexeme::ParenR)?;
-        return Ok(RawExpression::Section(Section::Suffix {
+        return Ok(Expression::Section(Section::Suffix {
             suffix,
             left: Box::new(left),
         }));
     }
 
-    fn paren_expr(&mut self) -> Parsed<RawExpression> {
+    fn paren_expr(&mut self) -> Parsed<Expression> {
         use Lexeme::{Comma, ParenL, ParenR};
         self.eat(ParenL)?;
         if self.peek_on(ParenR) {
             self.bump();
-            return Ok(RawExpression::UNIT);
+            return Ok(Expression::UNIT);
         }
 
         if self.bump_on(Comma) {
@@ -210,28 +214,28 @@ impl<'t> ExprParser<'t> {
             return self
                 .delimited([Comma, Comma, ParenR], &mut Self::subexpression)
                 .map(|rest| once(first).chain(rest).collect())
-                .map(RawExpression::Tuple);
+                .map(Expression::Tuple);
         }
 
         while !self.peek_on(ParenR) {
-            first = RawExpression::mk_app(first, self.subexpression()?)
+            first = Expression::mk_app(first, self.subexpression()?)
         }
 
         self.eat(ParenR)?;
         // only represent as grouped if containing an infix expression to
         // preserve explicit groupings during fixity resolution and retraversal
-        if let RawExpression::Infix { .. } = &first {
-            Ok(RawExpression::Group(Box::new(first)))
+        if let Expression::Infix { .. } = &first {
+            Ok(Expression::Group(Box::new(first)))
         } else {
             Ok(first)
         }
     }
 
-    fn brack_expr(&mut self) -> Parsed<RawExpression> {
+    fn brack_expr(&mut self) -> Parsed<Expression> {
         use Lexeme::{BrackL, BrackR, Comma, Dot2};
         self.eat(BrackL)?;
         if self.bump_on(BrackR) {
-            return Ok(RawExpression::NULL);
+            return Ok(Expression::NULL);
         }
 
         let first = self.expression()?;
@@ -239,7 +243,7 @@ impl<'t> ExprParser<'t> {
             // [a]
             lexpat!(~[brackR]) => {
                 self.bump();
-                Ok(RawExpression::Array(vec![first]))
+                Ok(Expression::Array(vec![first]))
             }
             // [a | stmts]
             lexpat!(~[|]) => self.list_comprehension(first),
@@ -253,7 +257,7 @@ impl<'t> ExprParser<'t> {
                         .map(|second| Range::FromTo([first, second]))
                         .map(|range| self.bumped(range))?
                 };
-                Ok(RawExpression::Range(Box::new(range)))
+                Ok(Expression::Range(Box::new(range)))
             }
             lexpat!(~[,]) => {
                 self.bump();
@@ -262,18 +266,18 @@ impl<'t> ExprParser<'t> {
                     // [a, b, <rest>]
                     self.delimited([Comma, Comma, BrackR], Self::expression)
                         .map(|xs| [first, second].into_iter().chain(xs).collect::<Vec<_>>())
-                        .map(RawExpression::Array)
+                        .map(Expression::Array)
                 } else if self.bump_on(Dot2) {
                     // [a, b..c]
                     let third = self.expression()?;
                     self.eat(BrackR)?;
-                    Ok(RawExpression::Range(Box::new(Range::FromThenTo([
+                    Ok(Expression::Range(Box::new(Range::FromThenTo([
                         first, second, third,
                     ]))))
                 } else {
                     // [a, b]
                     self.eat(BrackR)?;
-                    Ok(RawExpression::Array(vec![first, second]))
+                    Ok(Expression::Array(vec![first, second]))
                 }
             }
 
@@ -281,7 +285,7 @@ impl<'t> ExprParser<'t> {
         }
     }
 
-    fn curly_expr(&mut self) -> Parsed<Vec<Field<SpannedIdent, RawExpression>>> {
+    fn curly_expr(&mut self) -> Parsed<Vec<Field<SpannedIdent, Expression>>> {
         use Lexeme::{Comma, CurlyL, CurlyR, Dot2, Equal};
         self.delimited([CurlyL, Comma, CurlyR], |p| {
             if p.bump_on(Dot2) {
@@ -314,14 +318,14 @@ impl<'t> ExprParser<'t> {
     /// * [a, b] <- [1, 2]
     /// * a b c == [1, 2]
     /// * (a, b) <- c
-    fn list_comprehension(&mut self, head: RawExpression) -> Parsed<RawExpression> {
+    fn list_comprehension(&mut self, head: Expression) -> Parsed<Expression> {
         use Lexeme::{BrackR, Comma, Pipe};
         self.eat(Pipe)?;
 
         let mut stmts = vec![];
         loop {
             if self.bump_on(BrackR) {
-                break Ok(RawExpression::List(Box::new(head), stmts));
+                break Ok(Expression::List(Box::new(head), stmts));
             }
 
             stmts.push(self.statement()?);
@@ -332,7 +336,7 @@ impl<'t> ExprParser<'t> {
         }
     }
 
-    fn lambda(&mut self) -> Parsed<RawExpression> {
+    fn lambda(&mut self) -> Parsed<Expression> {
         use Lexeme::{ArrowR, Lambda};
         self.eat(Lambda)?;
         let pats = self.many_while_on(Lexeme::begins_pat, Self::pattern)?;
@@ -340,7 +344,7 @@ impl<'t> ExprParser<'t> {
         self.expression().map(|expr| {
             pats.into_iter()
                 .rev()
-                .fold(expr, |body, arg| RawExpression::Lambda(arg, Box::new(body)))
+                .fold(expr, |body, arg| Expression::Lambda(arg, Box::new(body)))
         })
     }
 
@@ -357,7 +361,7 @@ impl<'t> ExprParser<'t> {
         }
     }
 
-    pub(crate) fn binding_lhs(&mut self) -> Parsed<(Vec<RawPattern>, Option<RawExpression>)> {
+    pub(crate) fn binding_lhs(&mut self) -> Parsed<(Vec<RawPattern>, Option<Expression>)> {
         use Keyword::If;
         use Lexeme::Pipe;
         self.ignore(Pipe);
@@ -371,7 +375,7 @@ impl<'t> ExprParser<'t> {
         }
     }
 
-    fn binding_rhs(&mut self) -> Parsed<(RawExpression, Vec<RawBinding>)> {
+    fn binding_rhs(&mut self) -> Parsed<(Expression, Vec<RawBinding>)> {
         let body = self.expression()?;
         let wher = self.where_clause()?;
         Ok((body, wher))
@@ -411,22 +415,14 @@ impl<'t> ExprParser<'t> {
     }
 
     pub(crate) fn match_arm(&mut self) -> Parsed<RawArm> {
-        use Lexeme::{Equal, FatArrow};
-
-        // syntactic shorthand for `| =`
-        let (args, pred) = if self.bump_on(FatArrow) {
-            (vec![], None)
-        } else {
-            let (args, pred) = self.binding_lhs()?;
-            self.eat(Equal)?;
-            (args, pred)
-        };
-
+        use Lexeme::Equal;
+        let (args, cond) = self.binding_lhs()?;
+        self.eat(Equal)?;
         let (body, wher) = self.binding_rhs()?;
 
         Ok(RawArm {
             args,
-            cond: pred,
+            cond,
             body,
             wher,
         })
@@ -443,16 +439,16 @@ impl<'t> ExprParser<'t> {
         Ok(binds)
     }
 
-    fn let_expr(&mut self) -> Parsed<RawExpression> {
+    fn let_expr(&mut self) -> Parsed<Expression> {
         use Keyword::{In, Let};
         use Lexeme::{Comma, Kw};
-        Ok(RawExpression::Let(
+        Ok(Expression::Let(
             self.delimited([Kw(Let), Comma, Kw(In)], Self::binding)?,
             Box::new(self.expression()?),
         ))
     }
 
-    fn case_expr(&mut self) -> Parsed<RawExpression> {
+    fn case_expr(&mut self) -> Parsed<Expression> {
         use Keyword::{Case, Of};
         use Lexeme::{CurlyL, CurlyR, Pipe, Semi};
 
@@ -469,7 +465,7 @@ impl<'t> ExprParser<'t> {
             )?
         };
 
-        Ok(RawExpression::Case(Box::new(scrut), alts))
+        Ok(Expression::Case(Box::new(scrut), alts))
     }
 
     fn case_alt(&mut self) -> Parsed<RawAlternative> {
@@ -488,7 +484,7 @@ impl<'t> ExprParser<'t> {
         })
     }
 
-    fn cond_expr(&mut self) -> Parsed<RawExpression> {
+    fn cond_expr(&mut self) -> Parsed<Expression> {
         self.eat(Keyword::If)?;
         let cond = self.expression()?;
         self.eat(Keyword::Then)?;
@@ -496,10 +492,10 @@ impl<'t> ExprParser<'t> {
         self.eat(Keyword::Else)?;
         let fail = self.expression()?;
 
-        Ok(RawExpression::Cond(Box::new([cond, pass, fail])))
+        Ok(Expression::Cond(Box::new([cond, pass, fail])))
     }
 
-    pub(crate) fn do_expr(&mut self) -> Parsed<RawExpression> {
+    pub(crate) fn do_expr(&mut self) -> Parsed<Expression> {
         self.eat(Keyword::Do)?;
         self.eat(Lexeme::CurlyL)?;
 
@@ -520,7 +516,7 @@ impl<'t> ExprParser<'t> {
                     Err(self.custom_error(msg))
                 }
             })
-            .map(|tail| RawExpression::Do(statements, tail))
+            .map(|tail| Expression::Do(statements, tail))
     }
 
     fn statement(&mut self) -> Parsed<RawStatement> {
@@ -535,7 +531,7 @@ impl<'t> ExprParser<'t> {
                 self.many_while(bump_comma, Self::binding)
                     .map(|binds| bindings.extend(binds))?;
                 if self.bump_on(Keyword::In) {
-                    Ok(RawStatement::Predicate(RawExpression::Let(
+                    Ok(RawStatement::Predicate(Expression::Let(
                         bindings,
                         Box::new(self.expression()?),
                     )))
@@ -552,7 +548,7 @@ impl<'t> ExprParser<'t> {
                     Ok(RawStatement::Predicate(
                         self.many_while_on(Lexeme::begins_expr, Self::expression)?
                             .into_iter()
-                            .fold(RawExpression::Ident(lower), RawExpression::mk_app),
+                            .fold(Expression::Ident(lower), Expression::mk_app),
                     ))
                 }
             }
@@ -588,6 +584,7 @@ impl<'t> ExprParser<'t> {
 #[cfg(test)]
 mod test {
     use wy_common::functor::{Func, MapFst, MapSnd};
+    use wy_failure::diff::diff_assert_eq;
     use wy_intern::Symbol;
     use wy_syntax::{
         expr::Expression,
@@ -659,7 +656,7 @@ y -> y;
                 },
             ],
         );
-        assert_eq!(expr, Ok(expected))
+        diff_assert_eq!(expr, Ok(expected))
     }
 
     #[test]
@@ -703,7 +700,7 @@ y -> y;
         ];
 
         for (src, expected) in tests {
-            assert_eq!(
+            diff_assert_eq!(
                 Parser::from_str(src)
                     .expression()
                     .map(|expr| expr
@@ -789,7 +786,7 @@ y -> y;
                 )),
             )),
         );
-        assert_eq!(actual, expected);
+        diff_assert_eq!(actual, expected);
     }
 
     #[test]
@@ -853,7 +850,7 @@ y -> y;
             ),
         ];
         for (src, expected) in pairs {
-            assert_eq!(
+            diff_assert_eq!(
                 Parser::from_str(src)
                     .expression()
                     .map(|expr| expr
@@ -920,7 +917,7 @@ y -> y;
                         .map_snd(&mut Func::Fresh(Spanned::take_item))
                 })
                 .unwrap();
-            assert_eq!(actual, expected);
+            diff_assert_eq!(actual, expected);
         }
     }
 
@@ -946,7 +943,8 @@ y -> y;
                 E::Lit(Literal::mk_simple_integer(3)),
             ])),
         );
-        assert_eq!(
+
+        diff_assert_eq!(
             Parser::from_str(src).expression().map(|expr| expr
                 .map_fst(&mut Func::Fresh(Spanned::take_item))
                 .map_snd(&mut Func::Fresh(Spanned::take_item))),
