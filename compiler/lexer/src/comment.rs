@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use wy_intern::symbol::{self, Symbol};
 use wy_span::Span;
 
@@ -20,7 +21,7 @@ wy_common::newtype! {
 /// ```
 /// would capture spans beginning with `this` for the first line and ending at
 /// the `thing`.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Comment {
     /// Line comments
     Line(Span),
@@ -40,7 +41,7 @@ impl Comment {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SyntaxId {
     /// Indicated either by no language identifier, or the identifiers `wysk`,
     /// or `doctest`,
@@ -82,7 +83,7 @@ impl SyntaxId {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum LineKind {
     /// Non-processed line, i.e., for regular line and block comments
     /// typically wedged between otherwise continuous doc comments.

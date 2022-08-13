@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use wy_common::strenum;
 use wy_intern::Symbol;
 
@@ -15,7 +16,7 @@ strenum! { Attr is_builtin_attr ::
     Macro "macro"
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Pragma {
     BuiltIn(Attr),
     Custom(Symbol),

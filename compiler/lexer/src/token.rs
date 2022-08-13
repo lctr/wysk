@@ -1,3 +1,5 @@
+use serde::Deserialize;
+use serde::Serialize;
 // use serde::{Deserialize, Serialize};
 use wy_common::ref_lifting_strenum;
 use wy_intern::symbol::{self, Symbol};
@@ -78,7 +80,7 @@ impl PartialEq<Token> for Literal {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Lexeme {
     Underline, // `_`
     Unlabel,   // `'_`
@@ -560,7 +562,7 @@ impl std::fmt::Display for LexKind {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Token<L = Lexeme> {
     pub lexeme: L,
     pub span: Span,
@@ -940,7 +942,7 @@ where
 /// * unexpected end of input
 /// * non-terminated comment (?)
 /// * non-terminated string lexeme (?)
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum LexError {
     /// Emitted when encountering a character that doesn't belong to any lexeme
     /// kinds
