@@ -99,6 +99,10 @@ impl<Id> Chain<Id> {
         std::iter::once(&self.0).chain(self.tail())
     }
 
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Id> {
+        std::iter::once(&mut self.0).chain(self.1.iter_mut())
+    }
+
     #[inline]
     pub fn any(&self, f: impl FnMut(&Id) -> bool) -> bool {
         self.iter().all(f)
