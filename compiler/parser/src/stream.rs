@@ -2,7 +2,6 @@ use std::path::Path;
 
 use wy_common::Deque;
 use wy_lexer::{
-    meta::{Placement, Pragma},
     token::{LexKind, Lexlike},
     Lexeme, Lexer, Token,
 };
@@ -19,12 +18,15 @@ pub struct Parser<'t> {
     pub(crate) queue: Deque<Token>,
     pub fixities: FixityTable,
     pub path: SrcPath,
-    pub pragmas: Vec<(Pragma, Placement)>,
 }
 
 impl<'t> WithSpan for Parser<'t> {
     fn get_pos(&self) -> BytePos {
-        self.lexer.curr_pos()
+        if let Some(t) = self.queue.front() {
+            t.span.start()
+        } else {
+            self.lexer.get_pos()
+        }
     }
 }
 
@@ -59,7 +61,6 @@ impl<'t> Parser<'t> {
             path: SrcPath::File(path.as_ref().to_path_buf()),
             queue: Deque::new(),
             fixities: FixityTable::new(Ident::Infix),
-            pragmas: Vec::new(),
         }
     }
 
@@ -69,7 +70,6 @@ impl<'t> Parser<'t> {
             path: SrcPath::Direct,
             queue: Deque::new(),
             fixities: FixityTable::new(Ident::Infix),
-            pragmas: Vec::new(),
         }
     }
 
