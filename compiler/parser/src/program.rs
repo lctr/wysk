@@ -2,7 +2,7 @@ use wy_lexer::{Keyword, Lexeme};
 use wy_name::{Chain, Ident};
 
 use wy_span::Spanned;
-use wy_syntax::decl::Declaration;
+
 use wy_syntax::{Import, ImportSpec, Module, Program, SpannedIdent};
 
 use crate::error::*;
@@ -25,11 +25,13 @@ impl<'t> ModuleParser<'t> {
         self.eat(Keyword::Module)?;
         let modname = self.id_chain()?.map(Spanned::take_item);
         self.eat(Keyword::Where)?;
+        let doc_comments = self.module_doc_comments();
         let imports = self.imports()?;
         let mut module = Module {
             modname,
             imports,
             srcpath: self.path.clone(),
+            pragmas: doc_comments,
             ..Default::default()
         };
 
@@ -39,16 +41,11 @@ impl<'t> ModuleParser<'t> {
 
     fn populate_module(&mut self, module: &mut RawModule) -> Parsed<()> {
         while !self.is_done() {
-            match self.declaration()? {
-                Declaration::Data(data) => module.datatys.push(data),
-                Declaration::Alias(alias) => module.aliases.push(alias),
-                Declaration::Fixity(fixity) => module.infixes.push(fixity),
-                Declaration::Class(class) => module.classes.push(class),
-                Declaration::Instance(inst) => module.implems.push(inst),
-                Declaration::Function(fun) => module.fundefs.push(fun),
-                Declaration::Newtype(newty) => module.newtyps.push(newty),
-                Declaration::Attribute(attr) => module.pragmas.push(attr),
-            }
+            let mut pragmas = self.attr_before()?;
+            let mut decl = self.declaration()?;
+            pragmas.extend(self.attr_after()?);
+            decl.extend_pragmas(pragmas);
+            module.push_decl(decl);
             self.ignore(Lexeme::Semi)
         }
         Ok(())
@@ -135,10 +132,9 @@ impl<'t> ModuleParser<'t> {
 
 #[cfg(test)]
 mod test {
-    use wy_common::functor::{Func, MapFst, MapSnd};
+
     use wy_intern::Symbol;
     use wy_name::ident::Ident;
-    use wy_span::Spanned;
 
     use super::*;
 
@@ -203,11 +199,11 @@ import A.thing.from.Somewhere @ A { foo, bar }
     #[test]
     fn parse_prelude_module() {
         let src = include_str!("../../../language/prelude/src/lib.wy");
-        let result = Parser::from_str(src).parse_program();
+        let result = Parser::new(src, "../../../language/prelude/src/lib.wy").parse_program();
         // let dcons = result.as_ref().map(|prog| prog.module.data_ctors());
         match result {
             Ok(program) => {
-                println!("showing prim.wy: {:?}", program.module)
+                println!("showing prim.wy: {:#?}", program.module)
             }
             Err(err) => {
                 println!("{}", err)
