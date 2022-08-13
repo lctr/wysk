@@ -47,42 +47,33 @@ impl ProjectBuilder {
         }
     }
     pub fn read_manifest(mut self) -> Self {
-        match self.root_dir.take() {
-            Some(root_dir) => {
-                self.manifest = root_dir.read_manifest();
-                self.root_dir = Some(root_dir);
-            }
-            None => (),
+        if let Some(root_dir) = self.root_dir.take() {
+            self.manifest = root_dir.read_manifest();
+            self.root_dir = Some(root_dir);
         }
         self
     }
 
     pub fn store_manifest_submodules(mut self) -> Self {
-        match self.manifest.take() {
-            Some(manifest) => {
-                manifest
-                    .workspaces()
-                    .flat_map(|p| self.atlas.add_path(p))
-                    .for_each(|f| {
-                        if self.submodules.contains(&f) {
-                            self.submodules.push(f)
-                        }
-                    });
+        if let Some(manifest) = self.manifest.take() {
+            manifest
+                .workspaces()
+                .flat_map(|p| self.atlas.add_path(p))
+                .for_each(|f| {
+                    if self.submodules.contains(&f) {
+                        self.submodules.push(f)
+                    }
+                });
 
-                self.manifest = Some(manifest);
-            }
-            None => (),
+            self.manifest = Some(manifest);
         }
         self
     }
 
     pub fn walk_root_dir(mut self) -> Self {
-        match self.root_dir.take() {
-            Some(dir) => {
-                self.atlas.add_dir(dir.clone());
-                self.root_dir = Some(dir);
-            }
-            None => (),
+        if let Some(dir) = self.root_dir.take() {
+            self.atlas.add_dir(dir.clone());
+            self.root_dir = Some(dir);
         }
         self
     }
