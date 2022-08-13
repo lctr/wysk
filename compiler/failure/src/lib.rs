@@ -1,5 +1,7 @@
 pub mod show;
 
+pub mod diff;
+
 pub use show::{Dialogue, SrcLoc, SrcPath};
 
 pub type Outcome<X, E> = Result<X, Failure<E>>;
