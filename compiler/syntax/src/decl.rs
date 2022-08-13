@@ -1,16 +1,17 @@
 use serde::{Deserialize, Serialize};
 use wy_common::functor::{Functor, MapFst, MapSnd};
-use wy_name::ident::Ident;
 
 pub use wy_lexer::{
     comment::{self, Comment},
     Literal,
 };
+use wy_span::{Span, Spanned};
 
-use crate::{attr::*, fixity::*, stmt::*, tipo::*};
+use crate::{attr::*, fixity::*, stmt::*, tipo::*, SpannedIdent};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FixityDecl<Id = Ident> {
+pub struct FixityDecl<Id = SpannedIdent> {
+    pub span: Span,
     pub infixes: Vec<Id>,
     pub fixity: Fixity,
 }
@@ -21,20 +22,44 @@ impl<Id> FixityDecl<Id> {
         F: FnMut(Id) -> X,
     {
         FixityDecl {
+            span: self.span,
             infixes: Functor::fmap(self.infixes, f),
             fixity: self.fixity,
         }
     }
 }
 
-impl<Id: Copy + Eq + std::hash::Hash> From<&[FixityDecl<Id>]> for FixityTable<Id> {
-    fn from(fixity_decls: &[FixityDecl<Id>]) -> Self {
+impl<Id: Copy + Eq + std::hash::Hash> From<&[FixityDecl<Spanned<Id>>]> for FixityTable<Id> {
+    fn from(fixity_decls: &[FixityDecl<Spanned<Id>>]) -> Self {
         Self(
             fixity_decls
                 .iter()
-                .flat_map(|FixityDecl { infixes, fixity }| {
-                    infixes.iter().map(|infix| (*infix, *fixity))
-                })
+                .flat_map(
+                    |FixityDecl {
+                         span: _,
+                         infixes,
+                         fixity,
+                     }| {
+                        infixes.iter().map(|infix| (*infix.item(), *fixity))
+                    },
+                )
+                .collect(),
+        )
+    }
+}
+
+impl From<&[FixityDecl<wy_name::Ident>]> for FixityTable<wy_name::Ident> {
+    fn from(fixity_decls: &[FixityDecl<wy_name::Ident>]) -> Self {
+        Self(
+            fixity_decls
+                .iter()
+                .flat_map(
+                    |FixityDecl {
+                         span: _,
+                         infixes,
+                         fixity,
+                     }| { infixes.iter().map(|infix| (*infix, *fixity)) },
+                )
                 .collect(),
         )
     }
@@ -119,7 +144,8 @@ impl<Id: Copy + Eq + std::hash::Hash> From<&[FixityDecl<Id>]> for FixityTable<Id
 ///     with (A, B, C);  ~~ with (deriving) clause
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DataDecl<Id = Ident, V = Ident> {
+pub struct DataDecl<Id = SpannedIdent, V = SpannedIdent> {
+    pub span: Span,
     pub tdef: SimpleType<Id, V>,
     pub pred: Vec<Predicate<Id, V>>,
     pub vnts: Vec<Variant<Id, V>>,
@@ -141,6 +167,7 @@ impl<Id, V, X> MapFst<Id, X> for DataDecl<Id, V> {
         F: FnMut(Id) -> X,
     {
         let DataDecl {
+            span,
             tdef,
             pred,
             vnts,
@@ -151,6 +178,7 @@ impl<Id, V, X> MapFst<Id, X> for DataDecl<Id, V> {
         let vnts = vnts.map_fst(f);
         let with = with.into_iter().map(|id| f.apply(id)).collect();
         DataDecl {
+            span,
             tdef,
             pred,
             vnts,
@@ -167,6 +195,7 @@ impl<Id, V, X> MapSnd<V, X> for DataDecl<Id, V> {
         F: FnMut(V) -> X,
     {
         let DataDecl {
+            span,
             tdef,
             pred,
             vnts,
@@ -176,6 +205,7 @@ impl<Id, V, X> MapSnd<V, X> for DataDecl<Id, V> {
         let pred = pred.map_snd(f);
         let vnts = vnts.map_snd(f);
         DataDecl {
+            span,
             tdef,
             pred,
             vnts,
@@ -185,7 +215,7 @@ impl<Id, V, X> MapSnd<V, X> for DataDecl<Id, V> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Selector<Id = Ident, V = Ident> {
+pub struct Selector<Id = SpannedIdent, V = SpannedIdent> {
     pub name: Id,
     pub tipo: Type<Id, V>,
 }
@@ -219,7 +249,7 @@ impl<Id, V, X> MapSnd<V, X> for Selector<Id, V> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TypeArg<Id = Ident, V = Ident, T = Type<Id, V>, S = Selector<Id, V>> {
+pub enum TypeArg<Id = SpannedIdent, V = SpannedIdent, T = Type<Id, V>, S = Selector<Id, V>> {
     /// Not really used since nullary type constructors can just take
     /// an empty vector of `TypeArg`s, however this is here to allow
     /// parametrizing the existing type and selector parameters
@@ -267,7 +297,7 @@ impl<Id, V, X> MapSnd<V, X> for TypeArg<Id, V> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TypeArgs<Id = Ident, V = Ident> {
+pub enum TypeArgs<Id = SpannedIdent, V = SpannedIdent> {
     Curried(Vec<Type<Id, V>>),
     Record(Vec<Selector<Id, V>>),
 }
@@ -316,7 +346,7 @@ impl<Id, V, X> MapSnd<V, X> for TypeArgs<Id, V> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Variant<Id = Ident, V = Ident> {
+pub struct Variant<Id = SpannedIdent, V = SpannedIdent> {
     pub name: Id,
     pub args: TypeArgs<Id, V>,
 }
@@ -397,7 +427,8 @@ wy_common::newtype!(Arity | usize | PartialOrd);
 wy_common::newtype!(Arity | usize | (+= usize |rhs| rhs) );
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AliasDecl<Id = Ident, V = Ident> {
+pub struct AliasDecl<Id = SpannedIdent, V = SpannedIdent> {
+    pub span: Span,
     pub ldef: SimpleType<Id, V>,
     pub tipo: Type<Id, V>,
 }
@@ -410,6 +441,7 @@ impl<Id, V, X> MapFst<Id, X> for AliasDecl<Id, V> {
         F: FnMut(Id) -> X,
     {
         AliasDecl {
+            span: self.span,
             ldef: self.ldef.map_fst(f),
             tipo: self.tipo.map_fst(f),
         }
@@ -424,6 +456,7 @@ impl<Id, V, X> MapSnd<V, X> for AliasDecl<Id, V> {
         F: FnMut(V) -> X,
     {
         AliasDecl {
+            span: self.span,
             ldef: self.ldef.map_snd(f),
             tipo: self.tipo.map_snd(f),
         }
@@ -437,7 +470,8 @@ impl<Id, V, X> MapSnd<V, X> for AliasDecl<Id, V> {
 /// is perfectly acceptable to use a type alias to distinguish between numerical
 /// units, however this does not provide a safeguard against inconsistencies!
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct NewtypeDecl<Id = Ident, V = Ident> {
+pub struct NewtypeDecl<Id = SpannedIdent, V = SpannedIdent> {
+    pub span: Span,
     pub tdef: SimpleType<Id, V>,
     pub ctor: Id,
     pub narg: TypeArg<Id, V>,
@@ -467,6 +501,7 @@ impl<Id, V, X> MapFst<Id, X> for NewtypeDecl<Id, V> {
         F: FnMut(Id) -> X,
     {
         let NewtypeDecl {
+            span,
             tdef,
             ctor,
             narg,
@@ -477,6 +512,7 @@ impl<Id, V, X> MapFst<Id, X> for NewtypeDecl<Id, V> {
         let narg = narg.map_fst(f);
         let with = with.into_iter().map(|id| f.apply(id)).collect();
         NewtypeDecl {
+            span,
             tdef,
             ctor,
             narg,
@@ -493,6 +529,7 @@ impl<Id, V, X> MapSnd<V, X> for NewtypeDecl<Id, V> {
         F: FnMut(V) -> X,
     {
         let NewtypeDecl {
+            span,
             tdef,
             ctor,
             narg,
@@ -501,6 +538,7 @@ impl<Id, V, X> MapSnd<V, X> for NewtypeDecl<Id, V> {
         let tdef = tdef.map_snd(f);
         let narg = narg.map_snd(f);
         NewtypeDecl {
+            span,
             tdef,
             ctor,
             narg,
@@ -510,7 +548,8 @@ impl<Id, V, X> MapSnd<V, X> for NewtypeDecl<Id, V> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ClassDecl<Id = Ident, V = Ident> {
+pub struct ClassDecl<Id = SpannedIdent, V = SpannedIdent> {
+    pub span: Span,
     pub cdef: SimpleType<Id, V>,
     pub pred: Vec<Predicate<Id, V>>,
     pub defs: Vec<MethodDef<Id, V>>,
@@ -535,11 +574,21 @@ impl<Id, V, X> MapFst<Id, X> for ClassDecl<Id, V> {
     where
         F: FnMut(Id) -> X,
     {
-        let ClassDecl { cdef, pred, defs } = self;
+        let ClassDecl {
+            span,
+            cdef,
+            pred,
+            defs,
+        } = self;
         let cdef = cdef.map_fst(f);
         let pred = pred.map_fst(f);
         let defs = defs.map_fst(f);
-        ClassDecl { cdef, pred, defs }
+        ClassDecl {
+            span,
+            cdef,
+            pred,
+            defs,
+        }
     }
 }
 
@@ -550,16 +599,27 @@ impl<Id, V, X> MapSnd<V, X> for ClassDecl<Id, V> {
     where
         F: FnMut(V) -> X,
     {
-        let ClassDecl { cdef, pred, defs } = self;
+        let ClassDecl {
+            span,
+            cdef,
+            pred,
+            defs,
+        } = self;
         let cdef = cdef.map_snd(f);
         let pred = pred.map_snd(f);
         let defs = defs.map_snd(f);
-        ClassDecl { cdef, pred, defs }
+        ClassDecl {
+            span,
+            cdef,
+            pred,
+            defs,
+        }
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InstDecl<Id = Ident, V = Ident> {
+pub struct InstDecl<Id = SpannedIdent, V = SpannedIdent> {
+    pub span: Span,
     pub name: Id,
     pub tipo: Type<Id, V>,
     pub pred: Vec<Predicate<Id, V>>,
@@ -580,6 +640,7 @@ impl<Id, V, X> MapFst<Id, X> for InstDecl<Id, V> {
         F: FnMut(Id) -> X,
     {
         let InstDecl {
+            span,
             name,
             tipo,
             pred,
@@ -590,6 +651,7 @@ impl<Id, V, X> MapFst<Id, X> for InstDecl<Id, V> {
         let pred = pred.map_fst(f);
         let defs = defs.map_fst(f);
         InstDecl {
+            span,
             name,
             tipo,
             pred,
@@ -606,6 +668,7 @@ impl<Id, V, X> MapSnd<V, X> for InstDecl<Id, V> {
         F: FnMut(V) -> X,
     {
         let InstDecl {
+            span,
             name,
             tipo,
             pred,
@@ -615,6 +678,7 @@ impl<Id, V, X> MapSnd<V, X> for InstDecl<Id, V> {
         let pred = pred.map_snd(f);
         let defs = defs.map_snd(f);
         InstDecl {
+            span,
             name,
             tipo,
             pred,
@@ -643,7 +707,8 @@ impl<Id, V> InstDecl<Id, V> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FnDecl<Id = Ident, V = Ident> {
+pub struct FnDecl<Id = SpannedIdent, V = SpannedIdent> {
+    pub span: Span,
     pub name: Id,
     pub sign: Signature<Id, V>,
     pub defs: Vec<Match<Id, V>>,
@@ -661,11 +726,21 @@ impl<Id, V, X> MapFst<Id, X> for FnDecl<Id, V> {
     where
         F: FnMut(Id) -> X,
     {
-        let FnDecl { name, sign, defs } = self;
+        let FnDecl {
+            span,
+            name,
+            sign,
+            defs,
+        } = self;
         let name = f.apply(name);
         let sign = sign.map_fst(f);
         let defs = defs.map_fst(f);
-        FnDecl { name, sign, defs }
+        FnDecl {
+            span,
+            name,
+            sign,
+            defs,
+        }
     }
 }
 
@@ -676,10 +751,20 @@ impl<Id, V, X> MapSnd<V, X> for FnDecl<Id, V> {
     where
         F: FnMut(V) -> X,
     {
-        let FnDecl { name, sign, defs } = self;
+        let FnDecl {
+            span,
+            name,
+            sign,
+            defs,
+        } = self;
         let sign = sign.map_snd(f);
         let defs = defs.map_snd(f);
-        FnDecl { name, sign, defs }
+        FnDecl {
+            span,
+            name,
+            sign,
+            defs,
+        }
     }
 }
 
@@ -690,7 +775,7 @@ impl<Id, V> FnDecl<Id, V> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum MethodBody<Id = Ident, V = Ident> {
+pub enum MethodBody<Id = SpannedIdent, V = SpannedIdent> {
     Unimplemented,
     Default(Vec<Match<Id, V>>),
 }
@@ -724,7 +809,8 @@ impl<Id, V, X> MapSnd<V, X> for MethodBody<Id, V> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MethodDef<Id = Ident, V = Ident> {
+pub struct MethodDef<Id = SpannedIdent, V = SpannedIdent> {
+    pub span: Span,
     pub name: Id,
     pub annt: Annotation<Id, V>,
     pub body: MethodBody<Id, V>,
@@ -742,11 +828,21 @@ impl<Id, V, X> MapFst<Id, X> for MethodDef<Id, V> {
     where
         F: FnMut(Id) -> X,
     {
-        let MethodDef { name, annt, body } = self;
+        let MethodDef {
+            span,
+            name,
+            annt,
+            body,
+        } = self;
         let name = f.apply(name);
         let annt = annt.map_fst(f);
         let body = body.map_fst(f);
-        MethodDef { name, annt, body }
+        MethodDef {
+            span,
+            name,
+            annt,
+            body,
+        }
     }
 }
 
@@ -757,15 +853,25 @@ impl<Id, V, X> MapSnd<V, X> for MethodDef<Id, V> {
     where
         F: FnMut(V) -> X,
     {
-        let MethodDef { name, annt, body } = self;
+        let MethodDef {
+            span,
+            name,
+            annt,
+            body,
+        } = self;
         let annt = annt.map_snd(f);
         let body = body.map_snd(f);
-        MethodDef { name, annt, body }
+        MethodDef {
+            span,
+            name,
+            annt,
+            body,
+        }
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MethodImpl<Id = Ident, V = Ident>(pub Binding<Id, V>);
+pub struct MethodImpl<Id = SpannedIdent, V = SpannedIdent>(pub Binding<Id, V>);
 impl<Id, V> MethodImpl<Id, V> {
     pub fn new(binding: Binding<Id, V>) -> Self {
         Self(binding)
@@ -788,7 +894,7 @@ impl<Id, V> MethodImpl<Id, V> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Declaration<Id = Ident, V = Ident> {
+pub enum Declaration<Id = SpannedIdent, V = SpannedIdent> {
     Data(DataDecl<Id, V>),
     Alias(AliasDecl<Id, V>),
     Fixity(FixityDecl<Id>),

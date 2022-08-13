@@ -3,19 +3,18 @@ use wy_common::{
     functor::{MapFst, MapSnd},
     Set,
 };
-use wy_name::ident::Ident;
 
-use crate::{expr::Expression, pattern::Pattern, tipo::Signature};
+use crate::{expr::Expression, pattern::Pattern, tipo::Signature, SpannedIdent};
 
 /// ```wysk
 ///     fn foo :: Int -> Int -> Bool
-/// ~~> Match[0]
+/// ~~> Arm[0]
 /// ~~|  `args`
 /// ~~|   vvv
 ///     | x y if x > y = True
 /// ~~:       ^^^^^^^^   ^^^^
 /// ~~:        `cond`   `body`
-/// ~~> Match[1]
+/// ~~> Arm[1]
 /// ~~|  `args`
 /// ~~|   vvv
 ///     | x y = False && u where u = x + y > 0
@@ -23,22 +22,22 @@ use crate::{expr::Expression, pattern::Pattern, tipo::Signature};
 /// ~~: `args`    `body`         `wher[0]`
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Match<Id, V> {
+pub struct Arm<Id, V> {
     pub args: Vec<Pattern<Id, V>>,
     pub cond: Option<Expression<Id, V>>,
     pub body: Expression<Id, V>,
     pub wher: Vec<Binding<Id, V>>,
 }
 
-pub type RawMatch = Match<Ident, Ident>;
+pub type RawArm = Arm<SpannedIdent, SpannedIdent>;
 
 wy_common::struct_field_iters! {
-    |Id, V| Match<Id, V>
+    |Id, V| Arm<Id, V>
     | args => args_iter :: Pattern<Id, V>
     | wher => wher_iter :: Binding<Id, V>
 }
 
-impl<Id, V> Match<Id, V> {
+impl<Id, V> Arm<Id, V> {
     /// A trivial match consists of only an expression, with the `args` and
     /// `where` fields empty vectors and `cond` a default `None`.
     pub fn trivial(body: Expression<Id, V>) -> Self {
@@ -75,14 +74,14 @@ impl<Id, V> Match<Id, V> {
     }
 }
 
-impl<Id, V, X> MapFst<Id, X> for Match<Id, V> {
-    type WrapFst = Match<X, V>;
+impl<Id, V, X> MapFst<Id, X> for Arm<Id, V> {
+    type WrapFst = Arm<X, V>;
 
     fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
     where
         F: FnMut(Id) -> X,
     {
-        let Match {
+        let Arm {
             args,
             cond,
             body,
@@ -92,7 +91,7 @@ impl<Id, V, X> MapFst<Id, X> for Match<Id, V> {
         let cond = cond.map_fst(f);
         let body = body.map_fst(f);
         let wher = wher.map_fst(f);
-        Match {
+        Arm {
             args,
             cond,
             body,
@@ -101,14 +100,14 @@ impl<Id, V, X> MapFst<Id, X> for Match<Id, V> {
     }
 }
 
-impl<Id, V, X> MapSnd<V, X> for Match<Id, V> {
-    type WrapSnd = Match<Id, X>;
+impl<Id, V, X> MapSnd<V, X> for Arm<Id, V> {
+    type WrapSnd = Arm<Id, X>;
 
     fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
     where
         F: FnMut(V) -> X,
     {
-        let Match {
+        let Arm {
             args,
             cond,
             body,
@@ -118,7 +117,7 @@ impl<Id, V, X> MapSnd<V, X> for Match<Id, V> {
         let cond = cond.map_snd(f);
         let body = body.map_snd(f);
         let wher = wher.map_snd(f);
-        Match {
+        Arm {
             args,
             cond,
             body,
@@ -159,7 +158,7 @@ pub struct Alternative<Id, V> {
     pub wher: Vec<Binding<Id, V>>,
 }
 
-pub type RawAlternative = Alternative<Ident, Ident>;
+pub type RawAlternative = Alternative<SpannedIdent, SpannedIdent>;
 
 wy_common::struct_field_iters! {
     |Id, V| Alternative<Id, V>
@@ -281,14 +280,14 @@ impl<Id, V, X> MapSnd<V, X> for Alternative<Id, V> {
 pub struct Binding<Id, V> {
     pub name: Id,
     pub tsig: Signature<Id, V>,
-    pub arms: Vec<Match<Id, V>>,
+    pub arms: Vec<Arm<Id, V>>,
 }
 
-pub type RawBinding = Binding<Ident, Ident>;
+pub type RawBinding = Binding<SpannedIdent, SpannedIdent>;
 
 wy_common::struct_field_iters! {
     |Id, V| Binding<Id, V>
-    | arms => arms_iter :: Match<Id, V>
+    | arms => arms_iter :: Arm<Id, V>
 }
 
 impl<Id, V> Binding<Id, V> {
@@ -407,7 +406,7 @@ pub enum Statement<Id, V> {
     JustLet(Vec<Binding<Id, V>>),
 }
 
-pub type RawStatement = Statement<Ident, Ident>;
+pub type RawStatement = Statement<SpannedIdent, SpannedIdent>;
 
 impl<Id, V> Statement<Id, V> {
     /// Returns a set of references to all the identifiers referenced within the

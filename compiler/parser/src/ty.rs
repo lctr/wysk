@@ -6,13 +6,14 @@ use wy_lexer::token::{LexKind, Token};
 use wy_lexer::Keyword;
 use wy_lexer::Lexeme;
 use wy_name::ident::Ident;
-use wy_span::WithLoc;
+use wy_span::{Span, Spanned, WithLoc, WithSpan};
 use wy_syntax::record::Field;
 use wy_syntax::record::Record;
 use wy_syntax::tipo::{Annotation, Type};
 use wy_syntax::tipo::{Con, Quantified, Signature};
 use wy_syntax::tipo::{Parameter, Predicate};
 use wy_syntax::tipo::{Qualified, SimpleType};
+use wy_syntax::SpannedIdent;
 
 use crate::error::*;
 use crate::stream::*;
@@ -27,7 +28,7 @@ impl<'t> TypeParser<'t> {
     /// signature of function declarations). It is illegal for a type to contain
     /// any type constraints in a cast expression or in data declaration
     /// constructor arguments.
-    pub(crate) fn ty_signature(&mut self) -> Parsed<Signature> {
+    pub(crate) fn ty_signature(&mut self) -> Parsed<Signature<SpannedIdent, SpannedIdent>> {
         Ok(if self.bump_on(Lexeme::Colon2) {
             Signature::Explicit(self.ty_annotation()?)
         } else {
@@ -35,13 +36,13 @@ impl<'t> TypeParser<'t> {
         })
     }
 
-    pub(crate) fn ty_annotation(&mut self) -> Parsed<Annotation> {
+    pub(crate) fn ty_annotation(&mut self) -> Parsed<Annotation<SpannedIdent, SpannedIdent>> {
         let quant = self.maybe_quantified()?;
         let qual = self.maybe_qualified()?;
         Ok(Annotation { quant, qual })
     }
 
-    pub(crate) fn maybe_quantified(&mut self) -> Parsed<Quantified<Ident, Ident>> {
+    pub(crate) fn maybe_quantified(&mut self) -> Parsed<Quantified<SpannedIdent, SpannedIdent>> {
         let mut quants = vec![];
         if self.bump_on(Keyword::Forall) {
             quants = self.many_while_on(Lexeme::is_lower, Self::expect_lower)?;
@@ -50,13 +51,13 @@ impl<'t> TypeParser<'t> {
         Ok(quants.into_iter().map(|id| (id, id)).collect())
     }
 
-    pub(crate) fn maybe_qualified(&mut self) -> Parsed<Qualified<Ident, Ident>> {
+    pub(crate) fn maybe_qualified(&mut self) -> Parsed<Qualified<SpannedIdent, SpannedIdent>> {
         let pred = self.ty_predicates()?;
         let tipo = self.ty_node()?;
         Ok(Qualified { pred, tipo })
     }
 
-    pub(crate) fn ty_predicates(&mut self) -> Parsed<Vec<Predicate>> {
+    pub(crate) fn ty_predicates(&mut self) -> Parsed<Vec<Predicate<SpannedIdent, SpannedIdent>>> {
         use Lexeme::{Comma, Pipe};
 
         let mut ctxts = vec![];
@@ -71,13 +72,13 @@ impl<'t> TypeParser<'t> {
     }
 
     #[allow(unused)]
-    fn ty_predicate(&mut self) -> Parsed<Predicate> {
+    fn ty_predicate(&mut self) -> Parsed<Predicate<SpannedIdent, SpannedIdent>> {
         let class = self.expect_upper()?;
         let head = self.predicate_parameter()?;
         Ok(Predicate { class, head })
     }
 
-    fn predicate_parameter(&mut self) -> Parsed<Parameter> {
+    fn predicate_parameter(&mut self) -> Parsed<Parameter<SpannedIdent>> {
         Ok(if self.bump_on(Lexeme::ParenL) {
             let con = self.expect_lower()?;
             let tail = self.many_while_on(Lexeme::is_lower, Self::expect_lower)?;
@@ -93,7 +94,7 @@ impl<'t> TypeParser<'t> {
     ///
     /// Thus it follows that this method returns a vector of
     /// predicates, all of which are to be flattened together.
-    fn ty_predicates_sugared(&mut self) -> Parsed<Vec<Predicate>> {
+    fn ty_predicates_sugared(&mut self) -> Parsed<Vec<Predicate<SpannedIdent, SpannedIdent>>> {
         let class = self.expect_upper()?;
         if self.peek_on(Lexeme::CurlyL) {
             self.delimited(
@@ -112,13 +113,13 @@ impl<'t> TypeParser<'t> {
         }
     }
 
-    pub(crate) fn ty_simple(&mut self) -> Parsed<SimpleType> {
+    pub(crate) fn ty_simple(&mut self) -> Parsed<SimpleType<SpannedIdent, SpannedIdent>> {
         let con = self.expect_upper()?;
         let vars = self.many_while_on(Lexeme::is_lower, Self::expect_lower)?;
         Ok(SimpleType(con, vars))
     }
 
-    pub(crate) fn ty_node(&mut self) -> Parsed<Type> {
+    pub(crate) fn ty_node(&mut self) -> Parsed<Type<SpannedIdent, SpannedIdent>> {
         let coord = self.get_coord();
         let ty = self.ty_atom()?;
         if self.peek_on(Lexeme::ArrowR) {
@@ -133,18 +134,24 @@ impl<'t> TypeParser<'t> {
         }
     }
 
-    fn maybe_ty_app(&mut self, head: Type) -> Parsed<Type> {
-        fn var_or_con(id: Ident) -> impl FnMut(Vec<Type>) -> Type {
+    fn maybe_ty_app(
+        &mut self,
+        head: Type<SpannedIdent, SpannedIdent>,
+    ) -> Parsed<Type<SpannedIdent, SpannedIdent>> {
+        fn var_or_con(
+            id: SpannedIdent,
+        ) -> impl FnMut(Vec<Type<SpannedIdent, SpannedIdent>>) -> Type<SpannedIdent, SpannedIdent>
+        {
             move |args| {
                 if args.is_empty() {
-                    if id.is_lower() {
+                    if id.item().is_lower() {
                         Type::Var(id)
                     } else {
                         Type::Con(Con::Named(id), vec![])
                     }
                 } else {
                     Type::Con(
-                        if id.is_lower() {
+                        if id.item().is_lower() {
                             Con::Free(id)
                         } else {
                             Con::Named(id)
@@ -166,7 +173,7 @@ impl<'t> TypeParser<'t> {
         }
     }
 
-    pub(crate) fn ty_atom(&mut self) -> Parsed<Type> {
+    pub(crate) fn ty_atom(&mut self) -> Parsed<Type<SpannedIdent, SpannedIdent>> {
         match self.peek() {
             Some(t) if t.is_lower() => self.expect_lower().map(Type::Var),
             Some(t) if t.is_upper() => self
@@ -179,7 +186,10 @@ impl<'t> TypeParser<'t> {
         }
     }
 
-    fn arrow_ty(&mut self, head: Type) -> Parsed<Type> {
+    fn arrow_ty(
+        &mut self,
+        head: Type<SpannedIdent, SpannedIdent>,
+    ) -> Parsed<Type<SpannedIdent, SpannedIdent>> {
         let mut rest = vec![];
         while self.bump_on(Lexeme::ArrowR) {
             rest.push(self.ty_atom().and_then(|right| self.maybe_ty_app(right))?);
@@ -196,7 +206,7 @@ impl<'t> TypeParser<'t> {
         })
     }
 
-    fn paren_ty(&mut self) -> Parsed<Type> {
+    fn paren_ty(&mut self) -> Parsed<Type<SpannedIdent, SpannedIdent>> {
         use Lexeme::{Comma, ParenL, ParenR};
         self.eat(ParenL)?;
 
@@ -264,15 +274,20 @@ impl<'t> TypeParser<'t> {
         Ok(ty)
     }
 
-    fn tuple_ty_tail(&mut self, head: Type) -> Parsed<Type> {
+    fn tuple_ty_tail(
+        &mut self,
+        head: Type<SpannedIdent, SpannedIdent>,
+    ) -> Parsed<Type<SpannedIdent, SpannedIdent>> {
         use Lexeme::{Comma, ParenR};
         self.delimited([Comma, Comma, ParenR], Self::ty_node)
             .map(|rest| Type::Tup(std::iter::once(head).chain(rest).collect()))
     }
 
-    fn brack_ty(&mut self) -> Parsed<Type> {
+    fn brack_ty(&mut self) -> Parsed<Type<SpannedIdent, SpannedIdent>> {
+        let start = self.get_pos();
         self.eat(Lexeme::BrackL)?;
         if self.bump_on(Lexeme::BrackR) {
+            let end = self.get_pos();
             if self.peek_on(Lexeme::begins_ty) {
                 let of = self.ty_atom()?;
                 if self.peek_on(Lexeme::begins_ty) {
@@ -281,7 +296,10 @@ impl<'t> TypeParser<'t> {
                     Ok(Type::Con(Con::List, vec![of]))
                 }
             } else {
-                let var = Type::Var(Ident::Lower(Symbol::from_str("a")));
+                let var = Type::Var(Spanned(
+                    Ident::Lower(Symbol::from_str("a")),
+                    Span(start, end),
+                ));
                 Ok(Type::Vec(Box::new(var)))
             }
         } else {
@@ -291,7 +309,7 @@ impl<'t> TypeParser<'t> {
         }
     }
 
-    pub fn curly_ty(&mut self) -> Parsed<Type> {
+    pub fn curly_ty(&mut self) -> Parsed<Type<SpannedIdent, SpannedIdent>> {
         use Lexeme::{Comma, CurlyL, CurlyR};
 
         Ok(Type::Rec(Record::Anon(
@@ -301,9 +319,12 @@ impl<'t> TypeParser<'t> {
         )))
     }
 
-    fn record_entry_ty<F>(&mut self, mut f: F) -> Parsed<Field<Ident, Type>>
+    fn record_entry_ty<F>(
+        &mut self,
+        mut f: F,
+    ) -> Parsed<Field<SpannedIdent, Type<SpannedIdent, SpannedIdent>>>
     where
-        F: FnMut(&mut Self) -> Parsed<Type>,
+        F: FnMut(&mut Self) -> Parsed<Type<SpannedIdent, SpannedIdent>>,
     {
         let key = self.expect_lower()?;
         self.eat(Lexeme::Colon2)?;
@@ -314,6 +335,7 @@ impl<'t> TypeParser<'t> {
 
 #[cfg(test)]
 mod test {
+    use wy_common::functor::{Func, MapFst, MapSnd};
     use wy_syntax::tipo::Var;
 
     use super::*;
@@ -349,6 +371,10 @@ mod test {
         ] {
             Parser::from_str(src)
                 .ty_node()
+                .map(|ty| {
+                    ty.map_fst(&mut Func::Fresh(Spanned::take_item))
+                        .map_snd(&mut Func::Fresh(Spanned::take_item))
+                })
                 .map(|result| assert_eq!(result, expected))
                 .unwrap();
         }
@@ -370,6 +396,10 @@ mod test {
         ] {
             Parser::from_str(src)
                 .ty_node()
+                .map(|ty| {
+                    ty.map_fst(&mut Func::Fresh(Spanned::take_item))
+                        .map_snd(&mut Func::Fresh(Spanned::take_item))
+                })
                 .map(|result| assert_eq!(result, expected))
                 .unwrap();
         }
@@ -378,7 +408,13 @@ mod test {
     #[test]
     fn test_type_app() {
         let src = "Foo x y z -> Bar (z, y) x";
-        let result = Parser::from_str(src).ty_node().unwrap();
+        let result = Parser::from_str(src)
+            .ty_node()
+            .map(|ty| {
+                ty.map_fst(&mut Func::Fresh(Spanned::take_item))
+                    .map_snd(&mut Func::Fresh(Spanned::take_item))
+            })
+            .unwrap();
         let [foo_ty, x, y, z, bar_ty] = Symbol::intern_many(["Foo", "x", "y", "z", "Bar"]);
         assert_eq!(
             result,
@@ -398,7 +434,13 @@ mod test {
     #[test]
     fn test_parse_arrow_type() {
         let src = "a -> b -> c -> d";
-        let result = Parser::from_str(src).ty_node().unwrap();
+        let result = Parser::from_str(src)
+            .ty_node()
+            .map(|ty| {
+                ty.map_fst(&mut Func::Fresh(Spanned::take_item))
+                    .map_snd(&mut Func::Fresh(Spanned::take_item))
+            })
+            .unwrap();
         println!("{}", &result);
         let [a, b, c, d] = Symbol::intern_many(["a", "b", "c", "d"]);
         let expected = Type::Fun(
@@ -424,7 +466,13 @@ mod test {
     #[test]
     fn test_parse_type_signature() {
         let src = r#":: forall a b. |A a, B b| m a -> (a -> m b) -> m b"#;
-        let sig = Parser::from_str(src).ty_signature().unwrap();
+        let sig = Parser::from_str(src)
+            .ty_signature()
+            .map(|ty| {
+                ty.map_fst(&mut Func::Fresh(Spanned::take_item))
+                    .map_snd(&mut Func::Fresh(Spanned::take_item))
+            })
+            .unwrap();
         let [a, b, m] = Symbol::intern_many_with(["a", "b", "m"], Ident::Lower);
         let [class_a, class_b] = Symbol::intern_many_with(["A", "B"], UPPER);
         let expected = Signature::Explicit(Annotation {

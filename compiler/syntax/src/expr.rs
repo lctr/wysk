@@ -6,6 +6,7 @@ use wy_common::{
 };
 use wy_lexer::Literal;
 use wy_name::ident::{Ident, Identifier};
+use wy_span::Spanned;
 
 use crate::{decl::Arity, record::Record, stmt::Alternative, tipo::Type, Binding};
 
@@ -240,8 +241,7 @@ impl<Id, V, X> MapSnd<V, X> for Range<Id, V> {
     }
 }
 
-pub type RawExpression = Expression<Ident, Ident>;
-pub type Expr<V> = Expression<Ident, V>;
+pub type RawExpression = Expression<Spanned<Ident>, Spanned<Ident>>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Expression<Id, V> {
@@ -500,22 +500,12 @@ impl<Id, V> Expression<Id, V> {
         }
     }
 
-    /// If an expression is a `Group` variant, return the inner node.
-    /// Otherwise, returns `Self`.
-    pub fn ungroup(self) -> Self {
-        match self {
-            Expression::Group(expr) => *expr,
-            expr => expr,
+    pub fn peel_parens(&self) -> &Self {
+        let mut expr = self;
+        while let Self::Group(inner) = expr {
+            expr = inner.as_ref()
         }
-    }
-
-    /// If an expression is a `Group` variant, return a reference to the inner
-    /// node. Otherwise, return a reference to `Self`.
-    pub fn ungroup_ref(&self) -> &Self {
-        match self {
-            Expression::Group(expr) => expr.as_ref(),
-            expr => expr,
-        }
+        expr
     }
 
     pub fn get_lambda_arg(&self) -> Option<&Pattern<Id, V>> {
@@ -933,10 +923,10 @@ mod tests {
 
     #[test]
     fn test_flatten_app() {
-        let [f, g, h]: [RawExpression; 3] =
+        let [f, g, h]: [Expression<Ident, Ident>; 3] =
             symbol::intern_many_with(["f", "g", "h"], |sym| Expression::Ident(Ident::Lower(sym)));
         let lit = |n| Expression::Lit(Literal::mk_simple_integer(n));
-        let [one, three, four]: [RawExpression; 3] = [lit(1), lit(3), lit(4)];
+        let [one, three, four]: [Expression<Ident, Ident>; 3] = [lit(1), lit(3), lit(4)];
 
         // (((f (g 1)) h) 3) 4)
         let app = Expression::mk_app(

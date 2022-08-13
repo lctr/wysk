@@ -4,7 +4,8 @@ use wy_common::{
     functor::{MapFst, MapSnd, MapThrd},
     struct_field_iters, HashMap,
 };
-use wy_intern::symbol::{self, Symbol};
+use wy_failure::SrcPath;
+use wy_intern::symbol::Symbol;
 use wy_name::{module::ModuleId, Chain, Ident};
 
 pub use wy_lexer::{
@@ -12,6 +13,7 @@ pub use wy_lexer::{
     literal::Literal,
 };
 
+pub mod ast;
 pub mod attr;
 pub mod decl;
 pub mod expr;
@@ -29,194 +31,34 @@ use fixity::*;
 use pattern::*;
 use stmt::*;
 use tipo::*;
+use wy_span::{Span, Spanned, Unspan};
+
+pub type SpannedIdent = Spanned<Ident>;
 
 #[derive(Clone, Debug)]
-pub struct SyntaxTree<I> {
-    programs: Vec<Program<I, ModuleId, Tv>>,
-    packages: HashMap<ModuleId, Chain<I>>,
-}
-
-pub type Ast = SyntaxTree<Ident>;
-
-wy_common::struct_field_iters!(
-    |I| SyntaxTree<I>
-    | programs => programs_iter :: Program<I, ModuleId, Tv>
-);
-
-impl<I> SyntaxTree<I> {
-    pub fn new() -> Self {
-        Self {
-            programs: Vec::new(),
-            packages: HashMap::new(),
-        }
-    }
-    pub fn map_idents<X>(self, f: impl FnMut(I) -> X) -> SyntaxTree<X>
-    where
-        I: Eq + std::hash::Hash,
-        X: Eq + std::hash::Hash,
-    {
-        use wy_common::functor::Func;
-        let mut ph = Func::Fresh(f);
-        let SyntaxTree { programs, packages } = self;
-        let programs = programs
-            .into_iter()
-            .map(|program| program.map_fst(&mut ph))
-            .collect();
-        let packages = packages
-            .into_iter()
-            .map(|(mid, chain)| (mid, chain.mapf(&mut ph)))
-            .collect();
-        SyntaxTree { programs, packages }
-    }
-
-    pub fn program_count(&self) -> usize {
-        self.programs.len()
-    }
-
-    pub fn packages_iter(&self) -> std::collections::hash_map::Iter<'_, ModuleId, Chain<I>> {
-        self.packages.iter()
-    }
-
-    pub fn get_uid_chain(&self, uid: &ModuleId) -> Option<&Chain<I>> {
-        self.packages.get(uid)
-    }
-
-    pub fn add_program<M>(&mut self, program: Program<I, M, Tv>) -> ModuleId
-    where
-        I: Copy,
-    {
-        let uid = ModuleId::new(self.programs.len() as u32);
-        let chain = program.module.modname.clone();
-        let program = program.map_u(|_| uid);
-        self.programs.push(program);
-        self.packages.insert(uid, chain);
-        uid
-    }
-
-    pub fn add_programs<M>(
-        &mut self,
-        programs: impl IntoIterator<Item = Program<I, M, Tv>>,
-    ) -> Vec<ModuleId>
-    where
-        I: Copy,
-    {
-        programs
-            .into_iter()
-            .map(|program| self.add_program(program))
-            .collect()
-    }
-
-    pub fn imported_modules(&self) -> Vec<(ModuleId, Chain<I>)>
-    where
-        I: Copy,
-    {
-        self.programs_iter()
-            .enumerate()
-            .flat_map(|(u, prog)| {
-                prog.get_imports_iter()
-                    .map(move |import| (ModuleId::new(u as u32), import.name.clone()))
-            })
-            .collect()
-    }
-
-    pub fn imported_modules_iter(&self) -> impl Iterator<Item = (&ModuleId, &Chain<I>)>
-    where
-        I: Copy,
-    {
-        self.programs_iter().flat_map(|prog| {
-            prog.get_imports_iter()
-                .map(|impf| (prog.module_id(), impf.module_name()))
-        })
-    }
-}
-
-impl Ast {}
-
-pub fn enumerate_programs<Id, U: Copy, T, I: IntoIterator<Item = Program<Id, U, T>>>(
-    progs: I,
-) -> impl Iterator<Item = Program<Id, ModuleId, T>> {
-    progs
-        .into_iter()
-        .enumerate()
-        .map(|(n, prog)| prog.map_u(|_| ModuleId::new(n as u32)))
-}
-
-pub fn enumerate_modules(
-    modules: impl IntoIterator<Item = Module>,
-) -> impl Iterator<Item = (ModuleId, Module)> {
-    modules
-        .into_iter()
-        .enumerate()
-        .map(|(id, mdl)| (ModuleId::new(id as u32), mdl))
-}
-
-#[derive(Clone, Debug)]
-pub struct Program<Id, U, T> {
-    pub module: Module<Id, U, T>,
+pub struct Program<Id, T, U> {
+    pub module: Module<Id, T, U>,
     pub fixities: FixityTable<Id>,
     pub comments: Vec<Comment>,
 }
 
-macro_rules! impl_program {
-    (
-        $(
-            $(|)? $field:ident : $typ:ident<$g0:tt $(,$gs:tt)?>, $method_name_iter:ident
-            & $method_name_slice:ident
-        )+
-    ) => {
-        $(
-            impl<Id, U, T> Program<Id, U, T> {
-                impl_program! {
-                    # Iter<$typ<$g0 $(, $gs)*>>
-                    | $field : $method_name_iter
-                }
-                impl_program! {
-                    # [$typ<$g0 $(, $gs)*>]
-                    | $field : $method_name_slice
-                }
-            }
-        )+
-    };
-    (# Iter<$typ:ty> | $field:ident : $method_name:ident) => {
-        pub fn $method_name(&self) -> std::slice::Iter<'_, $typ> {
-            self.module.$field.iter()
-        }
-    };
-    (# [$typ:ty] | $field:ident : $method_name:ident) => {
-        pub fn $method_name(&self) -> &[$typ] {
-            self.module.$field.as_slice()
-        }
-    };
-}
-
-impl_program! {
-    | imports: ImportSpec<Id>, get_imports_iter & get_imports
-    | infixes: FixityDecl<Id>, get_infixes_iter & get_infixes
-    | fundefs: FnDecl<Id, T>, get_fundefs_iter & get_fundefs
-    | datatys: DataDecl<Id, T>, get_datatys_iter & get_datatys
-    | classes: ClassDecl<Id, T>, get_classes_iter & get_classes
-    | implems: InstDecl<Id, T>, get_implems_iter & get_implems
-    | aliases: AliasDecl<Id, T>, get_aliases_iter & get_aliases
-    | newtyps: NewtypeDecl<Id, T>, get_newtyps_iter & get_newtyps
-}
-
-impl<Id, U, T> Program<Id, U, T> {
+impl<Id, T, U> Program<Id, T, U> {
     pub fn modname(&self) -> &Chain<Id> {
         &self.module.modname
     }
 
     pub fn module_id(&self) -> &U {
-        &self.module.uid
+        &self.module.srcpath
     }
 
-    pub fn map_u<V>(self, mut f: impl FnMut(U) -> V) -> Program<Id, V, T> {
+    pub fn map_u<V>(self, mut f: impl FnMut(U) -> V) -> Program<Id, T, V> {
         let Program {
             module,
             fixities,
             comments,
         } = self;
         let Module {
-            uid,
+            srcpath: uid,
             modname,
             imports,
             infixes,
@@ -229,7 +71,7 @@ impl<Id, U, T> Program<Id, U, T> {
             pragmas,
         } = module;
         let module = Module {
-            uid: f(uid),
+            srcpath: f(uid),
             modname,
             imports,
             infixes,
@@ -247,14 +89,39 @@ impl<Id, U, T> Program<Id, U, T> {
             comments,
         }
     }
+
+    pub fn imports_iter(&self) -> VecIter<'_, ImportSpec<Spanned<Id>>> {
+        self.module.imports_iter()
+    }
+    pub fn infixes_iter(&self) -> VecIter<'_, FixityDecl<Spanned<Id>>> {
+        self.module.infixes_iter()
+    }
+    pub fn datatys_iter(&self) -> VecIter<'_, DataDecl<Spanned<Id>, Spanned<T>>> {
+        self.module.datatys_iter()
+    }
+    pub fn classes_iter(&self) -> VecIter<'_, ClassDecl<Spanned<Id>, Spanned<T>>> {
+        self.module.classes_iter()
+    }
+    pub fn implems_iter(&self) -> VecIter<'_, InstDecl<Spanned<Id>, Spanned<T>>> {
+        self.module.implems_iter()
+    }
+    pub fn fundefs_iter(&self) -> VecIter<'_, FnDecl<Spanned<Id>, Spanned<T>>> {
+        self.module.fundefs_iter()
+    }
+    pub fn aliases_iter(&self) -> VecIter<'_, AliasDecl<Spanned<Id>, Spanned<T>>> {
+        self.module.aliases_iter()
+    }
+    pub fn newtyps_iter(&self) -> VecIter<'_, NewtypeDecl<Spanned<Id>, Spanned<T>>> {
+        self.module.newtyps_iter()
+    }
 }
 
-impl<Id, U, T, A> MapFst<Id, A> for Program<Id, U, T>
+impl<Id, T, U, A> MapFst<Id, A> for Program<Id, T, U>
 where
     Id: Eq + std::hash::Hash,
     A: Eq + std::hash::Hash,
 {
-    type WrapFst = Program<A, U, T>;
+    type WrapFst = Program<A, T, U>;
 
     fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
     where
@@ -275,12 +142,12 @@ where
     }
 }
 
-impl<Id, U, T, A> MapSnd<U, A> for Program<Id, U, T> {
-    type WrapSnd = Program<Id, A, T>;
+impl<Id, U, T, A> MapSnd<T, A> for Program<Id, T, U> {
+    type WrapSnd = Program<Id, A, U>;
 
     fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
     where
-        F: FnMut(U) -> A,
+        F: FnMut(T) -> A,
     {
         let Program {
             module,
@@ -296,12 +163,12 @@ impl<Id, U, T, A> MapSnd<U, A> for Program<Id, U, T> {
     }
 }
 
-impl<Id, U, T, A> MapThrd<T, A> for Program<Id, U, T> {
-    type WrapThrd = Program<Id, U, A>;
+impl<Id, U, T, A> MapThrd<U, A> for Program<Id, T, U> {
+    type WrapThrd = Program<Id, T, A>;
 
     fn map_thrd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapThrd
     where
-        F: FnMut(T) -> A,
+        F: FnMut(U) -> A,
     {
         let Program {
             module,
@@ -318,42 +185,42 @@ impl<Id, U, T, A> MapThrd<T, A> for Program<Id, U, T> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Module<Id = Ident, Uid = (), T = Ident> {
-    pub uid: Uid,
+pub struct Module<Id = Ident, T = Ident, P = SrcPath> {
+    pub srcpath: P,
     pub modname: Chain<Id>,
-    pub imports: Vec<ImportSpec<Id>>,
-    pub infixes: Vec<FixityDecl<Id>>,
-    pub datatys: Vec<DataDecl<Id, T>>,
-    pub classes: Vec<ClassDecl<Id, T>>,
-    pub implems: Vec<InstDecl<Id, T>>,
-    pub fundefs: Vec<FnDecl<Id, T>>,
-    pub aliases: Vec<AliasDecl<Id, T>>,
-    pub newtyps: Vec<NewtypeDecl<Id, T>>,
-    pub pragmas: Vec<Attribute<Id, T>>,
+    pub imports: Vec<ImportSpec<Spanned<Id>>>,
+    pub infixes: Vec<FixityDecl<Spanned<Id>>>,
+    pub datatys: Vec<DataDecl<Spanned<Id>, Spanned<T>>>,
+    pub classes: Vec<ClassDecl<Spanned<Id>, Spanned<T>>>,
+    pub implems: Vec<InstDecl<Spanned<Id>, Spanned<T>>>,
+    pub fundefs: Vec<FnDecl<Spanned<Id>, Spanned<T>>>,
+    pub aliases: Vec<AliasDecl<Spanned<Id>, Spanned<T>>>,
+    pub newtyps: Vec<NewtypeDecl<Spanned<Id>, Spanned<T>>>,
+    pub pragmas: Vec<Attribute<Spanned<Id>, Spanned<T>>>,
 }
 
 struct_field_iters! {
-    |Id, U, T| Module<Id, U, T>
-    | imports => imports_iter :: ImportSpec<Id>
-    | infixes => infixes_iter :: FixityDecl<Id>
-    | datatys => datatys_iter :: DataDecl<Id, T>
-    | classes => classes_iter :: ClassDecl<Id, T>
-    | implems => implems_iter :: InstDecl<Id, T>
-    | fundefs => fundefs_iter :: FnDecl<Id, T>
-    | aliases => aliases_iter :: AliasDecl<Id, T>
-    | newtyps => newtyps_iter :: NewtypeDecl<Id, T>
-    | pragmas => pragmas_iter :: Attribute<Id, T>
+    |Id, T, U| Module<Id, T, U>
+    | imports => imports_iter :: ImportSpec<Spanned<Id>>
+    | infixes => infixes_iter :: FixityDecl<Spanned<Id>>
+    | datatys => datatys_iter :: DataDecl<Spanned<Id>, Spanned<T>>
+    | classes => classes_iter :: ClassDecl<Spanned<Id>, Spanned<T>>
+    | implems => implems_iter :: InstDecl<Spanned<Id>, Spanned<T>>
+    | fundefs => fundefs_iter :: FnDecl<Spanned<Id>, Spanned<T>>
+    | aliases => aliases_iter :: AliasDecl<Spanned<Id>, Spanned<T>>
+    | newtyps => newtyps_iter :: NewtypeDecl<Spanned<Id>, Spanned<T>>
+    | pragmas => pragmas_iter :: Attribute<Spanned<Id>, Spanned<T>>
 }
 
-impl<Id, U, T, X> MapFst<Id, X> for Module<Id, U, T> {
-    type WrapFst = Module<X, U, T>;
+impl<Id, T, U, X> MapFst<Id, X> for Module<Id, T, U> {
+    type WrapFst = Module<X, T, U>;
 
     fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
     where
         F: FnMut(Id) -> X,
     {
         let Module {
-            uid,
+            srcpath: uid,
             modname,
             imports,
             infixes,
@@ -366,6 +233,7 @@ impl<Id, U, T, X> MapFst<Id, X> for Module<Id, U, T> {
             pragmas,
         } = self;
         let modname = modname.mapf(f);
+        let f = &mut wy_common::functor::Func::Fresh(|spanned: Spanned<Id>| spanned.mapf(f));
         let imports = imports.into_iter().map(|i| i.mapf(f)).collect();
         let infixes = infixes.into_iter().map(|d| d.mapf(f)).collect();
         let datatys = datatys.map_fst(f);
@@ -376,7 +244,7 @@ impl<Id, U, T, X> MapFst<Id, X> for Module<Id, U, T> {
         let newtyps = newtyps.map_fst(f);
         let pragmas = pragmas.map_fst(f);
         Module {
-            uid,
+            srcpath: uid,
             modname,
             imports,
             infixes,
@@ -391,15 +259,15 @@ impl<Id, U, T, X> MapFst<Id, X> for Module<Id, U, T> {
     }
 }
 
-impl<Id, U, T, X> MapSnd<U, X> for Module<Id, U, T> {
-    type WrapSnd = Module<Id, X, T>;
+impl<Id, T, U, X> MapThrd<U, X> for Module<Id, T, U> {
+    type WrapThrd = Module<Id, T, X>;
 
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
+    fn map_thrd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapThrd
     where
         F: FnMut(U) -> X,
     {
         let Module {
-            uid,
+            srcpath: uid,
             modname,
             imports,
             infixes,
@@ -413,7 +281,7 @@ impl<Id, U, T, X> MapSnd<U, X> for Module<Id, U, T> {
         } = self;
         let uid = f.apply(uid);
         Module {
-            uid,
+            srcpath: uid,
             modname,
             imports,
             infixes,
@@ -428,15 +296,15 @@ impl<Id, U, T, X> MapSnd<U, X> for Module<Id, U, T> {
     }
 }
 
-impl<Id, U, T, X> MapThrd<T, X> for Module<Id, U, T> {
-    type WrapThrd = Module<Id, U, X>;
+impl<Id, T, U, X> MapSnd<T, X> for Module<Id, T, U> {
+    type WrapSnd = Module<Id, X, U>;
 
-    fn map_thrd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapThrd
+    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
     where
         F: FnMut(T) -> X,
     {
         let Module {
-            uid,
+            srcpath,
             modname,
             imports,
             infixes,
@@ -448,6 +316,7 @@ impl<Id, U, T, X> MapThrd<T, X> for Module<Id, U, T> {
             newtyps,
             pragmas,
         } = self;
+        let f = &mut wy_common::functor::Func::Fresh(|spanned: Spanned<T>| spanned.mapf(f));
         let datatys = datatys.map_snd(f);
         let classes = classes.map_snd(f);
         let implems = implems.map_snd(f);
@@ -456,7 +325,7 @@ impl<Id, U, T, X> MapThrd<T, X> for Module<Id, U, T> {
         let newtyps = newtyps.map_snd(f);
         let pragmas = pragmas.map_snd(f);
         Module {
-            uid,
+            srcpath,
             modname,
             imports,
             infixes,
@@ -471,13 +340,13 @@ impl<Id, U, T, X> MapThrd<T, X> for Module<Id, U, T> {
     }
 }
 
-impl<U, T> Default for Module<Ident, U, T>
+impl<U, T> Default for Module<Ident, T, U>
 where
     U: Default,
 {
     fn default() -> Self {
         Self {
-            uid: U::default(),
+            srcpath: U::default(),
             modname: Chain::new(Ident::Upper(wy_intern::sym::MAIN_MOD), deque![]),
             imports: vec![],
             infixes: vec![],
@@ -492,13 +361,16 @@ where
     }
 }
 
-impl<Id, U, T> Module<Id, U, T> {
+type VecIter<'a, X> = std::slice::Iter<'a, X>;
+type VecIterMut<'a, X> = std::slice::IterMut<'a, X>;
+
+impl<Id, T, P> Module<Id, T, P> {
     pub fn module_name(&self) -> &Chain<Id> {
         &self.modname
     }
-    pub fn with_uid<V>(self, uid: V) -> Module<Id, V, T> {
+    pub fn map_srcpath<V>(self, uid: V) -> Module<Id, T, V> {
         Module {
-            uid,
+            srcpath: uid,
             modname: self.modname,
             imports: self.imports,
             infixes: self.infixes,
@@ -511,6 +383,91 @@ impl<Id, U, T> Module<Id, U, T> {
             pragmas: self.pragmas,
         }
     }
+
+    pub fn spanless(self) -> SpanlessModule<Id, T, P> {
+        let Module {
+            srcpath,
+            modname,
+            imports,
+            infixes,
+            datatys,
+            classes,
+            implems,
+            fundefs,
+            aliases,
+            newtyps,
+            pragmas,
+        } = self;
+
+        let fid = &mut wy_common::functor::Func::Fresh(|spanned: Spanned<Id>| spanned.unspan());
+        let ftv = &mut wy_common::functor::Func::Fresh(|spanned: Spanned<T>| spanned.unspan());
+        let imports = imports
+            .into_iter()
+            .map(|impspec| impspec.mapf(fid))
+            .collect();
+        let infixes = infixes
+            .into_iter()
+            .map(|impspec| impspec.mapf(fid))
+            .collect();
+        let datatys = datatys
+            .into_iter()
+            .map(|decl| decl.map_fst(fid).map_snd(ftv))
+            .collect();
+        let classes = classes
+            .into_iter()
+            .map(|decl| decl.map_fst(fid).map_snd(ftv))
+            .collect();
+        let implems = implems
+            .into_iter()
+            .map(|decl| decl.map_fst(fid).map_snd(ftv))
+            .collect();
+        let fundefs = fundefs
+            .into_iter()
+            .map(|decl| decl.map_fst(fid).map_snd(ftv))
+            .collect();
+        let aliases = aliases
+            .into_iter()
+            .map(|decl| decl.map_fst(fid).map_snd(ftv))
+            .collect();
+        let newtyps = newtyps
+            .into_iter()
+            .map(|decl| decl.map_fst(fid).map_snd(ftv))
+            .collect();
+        let pragmas = pragmas
+            .into_iter()
+            .map(|decl| decl.map_fst(fid).map_snd(ftv))
+            .collect();
+        SpanlessModule {
+            srcpath,
+            modname,
+            imports,
+            infixes,
+            datatys,
+            classes,
+            implems,
+            fundefs,
+            aliases,
+            newtyps,
+            pragmas,
+        }
+    }
+}
+
+/// Same general structure as a `Module`, but without the identifier
+/// and type variable parameters being wrapped in a `Spanned` type.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SpanlessModule<Id, T, P> {
+    pub srcpath: P,
+    pub modname: Chain<Id>,
+    pub imports: Vec<ImportSpec<Id>>,
+    pub infixes: Vec<FixityDecl<Id>>,
+    pub datatys: Vec<DataDecl<Id, T>>,
+    pub classes: Vec<ClassDecl<Id, T>>,
+    pub implems: Vec<InstDecl<Id, T>>,
+    pub fundefs: Vec<FnDecl<Id, T>>,
+    pub aliases: Vec<AliasDecl<Id, T>>,
+    pub newtyps: Vec<NewtypeDecl<Id, T>>,
+    pub pragmas: Vec<Attribute<Id, T>>,
 }
 
 /// Describe the declared dependencies on other modules within a given module.
@@ -528,7 +485,7 @@ impl<Id, U, T> Module<Id, U, T> {
 /// __and__ *renamed*, the module prefix necessary to access its imports is
 /// restricted to matching the new name only.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ImportSpec<Id = Ident> {
+pub struct ImportSpec<Id = SpannedIdent> {
     pub name: Chain<Id>,
     pub qualified: bool,
     pub rename: Option<Id>,
@@ -610,6 +567,43 @@ impl<Id> ImportSpec<Id> {
     }
 }
 
+impl<Id> PartialEq<ImportSpec<Id>> for ImportSpec<Spanned<Id>>
+where
+    Id: PartialEq,
+{
+    fn eq(&self, other: &ImportSpec<Id>) -> bool {
+        self.name.len() == other.name.len()
+            && self
+                .name
+                .iter()
+                .zip(other.name.iter())
+                .all(|(sp, id)| sp.item() == id)
+            && self.qualified == other.qualified
+            && self.rename.as_ref().map(|sp| sp.item()) == other.rename.as_ref()
+            && self.hidden == other.hidden
+            // already implemented within imports
+            && self.imports == other.imports
+    }
+}
+
+impl<Id> PartialEq<ImportSpec<Spanned<Id>>> for ImportSpec<Id>
+where
+    Id: PartialEq,
+{
+    fn eq(&self, other: &ImportSpec<Spanned<Id>>) -> bool {
+        self.name.len() == other.name.len()
+            && self
+                .name
+                .iter()
+                .zip(other.name.iter())
+                .all(|(id, sp)| sp.item() == id)
+            && self.qualified == other.qualified
+            && self.rename.as_ref() == other.rename.as_ref().map(|sp| sp.item())
+            && self.hidden == other.hidden
+            && self.imports == other.imports
+    }
+}
+
 /// Describe the named entity to be imported. When contained by an `ImportSpec`,
 /// these imports may either be *public* if the `ImportSpec` has its `hidden`
 /// field set to `false`. Otherwise, the imports will become accessible through
@@ -627,7 +621,7 @@ impl<Id> ImportSpec<Id> {
 /// * Type aliases are always `Abstract`
 ///
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Import<Id = Ident> {
+pub enum Import<Id = SpannedIdent> {
     /// Infix imports
     Operator(Id),
     Function(Id),
@@ -704,6 +698,46 @@ impl<Id> Import<Id> {
             | Import::Abstract(id)
             | Import::Total(id) => std::iter::once(id).chain(&[]),
             Import::Partial(head, ids) => std::iter::once(head).chain(ids),
+        }
+    }
+}
+
+impl<Id> PartialEq<Import<Id>> for Import<Spanned<Id>>
+where
+    Id: PartialEq,
+{
+    fn eq(&self, other: &Import<Id>) -> bool {
+        match (self, other) {
+            (Self::Operator(l0), Import::Operator(r0))
+            | (Self::Function(l0), Import::Function(r0))
+            | (Self::Abstract(l0), Import::Abstract(r0))
+            | (Self::Total(l0), Import::Total(r0)) => l0.item() == r0,
+            (Self::Partial(l0, l1), Import::Partial(r0, r1)) => {
+                l0.item() == r0
+                    && l1.len() == r1.len()
+                    && l1.into_iter().zip(r1).all(|(sp, id)| sp.item() == id)
+            }
+            _ => false,
+        }
+    }
+}
+
+impl<Id> PartialEq<Import<Spanned<Id>>> for Import<Id>
+where
+    Id: PartialEq,
+{
+    fn eq(&self, other: &Import<Spanned<Id>>) -> bool {
+        match (self, other) {
+            (Self::Operator(l0), Import::Operator(r0))
+            | (Self::Function(l0), Import::Function(r0))
+            | (Self::Abstract(l0), Import::Abstract(r0))
+            | (Self::Total(l0), Import::Total(r0)) => l0 == r0.item(),
+            (Self::Partial(l0, l1), Import::Partial(r0, r1)) => {
+                l0 == r0.item()
+                    && l1.len() == r1.len()
+                    && l1.into_iter().zip(r1).all(|(id, sp)| id == sp.item())
+            }
+            _ => false,
         }
     }
 }

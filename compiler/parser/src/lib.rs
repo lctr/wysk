@@ -7,6 +7,7 @@ use wy_sources::files::File;
 use wy_syntax::{
     expr::RawExpression,
     tipo::{Signature, Type},
+    SpannedIdent,
 };
 
 mod attr;
@@ -25,7 +26,7 @@ use stream::{Parser, Streaming};
 impl<'t> Parser<'t> {
     // TODO: add span information to emitted identifiers
     #[allow(unused)]
-    pub(crate) fn bump_ident(&mut self, kind: IdentKind) -> Parsed<Spanned<Ident>> {
+    pub(crate) fn bump_ident(&mut self, kind: IdentKind) -> Parsed<SpannedIdent> {
         self.peek()
             .and_then(|t| {
                 t.spanned()
@@ -47,31 +48,37 @@ impl<'t> Parser<'t> {
     }
 
     #[inline]
-    pub(crate) fn expect_upper(&mut self) -> Parsed<Ident> {
+    pub(crate) fn expect_upper(&mut self) -> Parsed<SpannedIdent> {
         // TODO: remove method `take_item` call when spanned idents
         // are accepted
-        self.bump_ident(IdentKind::Upper).map(Spanned::take_item)
+        self.bump_ident(IdentKind::Upper)
     }
 
     #[inline]
-    pub(crate) fn expect_lower(&mut self) -> Parsed<Ident> {
-        self.bump_ident(IdentKind::Lower).map(Spanned::take_item)
+    pub(crate) fn expect_lower(&mut self) -> Parsed<SpannedIdent> {
+        self.bump_ident(IdentKind::Lower)
     }
 
     #[inline]
-    pub(crate) fn expect_infix(&mut self) -> Parsed<Ident> {
-        self.bump_ident(IdentKind::Infix).map(Spanned::take_item)
+    pub(crate) fn expect_infix(&mut self) -> Parsed<SpannedIdent> {
+        self.bump_ident(IdentKind::Infix)
     }
 
     #[inline]
     #[allow(unused)]
-    pub(crate) fn expect_label(&mut self) -> Parsed<Spanned<Ident>> {
+    pub(crate) fn expect_label(&mut self) -> Parsed<SpannedIdent> {
         self.bump_ident(IdentKind::Label)
     }
 
-    pub(crate) fn expect_ident(&mut self) -> Parsed<Ident> {
+    pub(crate) fn expect_ident(&mut self) -> Parsed<SpannedIdent> {
         self.peek()
-            .and_then(Token::lift(Lexeme::mk_id(Ident::NAMES)))
+            .and_then(|token| {
+                token
+                    .spanned()
+                    .map(|lx| Lexeme::mk_id(Ident::NAMES)(&lx))
+                    .transpose()
+            })
+            // .and_then(Token::lift(Lexeme::mk_id(Ident::NAMES)))
             .map(|id| self.bumped(id))
             .ok_or_else(|| self.expected(LexKind::Identifier))
     }
@@ -95,7 +102,7 @@ pub fn parse_type_node(src: &str) -> Parsed<Type> {
 }
 
 /// Parsing a type signature in an isolated context
-pub fn parse_type_signature(src: &str) -> Parsed<Signature<Ident, Ident>> {
+pub fn parse_type_signature(src: &str) -> Parsed<Signature> {
     Parser::from_str(src).ty_signature()
 }
 

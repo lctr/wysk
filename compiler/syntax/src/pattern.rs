@@ -1,12 +1,11 @@
 use super::tipo::Type;
-use crate::record::Record;
+use crate::{record::Record, SpannedIdent};
 use serde::{Deserialize, Serialize};
 use wy_common::{
     functor::{MapFst, MapSnd},
     variant_preds, Set,
 };
 use wy_lexer::literal::Literal;
-use wy_name::ident::Ident;
 
 variant_preds! { |Id, V| Pattern[Id, V]
     | is_wild => Wild
@@ -21,7 +20,7 @@ variant_preds! { |Id, V| Pattern[Id, V]
 
 }
 
-pub type RawPattern = Pattern<Ident, Ident>;
+pub type RawPattern = Pattern<SpannedIdent, SpannedIdent>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Pattern<Id, V> {

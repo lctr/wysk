@@ -2,10 +2,11 @@ use crate::error::*;
 use crate::stream::*;
 
 use wy_lexer::token::{Keyword, Lexeme};
-use wy_name::ident::Ident;
+// use wy_name::ident::Ident;
 use wy_span::Spanned;
-use wy_span::WithSpan;
+// use wy_span::WithSpan;
 use wy_syntax::fixity::{Assoc, Fixity, Prec};
+use wy_syntax::SpannedIdent;
 
 // FIXITY DECLARATIIONS
 type FixityParser<'t> = Parser<'t>;
@@ -43,19 +44,17 @@ impl<'t> FixityParser<'t> {
         ))
     }
 
-    pub(crate) fn with_fixity(&mut self, fixity: Fixity) -> Parsed<Vec<Ident>> {
+    pub(crate) fn with_fixity(&mut self, fixity: Fixity) -> Parsed<Vec<SpannedIdent>> {
         self.many_while_on(Lexeme::is_infix, |p| {
             let srcloc = p.srcloc();
-            p.spanned(Self::expect_infix)
-                .as_result()
-                .and_then(|Spanned(infix, span)| {
-                    if p.fixities.contains_key(&infix) {
-                        Err(ParseError::FixityExists(srcloc, infix, span, p.text()))
-                    } else {
-                        p.fixities.insert(infix, fixity);
-                        Ok(infix)
-                    }
-                })
+            p.expect_infix().and_then(|spanned @ Spanned(infix, span)| {
+                if p.fixities.contains_key(&infix) {
+                    Err(ParseError::FixityExists(srcloc, infix, span, p.text()))
+                } else {
+                    p.fixities.insert(infix, fixity);
+                    Ok(spanned)
+                }
+            })
         })
     }
 }

@@ -1,19 +1,20 @@
 use wy_lexer::{Keyword, Lexeme};
 use wy_name::{Chain, Ident};
 
+use wy_span::Spanned;
 use wy_syntax::decl::Declaration;
-use wy_syntax::{Import, ImportSpec, Module, Program};
+use wy_syntax::{Import, ImportSpec, Module, Program, SpannedIdent};
 
 use crate::error::*;
 use crate::stream::*;
 
-pub type RawModule<P = SrcPath> = Module<Ident, P, Ident>;
-pub type RawProgram<P = SrcPath> = Program<Ident, P, Ident>;
+pub type RawModule<P = SrcPath> = Module<Ident, Ident, P>;
+pub type RawProgram<P = SrcPath> = Program<Ident, Ident, P>;
 
 // TOP-LEVEL
 type ModuleParser<'t> = Parser<'t>;
 impl<'t> ModuleParser<'t> {
-    pub fn id_chain(&mut self) -> Parsed<Chain> {
+    pub fn id_chain(&mut self) -> Parsed<Chain<SpannedIdent>> {
         self.expect_upper().and_then(|root| {
             self.many_while(|p| p.bump_on(Lexeme::Dot), Self::expect_ident)
                 .map(|tail| Chain::new(root, tail.into()))
@@ -22,13 +23,13 @@ impl<'t> ModuleParser<'t> {
 
     pub fn module(&mut self) -> Parsed<RawModule> {
         self.eat(Keyword::Module)?;
-        let modname = self.id_chain()?;
+        let modname = self.id_chain()?.map(Spanned::take_item);
         self.eat(Keyword::Where)?;
         let imports = self.imports()?;
         let mut module = Module {
             modname,
             imports,
-            uid: self.path.clone(),
+            srcpath: self.path.clone(),
             ..Default::default()
         };
 
@@ -134,8 +135,10 @@ impl<'t> ModuleParser<'t> {
 
 #[cfg(test)]
 mod test {
+    use wy_common::functor::{Func, MapFst, MapSnd};
     use wy_intern::Symbol;
     use wy_name::ident::Ident;
+    use wy_span::Spanned;
 
     use super::*;
 
@@ -194,7 +197,7 @@ import A.thing.from.Somewhere @ A { foo, bar }
                     .collect(),
             },
         ];
-        assert_eq!(Ok(expected), program)
+        assert_eq!(expected, program.unwrap())
     }
 
     #[test]

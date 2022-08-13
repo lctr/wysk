@@ -4,6 +4,7 @@ use wy_lexer::{Lexeme, Token};
 use wy_name::ident::Ident;
 use wy_syntax::pattern::RawPattern;
 use wy_syntax::record::{Field, Record};
+use wy_syntax::SpannedIdent;
 
 use crate::error::*;
 use crate::stream::*;
@@ -217,7 +218,7 @@ impl<'t> PatParser<'t> {
         }
     }
 
-    fn con_curly_pattern(&mut self, conid: Ident) -> Parsed<RawPattern> {
+    fn con_curly_pattern(&mut self, conid: SpannedIdent) -> Parsed<RawPattern> {
         use Lexeme::{Comma, CurlyL, CurlyR};
         Ok(RawPattern::Rec(Record::Data(
             conid,
@@ -276,7 +277,7 @@ impl<'t> PatParser<'t> {
         }
     }
 
-    fn field_pattern(&mut self) -> Parsed<Field<Ident, RawPattern>> {
+    fn field_pattern(&mut self) -> Parsed<Field<SpannedIdent, RawPattern>> {
         let key = self.expect_lower()?;
         if self.bump_on(Lexeme::Equal) {
             Ok(Field::Entry(key, self.pattern()?))
@@ -308,8 +309,10 @@ impl<'t> PatParser<'t> {
 
 #[cfg(test)]
 mod test {
+    use wy_common::functor::{Func, MapFst, MapSnd};
     use wy_intern::Symbol;
     use wy_lexer::Literal;
+    use wy_span::Spanned;
     use wy_syntax::pattern::Pattern;
 
     use super::*;
@@ -354,7 +357,12 @@ mod test {
         ];
 
         for (s, x) in pairs {
-            assert_eq!(Parser::from_str(s).pattern(), Ok(x))
+            assert_eq!(
+                Parser::from_str(s).pattern().map(|expr| expr
+                    .map_fst(&mut Func::Fresh(Spanned::take_item))
+                    .map_snd(&mut Func::Fresh(Spanned::take_item))),
+                Ok(x)
+            )
         }
     }
 
@@ -366,6 +374,11 @@ mod test {
             Box::new(var(a)),
             Box::new(Pattern::Lnk(Box::new(var(b)), Box::new(var(c)))),
         );
-        assert_eq!(Ok(link), Parser::from_str("(a:b:c)").pattern())
+        assert_eq!(
+            Ok(link),
+            Parser::from_str("(a:b:c)").pattern().map(|expr| expr
+                .map_fst(&mut Func::Fresh(Spanned::take_item))
+                .map_snd(&mut Func::Fresh(Spanned::take_item)))
+        )
     }
 }

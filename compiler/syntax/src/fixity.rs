@@ -442,6 +442,8 @@ impl<T> From<Ident> for Expression<Ident, T> {
 
 #[cfg(test)]
 mod tests {
+    use wy_span::Dummy;
+
     use super::*;
     /// let's take a stab at reordering expressions based on fixities we will be
     /// using simple arithmetic operators, whose fixities are (to be) defined (and
@@ -469,7 +471,7 @@ mod tests {
         let [a, b, c, d] = { map_array(symbol::intern_many(["a", "b", "c", "d"]), Ident::Lower) };
         let [plus, minus, times, div] =
             { map_array(symbol::intern_many(["+", "-", "*", "/"]), Ident::Infix) };
-        let var = Expression::<Ident, _>::Ident;
+        let var = Expression::<Ident, Ident>::Ident;
         // a + b * c - d
         // (a + (b * (c - d)))
         let og_expr = ifx(var(a), plus, ifx(var(b), times, ifx(var(c), minus, var(d))));
@@ -479,6 +481,7 @@ mod tests {
         // fixity decls for (+) and (-)
         let decls = [
             FixityDecl {
+                span: Span::DUMMY,
                 infixes: vec![plus, minus],
                 fixity: Fixity {
                     assoc: Assoc::Left,
@@ -486,6 +489,7 @@ mod tests {
                 },
             },
             FixityDecl {
+                span: Span::DUMMY,
                 infixes: vec![times, div],
                 fixity: Fixity {
                     assoc: Assoc::Left,
@@ -505,7 +509,11 @@ mod tests {
         assert_eq!(fixities.apply(Box::new(og_expr)), Ok(want_expr));
     }
 
-    fn ifx(left: RawExpression, infix: Ident, right: RawExpression) -> RawExpression {
+    fn ifx(
+        left: Expression<Ident, Ident>,
+        infix: Ident,
+        right: Expression<Ident, Ident>,
+    ) -> Expression<Ident, Ident> {
         Expression::Infix {
             infix,
             left: Box::new(left),

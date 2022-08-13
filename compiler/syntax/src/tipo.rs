@@ -11,6 +11,7 @@ use wy_name::ident::{Ident, Identifier};
 
 use crate::decl::Arity;
 use crate::record::{Field, Record};
+use crate::SpannedIdent;
 
 /// Represents a type variable.
 ///
@@ -276,7 +277,7 @@ impl<X, V> Extend<Var<X, V>> for Vec<(X, V)> {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub enum Con<Id = Ident, V = Ident> {
+pub enum Con<Id = SpannedIdent, V = SpannedIdent> {
     /// List constructor `[]`; arity = 1
     List,
     /// Tuple constructor(s) of provided arity. A value of 0 is taken to refer
@@ -493,7 +494,7 @@ impl<Id: fmt::Display, V: fmt::Display> fmt::Display for Con<Id, V> {
 /// * `[a]` desugars into `(:) a` The above desugared forms correspond to the
 /// `Con` variant. Note: this does not hold for record types!
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Type<Id = Ident, V = Ident> {
+pub enum Type<Id = SpannedIdent, V = SpannedIdent> {
     /// Type variables. These use their own special inner type `Tv`, which is a
     /// newtype wrapper around a `u32`.
     Var(V),
@@ -1346,7 +1347,7 @@ where
 /// `Bool` and `Bar baz boo`, but **not** `(a, b)`, `[a]`, `Foo (Bar
 /// a) baz`, etc.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct SimpleType<Id = Ident, V = Ident>(pub Id, pub Vec<V>);
+pub struct SimpleType<Id = SpannedIdent, V = SpannedIdent>(pub Id, pub Vec<V>);
 
 impl<Id, V> SimpleType<Id, V> {
     pub fn new(tycon_id: Id, tyvars: Vec<V>) -> Self {
@@ -1459,7 +1460,7 @@ impl<Id, V, X> MapSnd<V, X> for SimpleType<Id, V> {
 /// constructor identifiers and `V` for type variables (as well as the
 /// the case of a generic constructor).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Parameter<V = Ident>(pub V, pub Vec<V>);
+pub struct Parameter<V = SpannedIdent>(pub V, pub Vec<V>);
 
 impl<V> Parameter<V> {
     pub fn iter(&self) -> impl Iterator<Item = &V> + '_ {
@@ -1498,7 +1499,7 @@ impl<V> Parameter<V> {
 /// ~~: Predicate 1 and Predicate 2, surrounded by `|` and followed by the type `(a, b)`
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Predicate<Id = Ident, V = Ident> {
+pub struct Predicate<Id = SpannedIdent, V = SpannedIdent> {
     /// The name of the type class for which this holds
     pub class: Id,
     /// Type that must be a member of the class in the `class` field
@@ -1544,7 +1545,7 @@ impl<Id, V, X> MapSnd<V, X> for Predicate<Id, V> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Qualified<Id = Ident, V = Ident> {
+pub struct Qualified<Id = SpannedIdent, V = SpannedIdent> {
     pub pred: Vec<Predicate<Id, V>>,
     pub tipo: Type<Id, V>,
 }
@@ -1595,7 +1596,7 @@ impl<Id, V, X> MapSnd<V, X> for Qualified<Id, V> {
 /// Quantified variables, referring to explicitly quantified (type)
 /// variables in source code such as `foo :: forall a b . a -> b`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Quantified<Id = Ident, V = Tv>(pub Vec<Var<Id, V>>);
+pub struct Quantified<Id = SpannedIdent, V = Tv>(pub Vec<Var<Id, V>>);
 
 impl<X, V> Default for Quantified<X, V> {
     fn default() -> Self {
@@ -1780,7 +1781,7 @@ impl fmt::Display for Quantified<Kind> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Annotation<Id = Ident, V = Ident> {
+pub struct Annotation<Id = SpannedIdent, V = SpannedIdent> {
     pub quant: Quantified<Id, V>,
     pub qual: Qualified<Id, V>,
 }
@@ -1848,7 +1849,7 @@ impl<Id, V, X> MapSnd<V, X> for Annotation<Id, V> {
 /// will be raised and type checking will fail, as the explicit
 /// contract takes precedence over implicit inference.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Signature<Id = Ident, V = Ident> {
+pub enum Signature<Id = SpannedIdent, V = SpannedIdent> {
     Implicit,
     Explicit(Annotation<Id, V>),
 }

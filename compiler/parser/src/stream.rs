@@ -24,7 +24,7 @@ pub struct Parser<'t> {
 
 impl<'t> WithSpan for Parser<'t> {
     fn get_pos(&self) -> BytePos {
-        self.lexer.get_pos()
+        self.lexer.curr_pos()
     }
 }
 
@@ -131,16 +131,16 @@ impl<'t> Parser<'t> {
     /// Bumps the lexer twice, storing the two tokens returns, and
     /// then returns a reference to the second token bumped.
     pub fn peek_ahead(&mut self) -> Option<&Token> {
-        let first = self.bump();
-        if first.is_eof() {
-            return None;
-        }
-        let second = self.bump();
-        self.queue.push_back(first);
-        if !second.is_eof() {
-            self.queue.push_back(second);
-        }
-        self.queue.front()
+        match self.queue.len() {
+            0 => {
+                self.lookahead::<2>();
+            }
+            1 => {
+                self.lookahead::<1>();
+            }
+            _ => (),
+        };
+        self.queue.get(1)
     }
 
     pub fn lookahead<const N: usize>(&mut self) -> [Token; N] {
@@ -148,14 +148,14 @@ impl<'t> Parser<'t> {
             lexeme: Lexeme::Eof,
             span: Span::DUMMY,
         }; N];
-        for arr in &mut array {
-            let token = self.bump();
-            *arr = token;
-            // self.queue.push_back(token);
-        }
-        for tok in array {
-            if !tok.is_eof() {
-                self.queue.push_back(tok);
+        for i in 0..N {
+            if let Some(tok) = self.lexer.next() {
+                array[i] = tok;
+                if !tok.is_eof() {
+                    self.queue.push_back(tok)
+                } else {
+                    break;
+                }
             }
         }
         array
@@ -404,5 +404,76 @@ impl<'t> Streaming for Parser<'t> {
             None => true,
             _ => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use wy_intern::Symbol;
+    use wy_lexer::Literal;
+
+    use super::*;
+
+    #[test]
+    fn test_lookahead() {
+        let src = "foo bar [1, { bar, baz }]";
+        let [foo, bar, _baz] = Symbol::intern_many(["foo", "bar", "baz"]);
+        let mut parser = Parser::from_str(src);
+        assert_eq!(
+            parser.peek().map(|t| t.lexeme),
+            Some(Lexeme::Lower(Symbol::intern("foo")))
+        );
+        assert_eq!(
+            parser.lookahead::<3>(),
+            [
+                Token {
+                    lexeme: Lexeme::Lower(foo),
+                    span: Span(BytePos::new(0), BytePos::strlen("foo"))
+                },
+                Token {
+                    lexeme: Lexeme::Lower(bar),
+                    span: Span(BytePos::strlen("foo "), BytePos::strlen("foo bar"))
+                },
+                Token {
+                    lexeme: Lexeme::BrackL,
+                    span: Span(BytePos::strlen("foo bar "), BytePos::strlen("foo bar ["))
+                },
+            ]
+        );
+        assert_eq!(
+            parser.peek_ahead(),
+            Some(&Token {
+                lexeme: Lexeme::Lower(bar),
+                span: Span(BytePos::strlen("foo "), BytePos::strlen("foo bar"))
+            },)
+        );
+        assert_eq!(
+            parser.bump(),
+            Token {
+                lexeme: Lexeme::Lower(foo),
+                span: Span(BytePos::new(0), BytePos::strlen("foo"))
+            }
+        );
+        assert_eq!(
+            parser.bump(),
+            Token {
+                lexeme: Lexeme::Lower(bar),
+                span: Span(BytePos::strlen("foo "), BytePos::strlen("foo bar"))
+            },
+        );
+        assert_eq!(
+            parser.peek(),
+            Some(&Token {
+                lexeme: Lexeme::BrackL,
+                span: Span(BytePos::strlen("foo bar "), BytePos::strlen("foo bar ["))
+            },)
+        );
+        assert_eq!(
+            parser.peek_ahead(),
+            Some(&Token {
+                lexeme: Lexeme::Lit(Literal::mk_simple_integer(1)),
+                span: Span(BytePos::strlen("foo bar ["), BytePos::strlen("foo bar [1"))
+            })
+        )
     }
 }

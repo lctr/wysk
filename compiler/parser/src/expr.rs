@@ -3,12 +3,13 @@ use std::iter;
 use wy_lexer::token::{LexKind, Not};
 use wy_lexer::*;
 use wy_name::ident::Ident;
-use wy_span::WithLoc;
+use wy_span::{Span, Spanned, WithLoc, WithSpan};
 use wy_syntax::expr::{Range, RawExpression, Section};
 use wy_syntax::pattern::RawPattern;
 use wy_syntax::record::{Field, Record};
-use wy_syntax::stmt::{Binding, RawAlternative, RawBinding, RawMatch, RawStatement};
+use wy_syntax::stmt::{Binding, RawAlternative, RawArm, RawBinding, RawStatement};
 use wy_syntax::tipo::Signature;
+use wy_syntax::SpannedIdent;
 
 use crate::error::*;
 use crate::stream::*;
@@ -134,26 +135,21 @@ impl<'t> ExprParser<'t> {
         }
     }
 
-    fn id_path_tail(&mut self) -> Parsed<Vec<Ident>> {
+    fn id_path_tail(&mut self) -> Parsed<Vec<SpannedIdent>> {
         self.many_while(
             |p| p.bump_or_peek_on(Lexeme::Dot, Lexeme::is_ident),
             Self::expect_ident,
         )
-        // |p| match p.peek() {
-        //     Some(t) if t.is_lower() => p.expect_lower(),
-        //     Some(t) if t.is_upper() => p.expect_upper(),
-        //     Some(t) if t.is_infix() => p.expect_infix(),
-        //     _ => p.expected(LexKind::Identifier).err(),
-        // },
     }
 
     fn comma_section(&mut self) -> Parsed<RawExpression> {
         use Lexeme::{Comma, ParenR};
         let mut commas = 0;
+        let start = self.get_pos();
         while self.bump_on(Comma) {
             commas += 1;
         }
-        let prefix = Ident::mk_tuple_commas(commas);
+        let prefix = Spanned(Ident::mk_tuple_commas(commas), Span(start, self.get_pos()));
 
         Ok(if self.bump_on(ParenR) {
             RawExpression::Ident(prefix)
@@ -285,7 +281,7 @@ impl<'t> ExprParser<'t> {
         }
     }
 
-    fn curly_expr(&mut self) -> Parsed<Vec<Field<Ident, RawExpression>>> {
+    fn curly_expr(&mut self) -> Parsed<Vec<Field<SpannedIdent, RawExpression>>> {
         use Lexeme::{Comma, CurlyL, CurlyR, Dot2, Equal};
         self.delimited([CurlyL, Comma, CurlyR], |p| {
             if p.bump_on(Dot2) {
@@ -348,7 +344,7 @@ impl<'t> ExprParser<'t> {
         })
     }
 
-    pub(crate) fn binder_name(&mut self) -> Parsed<Ident> {
+    pub(crate) fn binder_name(&mut self) -> Parsed<SpannedIdent> {
         use Lexeme::{ParenL, ParenR};
         if self.bump_on(ParenL) {
             let infix = self.expect_infix()?;
@@ -381,11 +377,15 @@ impl<'t> ExprParser<'t> {
         Ok((body, wher))
     }
 
-    fn caf_binding(&mut self, name: Ident, tsig: Signature) -> Parsed<RawBinding> {
+    fn caf_binding(
+        &mut self,
+        name: SpannedIdent,
+        tsig: Signature<SpannedIdent, SpannedIdent>,
+    ) -> Parsed<RawBinding> {
         self.binding_rhs().map(|(body, wher)| Binding {
             name,
             tsig,
-            arms: vec![RawMatch::caf(body, wher)],
+            arms: vec![RawArm::caf(body, wher)],
         })
     }
 
@@ -399,14 +399,10 @@ impl<'t> ExprParser<'t> {
                 tsig,
                 arms: self.match_arms()?,
             }),
-            lexpat!(~[=>]) => {
-                self.bump();
-                self.caf_binding(name, tsig)
-            }
             lexpat!(~[=]) => {
                 self.bump();
                 let (body, wher) = self.binding_rhs()?;
-                let arms = iter::once(RawMatch::caf(body, wher))
+                let arms = iter::once(RawArm::caf(body, wher))
                     .chain(self.match_arms()?)
                     .collect();
                 Ok(RawBinding { name, tsig, arms })
@@ -415,7 +411,7 @@ impl<'t> ExprParser<'t> {
         }
     }
 
-    pub(crate) fn match_arms(&mut self) -> Parsed<Vec<RawMatch>> {
+    pub(crate) fn match_arms(&mut self) -> Parsed<Vec<RawArm>> {
         use Lexeme::Pipe;
         self.many_while(
             |this| {
@@ -426,7 +422,7 @@ impl<'t> ExprParser<'t> {
         )
     }
 
-    pub(crate) fn match_arm(&mut self) -> Parsed<RawMatch> {
+    pub(crate) fn match_arm(&mut self) -> Parsed<RawArm> {
         use Lexeme::{Equal, FatArrow};
 
         // syntactic shorthand for `| =`
@@ -440,7 +436,7 @@ impl<'t> ExprParser<'t> {
 
         let (body, wher) = self.binding_rhs()?;
 
-        Ok(RawMatch {
+        Ok(RawArm {
             args,
             cond: pred,
             body,
@@ -603,20 +599,21 @@ impl<'t> ExprParser<'t> {
 
 #[cfg(test)]
 mod test {
+    use wy_common::functor::{Func, MapFst, MapSnd};
     use wy_intern::Symbol;
     use wy_syntax::{
         expr::Expression,
         pattern::Pattern,
-        stmt::{Alternative, Match, Statement},
+        stmt::{Alternative, Arm, Statement},
     };
 
     use super::*;
 
     fn infixed(
-        left: RawExpression,
+        left: Expression<Ident, Ident>,
         infix: wy_intern::Symbol,
-        right: RawExpression,
-    ) -> RawExpression {
+        right: Expression<Ident, Ident>,
+    ) -> Expression<Ident, Ident> {
         Expression::Infix {
             infix: Ident::Infix(infix),
             left: Box::new(left),
@@ -624,7 +621,7 @@ mod test {
         }
     }
 
-    fn tuplex<const N: usize>(subexps: [RawExpression; N]) -> RawExpression {
+    fn tuplex<const N: usize>(subexps: [Expression<Ident, Ident>; N]) -> Expression<Ident, Ident> {
         Expression::Tuple(subexps.to_vec())
     }
 
@@ -639,7 +636,10 @@ y -> y;
 "#;
         let [a, b, c, d, h, f, x, y] =
             Symbol::intern_many(["A", "B", "c", "d", "h", "f", "x", "y"]);
-        let expr = Parser::from_str(src).case_expr();
+        let expr = Parser::from_str(src).case_expr().map(|expr| {
+            expr.map_fst(&mut Func::Fresh(Spanned::take_item))
+                .map_snd(&mut Func::Fresh(Spanned::take_item))
+        });
         println!("{:#?}", &expr);
         let expected = Expression::Case(
             Box::new(Expression::App(
@@ -714,7 +714,15 @@ y -> y;
         ];
 
         for (src, expected) in tests {
-            assert_eq!(Parser::from_str(src).expression().unwrap(), expected);
+            assert_eq!(
+                Parser::from_str(src)
+                    .expression()
+                    .map(|expr| expr
+                        .map_fst(&mut Func::Fresh(Spanned::take_item))
+                        .map_snd(&mut Func::Fresh(Spanned::take_item)))
+                    .unwrap(),
+                expected
+            );
         }
     }
 
@@ -727,20 +735,26 @@ y -> y;
         in bar (foo 1) (foo 2)
     "#;
         let [foo, bar, x, y] = Symbol::intern_many_with(["foo", "bar", "x", "y"], Ident::Lower);
-        let actual = Parser::from_str(src).expression().unwrap();
+        let actual = Parser::from_str(src)
+            .expression()
+            .map(|expr| {
+                expr.map_fst(&mut Func::Fresh(Spanned::take_item))
+                    .map_snd(&mut Func::Fresh(Spanned::take_item))
+            })
+            .unwrap();
         let expected = Expression::Let(
             vec![
                 Binding {
                     name: foo,
                     tsig: Signature::Implicit,
                     arms: vec![
-                        Match {
+                        Arm {
                             args: vec![Pattern::Lit(Literal::mk_simple_integer(1))],
                             cond: None,
                             body: Expression::Lit(Literal::mk_simple_integer(2)),
                             wher: vec![],
                         },
-                        Match {
+                        Arm {
                             args: vec![Pattern::Lit(Literal::mk_simple_integer(3))],
                             cond: None,
                             body: Expression::Lit(Literal::mk_simple_integer(4)),
@@ -751,14 +765,14 @@ y -> y;
                 Binding {
                     name: bar,
                     tsig: Signature::Implicit,
-                    arms: vec![Match {
+                    arms: vec![Arm {
                         args: vec![Pattern::Var(x), Pattern::Var(y)],
                         cond: None,
                         body: Expression::Tuple(vec![Expression::Ident(x), Expression::Ident(y)]),
                         wher: vec![Binding {
                             name: y,
                             tsig: Signature::Implicit,
-                            arms: vec![Match {
+                            arms: vec![Arm {
                                 args: vec![],
                                 cond: None,
                                 body: Expression::Infix {
@@ -850,7 +864,15 @@ y -> y;
             ),
         ];
         for (src, expected) in pairs {
-            assert_eq!(Parser::from_str(src).expression().unwrap(), expected);
+            assert_eq!(
+                Parser::from_str(src)
+                    .expression()
+                    .map(|expr| expr
+                        .map_fst(&mut Func::Fresh(Spanned::take_item))
+                        .map_snd(&mut Func::Fresh(Spanned::take_item)))
+                    .unwrap(),
+                expected
+            );
         }
     }
 
@@ -902,7 +924,13 @@ y -> y;
             ),
         ];
         for (src, expected) in pairs {
-            let actual = Parser::from_str(src).expression().unwrap();
+            let actual = Parser::from_str(src)
+                .expression()
+                .map(|expr| {
+                    expr.map_fst(&mut Func::Fresh(Spanned::take_item))
+                        .map_snd(&mut Func::Fresh(Spanned::take_item))
+                })
+                .unwrap();
             assert_eq!(actual, expected);
         }
     }
@@ -915,7 +943,7 @@ y -> y;
         let [map, plus] = Symbol::intern_many(["map", "+"]);
         let map = Ident::Lower(map);
         let plus = Ident::Infix(plus);
-        let expected: RawExpression = E::App(
+        let expected: Expression<Ident, Ident> = E::App(
             Box::new(E::App(
                 Box::new(E::Ident(map)),
                 Box::new(E::Section(Prefix {
@@ -929,6 +957,11 @@ y -> y;
                 E::Lit(Literal::mk_simple_integer(3)),
             ])),
         );
-        assert_eq!(Parser::from_str(src).expression(), Ok(expected))
+        assert_eq!(
+            Parser::from_str(src).expression().map(|expr| expr
+                .map_fst(&mut Func::Fresh(Spanned::take_item))
+                .map_snd(&mut Func::Fresh(Spanned::take_item))),
+            Ok(expected)
+        )
     }
 }
