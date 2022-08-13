@@ -26,6 +26,13 @@ impl<Id, V> Record<Id, V> {
         }
     }
 
+    #[inline]
+    pub fn len(&self) -> usize {
+        match self {
+            Record::Anon(es) | Record::Data(_, es) => es.len(),
+        }
+    }
+
     pub fn has_rest(&self) -> bool {
         self.fields().into_iter().any(|fld| fld.is_rest())
     }
@@ -36,13 +43,6 @@ impl<Id, V> Record<Id, V> {
     {
         let set: Set<&Id> = self.keys().collect();
         self.len() == set.len()
-    }
-
-    #[inline]
-    pub fn len(&self) -> usize {
-        match self {
-            Record::Anon(es) | Record::Data(_, es) => es.len(),
-        }
     }
 
     pub fn to_pairs(self) -> Vec<(Id, V)> {
@@ -68,19 +68,43 @@ impl<Id, V> Record<Id, V> {
         }
     }
 
+    pub fn fields_mut(&mut self) -> &mut [Field<Id, V>] {
+        match self {
+            Record::Anon(fields) | Record::Data(_, fields) => fields.as_mut_slice(),
+        }
+    }
+
     #[inline]
     pub fn keys(&self) -> impl Iterator<Item = &Id> + '_ {
-        self.fields().iter().filter_map(|field| match field {
+        self.fields().into_iter().filter_map(|field| match field {
             Field::Rest => None,
             Field::Key(k) | Field::Entry(k, _) => Some(k),
         })
     }
 
+    pub fn keys_mut(&mut self) -> impl Iterator<Item = &mut Id> + '_ {
+        self.fields_mut()
+            .into_iter()
+            .filter_map(|field| match field {
+                Field::Rest => None,
+                Field::Key(k) | Field::Entry(k, _) => Some(k),
+            })
+    }
+
     pub fn values(&self) -> impl Iterator<Item = &V> + '_ {
-        self.fields().iter().filter_map(|field| match field {
+        self.fields().into_iter().filter_map(|field| match field {
             Field::Rest | Field::Key(_) => None,
             Field::Entry(_, v) => Some(v),
         })
+    }
+
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> + '_ {
+        self.fields_mut()
+            .into_iter()
+            .filter_map(|field| match field {
+                Field::Rest | Field::Key(_) => None,
+                Field::Entry(_, v) => Some(v),
+            })
     }
 
     #[inline]
@@ -209,7 +233,15 @@ impl<Id, V> Field<Id, V> {
     pub fn key_only(&self) -> bool {
         matches!(self, Self::Key(..))
     }
+
     pub fn get_key(&self) -> Option<&Id> {
+        match self {
+            Field::Rest => None,
+            Field::Key(k) | Field::Entry(k, _) => Some(k),
+        }
+    }
+
+    pub fn get_key_mut(&mut self) -> Option<&mut Id> {
         match self {
             Field::Rest => None,
             Field::Key(k) | Field::Entry(k, _) => Some(k),
@@ -220,6 +252,13 @@ impl<Id, V> Field<Id, V> {
     /// the held value, wrapped in `Option::Some`. Otherwise, this returns
     /// `None`.
     pub fn get_value(&self) -> Option<&V> {
+        match self {
+            Field::Rest | Field::Key(_) => None,
+            Field::Entry(_, v) => Some(v),
+        }
+    }
+
+    pub fn get_value_mut(&self) -> Option<&V> {
         match self {
             Field::Rest | Field::Key(_) => None,
             Field::Entry(_, v) => Some(v),
