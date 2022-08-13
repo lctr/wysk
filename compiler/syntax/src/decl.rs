@@ -711,12 +711,12 @@ pub struct FnDecl<Id = SpannedIdent, V = SpannedIdent> {
     pub span: Span,
     pub name: Id,
     pub sign: Signature<Id, V>,
-    pub defs: Vec<Match<Id, V>>,
+    pub defs: Vec<Arm<Id, V>>,
 }
 
 wy_common::struct_field_iters! {
     |Id, V| FnDecl<Id, V>
-    | defs => defs_iter :: Match<Id, V>
+    | defs => defs_iter :: Arm<Id, V>
 }
 
 impl<Id, V, X> MapFst<Id, X> for FnDecl<Id, V> {
@@ -777,7 +777,7 @@ impl<Id, V> FnDecl<Id, V> {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MethodBody<Id = SpannedIdent, V = SpannedIdent> {
     Unimplemented,
-    Default(Vec<Match<Id, V>>),
+    Default(Vec<Arm<Id, V>>),
 }
 
 impl<Id, V, X> MapFst<Id, X> for MethodBody<Id, V> {
@@ -879,13 +879,13 @@ impl<Id, V> MethodImpl<Id, V> {
     pub fn name(&self) -> &Id {
         &self.0.name
     }
-    pub fn arms(&self) -> &[Match<Id, V>] {
+    pub fn arms(&self) -> &[Arm<Id, V>] {
         &self.0.arms[..]
     }
-    pub fn arms_iter(&self) -> std::slice::Iter<'_, Match<Id, V>> {
+    pub fn arms_iter(&self) -> std::slice::Iter<'_, Arm<Id, V>> {
         self.0.arms.iter()
     }
-    pub fn arms_iter_mut(&mut self) -> std::slice::IterMut<'_, Match<Id, V>> {
+    pub fn arms_iter_mut(&mut self) -> std::slice::IterMut<'_, Arm<Id, V>> {
         self.0.arms.iter_mut()
     }
     pub fn signature(&self) -> &Signature<Id, V> {
