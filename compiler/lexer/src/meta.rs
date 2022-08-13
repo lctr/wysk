@@ -17,12 +17,12 @@ strenum! { Attr is_builtin_attr ::
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Pragma {
+pub enum Meta {
     BuiltIn(Attr),
     Custom(Symbol),
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Placement {
     /// Indicates that the relative position of an attribute or compiler
     /// pragma is *before* the item that it annotates.
