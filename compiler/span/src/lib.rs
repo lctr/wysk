@@ -284,7 +284,7 @@ impl std::fmt::Debug for Span {
 }
 
 impl Span {
-    pub fn of_str(s: &impl AsRef<str>) -> Self {
+    pub fn of_str(s: impl AsRef<str>) -> Self {
         let (a, b) = BytePos::str_bounds(s.as_ref());
         Self(a, b)
     }
@@ -480,6 +480,27 @@ impl std::ops::Index<Span> for Str<'_> {
     }
 }
 
+pub trait Unspan {
+    type Item;
+    fn unspan(self) -> Self::Item;
+}
+
+impl<I> Unspan for Spanned<I> {
+    type Item = I;
+
+    fn unspan(self) -> Self::Item {
+        self.take_item()
+    }
+}
+
+impl<I> Unspan for (I, Span) {
+    type Item = I;
+
+    fn unspan(self) -> Self::Item {
+        self.0
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Spanned<T>(pub T, pub Span);
 
@@ -501,6 +522,13 @@ impl<T> Spanned<T> {
     #[inline]
     pub fn span(&self) -> Span {
         self.1
+    }
+
+    pub fn mapf<F, U>(self, f: &mut wy_common::functor::Func<F>) -> Spanned<U>
+    where
+        F: FnMut(T) -> U,
+    {
+        Spanned(f.apply(self.0), self.1)
     }
 
     #[inline]
@@ -607,12 +635,30 @@ where
     }
 }
 
+impl<T> PartialEq<T> for Spanned<T>
+where
+    T: PartialEq,
+{
+    fn eq(&self, other: &T) -> bool {
+        self.item() == other
+    }
+}
+
 impl<T> std::cmp::PartialOrd for Spanned<T>
 where
     T: PartialEq,
 {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         self.1.partial_cmp(&other.1)
+    }
+}
+
+impl<T> PartialOrd<T> for Spanned<T>
+where
+    T: PartialOrd,
+{
+    fn partial_cmp(&self, other: &T) -> Option<std::cmp::Ordering> {
+        self.item().partial_cmp(other)
     }
 }
 
@@ -946,6 +992,13 @@ impl<T> Located<T> {
         self.1
     }
 
+    pub fn mapf<F, U>(self, f: &mut wy_common::functor::Func<F>) -> Located<U>
+    where
+        F: FnMut(T) -> U,
+    {
+        Located(f.apply(self.0), self.1)
+    }
+
     #[inline]
     pub fn map<U>(self, mut f: impl FnMut(T) -> U) -> Located<U> {
         Located(f(self.0), self.1)
@@ -1132,6 +1185,13 @@ impl<X> Positioned<X> {
     /// inner item contained.
     pub fn union(&self, other: &Positioned<X>) -> Position {
         self.1.union(&other.1)
+    }
+
+    pub fn mapf<F, U>(self, f: &mut wy_common::functor::Func<F>) -> Positioned<U>
+    where
+        F: FnMut(X) -> U,
+    {
+        Positioned(f.apply(self.0), self.1)
     }
 }
 
