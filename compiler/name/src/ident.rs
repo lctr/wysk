@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 pub use wy_intern::symbol::{Symbol, Symbolic};
+use wy_span::Spanned;
 
 const FRESH_PREFIX: &str = "_#";
 
@@ -291,5 +292,31 @@ impl Identifier for Ident {
     }
     fn get_ident(&self) -> Ident {
         *self
+    }
+}
+
+impl<I: Identifier> Identifier for Spanned<I> {
+    fn is_upper(&self) -> bool {
+        self.item().is_upper()
+    }
+
+    fn is_lower(&self) -> bool {
+        self.item().is_lower()
+    }
+
+    fn is_infix(&self) -> bool {
+        self.item().is_infix()
+    }
+
+    fn is_label(&self) -> bool {
+        self.item().is_label()
+    }
+
+    fn is_fresh(&self) -> bool {
+        self.item().is_fresh()
+    }
+
+    fn get_ident(&self) -> Ident {
+        self.item().get_ident()
     }
 }

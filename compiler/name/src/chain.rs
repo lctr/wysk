@@ -36,8 +36,16 @@ impl<Id> Chain<Id> {
         &self.0
     }
 
-    pub fn tail(&self) -> impl Iterator<Item = &Id> {
+    pub fn root_mut(&mut self) -> &mut Id {
+        &mut self.0
+    }
+
+    pub fn tail(&self) -> std::collections::vec_deque::Iter<'_, Id> {
         self.1.iter()
+    }
+
+    pub fn tail_mut(&mut self) -> std::collections::vec_deque::IterMut<Id> {
+        self.1.iter_mut()
     }
 
     pub fn mapf<F, X>(self, f: &mut wy_common::functor::Func<'_, F>) -> Chain<X>

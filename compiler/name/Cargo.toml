@@ -12,4 +12,5 @@ lazy_static = "1.4.0"
 wy_common = { path = "../common" }
 wy_graph = { path = "../graph" }
 wy_intern = { path = "../intern" }
+wy_span = { path = "../span" }
 wy_pretty = { path = "../pretty" }
