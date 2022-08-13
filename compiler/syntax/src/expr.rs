@@ -443,7 +443,7 @@ impl<Id, V, X> MapFst<Id, X> for Expression<Id, V> {
             },
             Expression::Section(sec) => Expression::Section(sec.map_fst(f)),
             Expression::Tuple(xs) => Expression::Tuple(xs.map_fst(f)),
-            Expression::Array(xs) => Expression::Tuple(xs.map_fst(f)),
+            Expression::Array(xs) => Expression::Array(xs.map_fst(f)),
             Expression::List(x, stmts) => {
                 Expression::List(Box::new(x.map_fst(f)), stmts.map_fst(f))
             }
@@ -490,7 +490,7 @@ impl<Id, V, X> MapSnd<V, X> for Expression<Id, V> {
             },
             Expression::Section(sec) => Expression::Section(sec.map_snd(f)),
             Expression::Tuple(xs) => Expression::Tuple(xs.map_snd(f)),
-            Expression::Array(xs) => Expression::Tuple(xs.map_snd(f)),
+            Expression::Array(xs) => Expression::Array(xs.map_snd(f)),
             Expression::List(x, stmts) => {
                 Expression::List(Box::new(x.map_snd(f)), stmts.map_snd(f))
             }
