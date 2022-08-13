@@ -14,6 +14,7 @@ pub struct FixityDecl<Id = SpannedIdent> {
     pub span: Span,
     pub infixes: Vec<Id>,
     pub fixity: Fixity,
+    pub from_pragma: bool,
 }
 
 impl<Id> FixityDecl<Id> {
@@ -25,6 +26,7 @@ impl<Id> FixityDecl<Id> {
             span: self.span,
             infixes: Functor::fmap(self.infixes, f),
             fixity: self.fixity,
+            from_pragma: self.from_pragma,
         }
     }
 }
@@ -39,6 +41,7 @@ impl<Id: Copy + Eq + std::hash::Hash> From<&[FixityDecl<Spanned<Id>>]> for Fixit
                          span: _,
                          infixes,
                          fixity,
+                         from_pragma: _,
                      }| {
                         infixes.iter().map(|infix| (*infix.item(), *fixity))
                     },
@@ -58,6 +61,7 @@ impl From<&[FixityDecl<wy_name::Ident>]> for FixityTable<wy_name::Ident> {
                          span: _,
                          infixes,
                          fixity,
+                         from_pragma: _,
                      }| { infixes.iter().map(|infix| (*infix, *fixity)) },
                 )
                 .collect(),
@@ -146,17 +150,17 @@ impl From<&[FixityDecl<wy_name::Ident>]> for FixityTable<wy_name::Ident> {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DataDecl<Id = SpannedIdent, V = SpannedIdent> {
     pub span: Span,
+    pub prag: Vec<Pragma<Id, V>>,
     pub tdef: SimpleType<Id, V>,
     pub pred: Vec<Predicate<Id, V>>,
     pub vnts: Vec<Variant<Id, V>>,
-    pub with: Vec<Id>,
+    pub with: Option<WithClause<Id>>,
 }
 
 wy_common::struct_field_iters! {
     |Id, V| DataDecl<Id, V>
     | pred => context_iter :: Predicate<Id, V>
     | vnts => variants_iter :: Variant<Id, V>
-    | with => derives_iter :: Id
 }
 
 impl<Id, V, X> MapFst<Id, X> for DataDecl<Id, V> {
@@ -168,17 +172,20 @@ impl<Id, V, X> MapFst<Id, X> for DataDecl<Id, V> {
     {
         let DataDecl {
             span,
+            prag,
             tdef,
             pred,
             vnts,
             with,
         } = self;
+        let prag = prag.into_iter().map(|prag| prag.map_fst(f)).collect();
         let tdef = tdef.map_fst(f);
         let pred = pred.map_fst(f);
         let vnts = vnts.map_fst(f);
-        let with = with.into_iter().map(|id| f.apply(id)).collect();
+        let with = with.map(|w| w.fmap(f));
         DataDecl {
             span,
+            prag,
             tdef,
             pred,
             vnts,
@@ -196,20 +203,50 @@ impl<Id, V, X> MapSnd<V, X> for DataDecl<Id, V> {
     {
         let DataDecl {
             span,
+            prag,
             tdef,
             pred,
             vnts,
             with,
         } = self;
+        let prag = prag.into_iter().map(|prag| prag.map_snd(f)).collect();
         let tdef = tdef.map_snd(f);
         let pred = pred.map_snd(f);
         let vnts = vnts.map_snd(f);
         DataDecl {
             span,
+            prag,
             tdef,
             pred,
             vnts,
             with,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WithClause<Id = SpannedIdent> {
+    pub span: Span,
+    pub names: Vec<Id>,
+    pub from_pragma: bool,
+}
+
+wy_common::struct_field_iters! {
+    |Id| WithClause<Id>
+    | names => names_iter :: Id
+}
+
+impl<Id, X> Functor<Id, X> for WithClause<Id> {
+    type Wrapper = WithClause<X>;
+
+    fn fmap<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::Wrapper
+    where
+        F: FnMut(Id) -> X,
+    {
+        WithClause {
+            span: self.span,
+            names: self.names.fmap(f),
+            from_pragma: self.from_pragma,
         }
     }
 }
@@ -310,11 +347,19 @@ impl<Id, V> TypeArgs<Id, V> {
         }
     }
 
-    // pub fn iter(
-    //     &self,
-    // ) -> impl Iterator<Item = TypeArg<Id, V, &Type<Id, V>, &Selector<Id, V>>> + '_ {
-    //     todo!()
-    // }
+    // REDO
+    pub fn iter<'a>(&'a self) -> Vec<TypeArg<Id, V, &'a Type<Id, V>, &'a Selector<Id, V>>> {
+        match self {
+            TypeArgs::Curried(ty) => ty
+                .into_iter()
+                .map(|f| TypeArg::<Id, V, &Type<Id, V>, &Selector<Id, V>>::Type(f))
+                .collect::<Vec<_>>(),
+            TypeArgs::Record(sel) => sel
+                .into_iter()
+                .map(|s| TypeArg::<Id, V, &Type<Id, V>, &Selector<Id, V>>::Selector(s))
+                .collect::<Vec<_>>(),
+        }
+    }
 }
 
 impl<Id, V, X> MapFst<Id, X> for TypeArgs<Id, V> {
@@ -348,6 +393,8 @@ impl<Id, V, X> MapSnd<V, X> for TypeArgs<Id, V> {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Variant<Id = SpannedIdent, V = SpannedIdent> {
     pub name: Id,
+    pub span: Span,
+    pub prag: Vec<Pragma<Id, V>>,
     pub args: TypeArgs<Id, V>,
 }
 
@@ -368,10 +415,21 @@ impl<Id, V, X> MapFst<Id, X> for Variant<Id, V> {
     where
         F: FnMut(Id) -> X,
     {
-        let Variant { name, args } = self;
+        let Variant {
+            name,
+            span,
+            prag,
+            args,
+        } = self;
         let name = f.apply(name);
+        let prag = prag.into_iter().map(|prag| prag.map_fst(f)).collect();
         let args = args.map_fst(f);
-        Variant { name, args }
+        Variant {
+            name,
+            span,
+            prag,
+            args,
+        }
     }
 }
 
@@ -382,9 +440,20 @@ impl<Id, V, X> MapSnd<V, X> for Variant<Id, V> {
     where
         F: FnMut(V) -> X,
     {
-        let Variant { name, args } = self;
+        let Variant {
+            name,
+            span,
+            prag,
+            args,
+        } = self;
+        let prag = prag.into_iter().map(|prag| prag.map_snd(f)).collect();
         let args = args.map_snd(f);
-        Variant { name, args }
+        Variant {
+            name,
+            span,
+            prag,
+            args,
+        }
     }
 }
 
@@ -429,6 +498,7 @@ wy_common::newtype!(Arity | usize | (+= usize |rhs| rhs) );
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AliasDecl<Id = SpannedIdent, V = SpannedIdent> {
     pub span: Span,
+    pub prag: Vec<Pragma<Id, V>>,
     pub ldef: SimpleType<Id, V>,
     pub tipo: Type<Id, V>,
 }
@@ -442,6 +512,7 @@ impl<Id, V, X> MapFst<Id, X> for AliasDecl<Id, V> {
     {
         AliasDecl {
             span: self.span,
+            prag: self.prag.into_iter().map(|prag| prag.map_fst(f)).collect(),
             ldef: self.ldef.map_fst(f),
             tipo: self.tipo.map_fst(f),
         }
@@ -457,6 +528,7 @@ impl<Id, V, X> MapSnd<V, X> for AliasDecl<Id, V> {
     {
         AliasDecl {
             span: self.span,
+            prag: self.prag.into_iter().map(|prag| prag.map_snd(f)).collect(),
             ldef: self.ldef.map_snd(f),
             tipo: self.tipo.map_snd(f),
         }
@@ -472,10 +544,11 @@ impl<Id, V, X> MapSnd<V, X> for AliasDecl<Id, V> {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NewtypeDecl<Id = SpannedIdent, V = SpannedIdent> {
     pub span: Span,
+    pub prag: Vec<Pragma<Id, V>>,
     pub tdef: SimpleType<Id, V>,
     pub ctor: Id,
     pub narg: TypeArg<Id, V>,
-    pub with: Vec<Id>,
+    pub with: Option<WithClause<Id>>,
 }
 
 impl<Id, V> NewtypeDecl<Id, V> {
@@ -488,11 +561,6 @@ impl<Id, V> NewtypeDecl<Id, V> {
     }
 }
 
-wy_common::struct_field_iters! {
-    |Id, V| NewtypeDecl<Id, V>
-    | with => derives_iter :: Id
-}
-
 impl<Id, V, X> MapFst<Id, X> for NewtypeDecl<Id, V> {
     type WrapFst = NewtypeDecl<X, V>;
 
@@ -502,17 +570,20 @@ impl<Id, V, X> MapFst<Id, X> for NewtypeDecl<Id, V> {
     {
         let NewtypeDecl {
             span,
+            prag,
             tdef,
             ctor,
             narg,
             with,
         } = self;
+        let prag = prag.into_iter().map(|prag| prag.map_fst(f)).collect();
         let tdef = tdef.map_fst(f);
         let ctor = f.apply(ctor);
         let narg = narg.map_fst(f);
-        let with = with.into_iter().map(|id| f.apply(id)).collect();
+        let with = with.map(|w| w.fmap(f));
         NewtypeDecl {
             span,
+            prag,
             tdef,
             ctor,
             narg,
@@ -530,15 +601,18 @@ impl<Id, V, X> MapSnd<V, X> for NewtypeDecl<Id, V> {
     {
         let NewtypeDecl {
             span,
+            prag,
             tdef,
             ctor,
             narg,
             with,
         } = self;
+        let prag = prag.into_iter().map(|prag| prag.map_snd(f)).collect();
         let tdef = tdef.map_snd(f);
         let narg = narg.map_snd(f);
         NewtypeDecl {
             span,
+            prag,
             tdef,
             ctor,
             narg,
@@ -550,6 +624,7 @@ impl<Id, V, X> MapSnd<V, X> for NewtypeDecl<Id, V> {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClassDecl<Id = SpannedIdent, V = SpannedIdent> {
     pub span: Span,
+    pub prag: Vec<Pragma<Id, V>>,
     pub cdef: SimpleType<Id, V>,
     pub pred: Vec<Predicate<Id, V>>,
     pub defs: Vec<MethodDef<Id, V>>,
@@ -559,6 +634,7 @@ wy_common::struct_field_iters! {
     |Id, V| ClassDecl<Id, V>
     | pred => pred_iter :: Predicate<Id, V>
     | defs => defs_iter :: MethodDef<Id, V>
+    | prag => prag_iter :: Pragma<Id, V>
 }
 
 impl<Id, V> ClassDecl<Id, V> {
@@ -576,15 +652,18 @@ impl<Id, V, X> MapFst<Id, X> for ClassDecl<Id, V> {
     {
         let ClassDecl {
             span,
+            prag,
             cdef,
             pred,
             defs,
         } = self;
+        let prag = prag.into_iter().map(|prag| prag.map_fst(f)).collect();
         let cdef = cdef.map_fst(f);
         let pred = pred.map_fst(f);
         let defs = defs.map_fst(f);
         ClassDecl {
             span,
+            prag,
             cdef,
             pred,
             defs,
@@ -601,15 +680,18 @@ impl<Id, V, X> MapSnd<V, X> for ClassDecl<Id, V> {
     {
         let ClassDecl {
             span,
+            prag,
             cdef,
             pred,
             defs,
         } = self;
+        let prag = prag.into_iter().map(|prag| prag.map_snd(f)).collect();
         let cdef = cdef.map_snd(f);
         let pred = pred.map_snd(f);
         let defs = defs.map_snd(f);
         ClassDecl {
             span,
+            prag,
             cdef,
             pred,
             defs,
@@ -620,6 +702,7 @@ impl<Id, V, X> MapSnd<V, X> for ClassDecl<Id, V> {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InstDecl<Id = SpannedIdent, V = SpannedIdent> {
     pub span: Span,
+    pub prag: Vec<Pragma<Id, V>>,
     pub name: Id,
     pub tipo: Type<Id, V>,
     pub pred: Vec<Predicate<Id, V>>,
@@ -630,6 +713,7 @@ wy_common::struct_field_iters! {
     |Id, V| InstDecl<Id, V>
     | pred => pred_iter :: Predicate<Id, V>
     | defs => defs_iter :: Binding<Id, V>
+    | prag => prag_iter :: Pragma<Id, V>
 }
 
 impl<Id, V, X> MapFst<Id, X> for InstDecl<Id, V> {
@@ -641,17 +725,20 @@ impl<Id, V, X> MapFst<Id, X> for InstDecl<Id, V> {
     {
         let InstDecl {
             span,
+            prag,
             name,
             tipo,
             pred,
             defs,
         } = self;
+        let prag = prag.into_iter().map(|prag| prag.map_fst(f)).collect();
         let name = f.apply(name);
         let tipo = tipo.map_fst(f);
         let pred = pred.map_fst(f);
         let defs = defs.map_fst(f);
         InstDecl {
             span,
+            prag,
             name,
             tipo,
             pred,
@@ -669,16 +756,19 @@ impl<Id, V, X> MapSnd<V, X> for InstDecl<Id, V> {
     {
         let InstDecl {
             span,
+            prag,
             name,
             tipo,
             pred,
             defs,
         } = self;
+        let prag = prag.into_iter().map(|prag| prag.map_snd(f)).collect();
         let tipo = tipo.map_snd(f);
         let pred = pred.map_snd(f);
         let defs = defs.map_snd(f);
         InstDecl {
             span,
+            prag,
             name,
             tipo,
             pred,
@@ -709,6 +799,7 @@ impl<Id, V> InstDecl<Id, V> {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FnDecl<Id = SpannedIdent, V = SpannedIdent> {
     pub span: Span,
+    pub prag: Vec<Pragma<Id, V>>,
     pub name: Id,
     pub sign: Signature<Id, V>,
     pub defs: Vec<Arm<Id, V>>,
@@ -717,6 +808,7 @@ pub struct FnDecl<Id = SpannedIdent, V = SpannedIdent> {
 wy_common::struct_field_iters! {
     |Id, V| FnDecl<Id, V>
     | defs => defs_iter :: Arm<Id, V>
+    | prag => prag_iter :: Pragma<Id, V>
 }
 
 impl<Id, V, X> MapFst<Id, X> for FnDecl<Id, V> {
@@ -728,15 +820,18 @@ impl<Id, V, X> MapFst<Id, X> for FnDecl<Id, V> {
     {
         let FnDecl {
             span,
+            prag,
             name,
             sign,
             defs,
         } = self;
+        let prag = prag.into_iter().map(|prag| prag.map_fst(f)).collect();
         let name = f.apply(name);
         let sign = sign.map_fst(f);
         let defs = defs.map_fst(f);
         FnDecl {
             span,
+            prag,
             name,
             sign,
             defs,
@@ -753,14 +848,17 @@ impl<Id, V, X> MapSnd<V, X> for FnDecl<Id, V> {
     {
         let FnDecl {
             span,
+            prag,
             name,
             sign,
             defs,
         } = self;
+        let prag = prag.into_iter().map(|prag| prag.map_snd(f)).collect();
         let sign = sign.map_snd(f);
         let defs = defs.map_snd(f);
         FnDecl {
             span,
+            prag,
             name,
             sign,
             defs,
@@ -811,6 +909,7 @@ impl<Id, V, X> MapSnd<V, X> for MethodBody<Id, V> {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MethodDef<Id = SpannedIdent, V = SpannedIdent> {
     pub span: Span,
+    pub prag: Vec<Pragma<Id, V>>,
     pub name: Id,
     pub annt: Annotation<Id, V>,
     pub body: MethodBody<Id, V>,
@@ -830,15 +929,18 @@ impl<Id, V, X> MapFst<Id, X> for MethodDef<Id, V> {
     {
         let MethodDef {
             span,
+            prag,
             name,
             annt,
             body,
         } = self;
+        let prag = prag.into_iter().map(|prag| prag.map_fst(f)).collect();
         let name = f.apply(name);
         let annt = annt.map_fst(f);
         let body = body.map_fst(f);
         MethodDef {
             span,
+            prag,
             name,
             annt,
             body,
@@ -855,14 +957,17 @@ impl<Id, V, X> MapSnd<V, X> for MethodDef<Id, V> {
     {
         let MethodDef {
             span,
+            prag,
             name,
             annt,
             body,
         } = self;
+        let prag = prag.into_iter().map(|prag| prag.map_snd(f)).collect();
         let annt = annt.map_snd(f);
         let body = body.map_snd(f);
         MethodDef {
             span,
+            prag,
             name,
             annt,
             body,
@@ -870,6 +975,8 @@ impl<Id, V, X> MapSnd<V, X> for MethodDef<Id, V> {
     }
 }
 
+/// TODO: update `MethodImpl` to be suitable for use in `InstDecl`s
+/// for implemented methods
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MethodImpl<Id = SpannedIdent, V = SpannedIdent>(pub Binding<Id, V>);
 impl<Id, V> MethodImpl<Id, V> {
@@ -902,7 +1009,6 @@ pub enum Declaration<Id = SpannedIdent, V = SpannedIdent> {
     Instance(InstDecl<Id, V>),
     Function(FnDecl<Id, V>),
     Newtype(NewtypeDecl<Id, V>),
-    Attribute(Attribute<Id, V>),
 }
 
 wy_common::variant_preds! {
@@ -914,7 +1020,6 @@ wy_common::variant_preds! {
     | is_instance => Instance(_)
     | is_function => Function(_)
     | is_newtype => Newtype(_)
-    | is_attribute => Attribute(_)
 }
 
 impl<Id, V> Declaration<Id, V> {
@@ -927,7 +1032,18 @@ impl<Id, V> Declaration<Id, V> {
             Declaration::Instance(i) => &i.name,
             Declaration::Function(f) => &f.name,
             Declaration::Newtype(n) => n.tdef.con(),
-            Declaration::Attribute(a) => a.name(),
+        }
+    }
+
+    pub fn extend_pragmas(&mut self, pragmas: Vec<Pragma<Id, V>>) {
+        match self {
+            Declaration::Data(d) => d.prag.extend(pragmas),
+            Declaration::Alias(a) => a.prag.extend(pragmas),
+            Declaration::Fixity(_f) => (), // f.prag.extend(pragmas),
+            Declaration::Class(cl) => cl.prag.extend(pragmas),
+            Declaration::Instance(i) => i.prag.extend(pragmas),
+            Declaration::Function(f) => f.prag.extend(pragmas),
+            Declaration::Newtype(n) => n.prag.extend(pragmas),
         }
     }
 }
@@ -947,7 +1063,6 @@ impl<Id, V, X> MapFst<Id, X> for Declaration<Id, V> {
             Declaration::Instance(d) => Declaration::Instance(d.map_fst(f)),
             Declaration::Function(d) => Declaration::Function(d.map_fst(f)),
             Declaration::Newtype(d) => Declaration::Newtype(d.map_fst(f)),
-            Declaration::Attribute(d) => Declaration::Attribute(d.map_fst(f)),
         }
     }
 }
@@ -967,7 +1082,6 @@ impl<Id, V, X> MapSnd<V, X> for Declaration<Id, V> {
             Declaration::Instance(d) => Declaration::Instance(d.map_snd(f)),
             Declaration::Function(d) => Declaration::Function(d.map_snd(f)),
             Declaration::Newtype(d) => Declaration::Newtype(d.map_snd(f)),
-            Declaration::Attribute(d) => Declaration::Attribute(d.map_snd(f)),
         }
     }
 }
