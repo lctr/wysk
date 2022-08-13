@@ -8,7 +8,7 @@ use wy_syntax::expr::{Range, RawExpression, Section};
 use wy_syntax::pattern::RawPattern;
 use wy_syntax::record::{Field, Record};
 use wy_syntax::stmt::{Binding, RawAlternative, RawArm, RawBinding, RawStatement};
-use wy_syntax::tipo::Signature;
+
 use wy_syntax::SpannedIdent;
 
 use crate::error::*;
@@ -377,18 +377,6 @@ impl<'t> ExprParser<'t> {
         Ok((body, wher))
     }
 
-    fn caf_binding(
-        &mut self,
-        name: SpannedIdent,
-        tsig: Signature<SpannedIdent, SpannedIdent>,
-    ) -> Parsed<RawBinding> {
-        self.binding_rhs().map(|(body, wher)| Binding {
-            name,
-            tsig,
-            arms: vec![RawArm::caf(body, wher)],
-        })
-    }
-
     pub(crate) fn binding(&mut self) -> Parsed<RawBinding> {
         let name = self.binder_name()?;
         let tsig = self.ty_signature()?;
@@ -605,6 +593,7 @@ mod test {
         expr::Expression,
         pattern::Pattern,
         stmt::{Alternative, Arm, Statement},
+        tipo::Signature,
     };
 
     use super::*;
