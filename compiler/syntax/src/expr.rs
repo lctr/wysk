@@ -14,10 +14,22 @@ use super::{Pattern, Statement};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Section<Id = Ident, V = Id> {
+    /// A `Prefix` (or *right*) section consists of an operator followed by an
+    /// expression. Syntactically this may only be found within
+    /// parentheses, i.e., `(prefix right)`, where `prefix` is the
+    /// identifier with a defined fixity and `right` is an expression;
+    /// it is equivalent to the lambda expression `\a' -> a' prefix
+    /// right` where `a'` is a fresh variable not free in `right`. 
     Prefix {
         prefix: Id,
         right: Box<Expression<Id, V>>,
     },
+    /// A `Suffix` (or *left*) section consists of an operator followed by an
+    /// expression. Syntactically this may only be found within
+    /// parentheses, i.e., `(left suffix)`, where `suffix` is the
+    /// identifier with a defined fixity and `left` is an expression;
+    /// it is equivalent to the lambda expression `\a' -> left suffix
+    /// a'` where `a'` is a fresh variable not free in `left`. 
     Suffix {
         left: Box<Expression<Id, V>>,
         suffix: Id,
@@ -57,25 +69,6 @@ impl<Id, V> Section<Id, V> {
         }
     }
 
-    pub fn as_lambda(self, fresh_var: Id) -> (Pattern<Id, V>, Expression<Id, V>)
-    where
-        Id: Copy,
-    {
-        let var = Pattern::Var(fresh_var);
-        let expr = match self {
-            Section::Prefix { prefix, right } => Expression::Infix {
-                infix: prefix,
-                right,
-                left: Box::new(Expression::Ident(fresh_var)),
-            },
-            Section::Suffix { left, suffix } => Expression::Infix {
-                infix: suffix,
-                left,
-                right: Box::new(Expression::Ident(fresh_var)),
-            },
-        };
-        (var, expr)
-    }
     pub fn contains_affix(&self, affix: &Id) -> bool
     where
         Id: PartialEq<Id>,
@@ -84,37 +77,50 @@ impl<Id, V> Section<Id, V> {
             Section::Prefix { prefix: id, .. } | Section::Suffix { suffix: id, .. } => affix == id,
         }
     }
-    pub fn as_tuple(self) -> (Id, Expression<Id, V>) {
+
+    pub fn parts(self) -> (Id, Expression<Id, V>) {
         match self {
             Section::Prefix { prefix, right } => (prefix, *right),
             Section::Suffix { left, suffix } => (suffix, *left),
         }
     }
-    pub fn as_tuple_ref(&self) -> (&Id, &Expression<Id, V>) {
+
+    pub fn parts_ref(&self) -> (&Id, &Expression<Id, V>) {
         match self {
             Section::Prefix { prefix, right } => (prefix, right.as_ref()),
             Section::Suffix { left, suffix } => (suffix, left.as_ref()),
         }
     }
+
+    pub fn parts_mut(&mut self) -> (&mut Id, &mut Expression<Id, V>) {
+        match self {
+            Section::Prefix { prefix, right } => (prefix, right.as_mut()),
+            Section::Suffix { left, suffix } => (suffix, left.as_mut()),
+        }
+    }
+
     #[inline]
     pub fn into_expression(self) -> Expression<Id, V> {
         Expression::Section(self)
     }
-    pub fn expr(&self) -> &Expression<Id, V> {
+
+    pub fn inner_expr(&self) -> &Expression<Id, V> {
         match self {
             Section::Prefix { right: expr, .. } | Section::Suffix { left: expr, .. } => {
                 expr.as_ref()
             }
         }
     }
-    pub fn expr_mut(&mut self) -> &mut Expression<Id, V> {
+
+    pub fn inner_expr_mut(&mut self) -> &mut Expression<Id, V> {
         match self {
             Section::Prefix { right: expr, .. } | Section::Suffix { left: expr, .. } => {
                 expr.as_mut()
             }
         }
     }
-    pub fn expression(self) -> Expression<Id, V> {
+
+    pub fn to_inner_expr(self) -> Expression<Id, V> {
         match self {
             Section::Prefix { right: expr, .. } | Section::Suffix { left: expr, .. } => *expr,
         }
@@ -125,7 +131,7 @@ impl<Id, V> Section<Id, V> {
         Id: Eq + std::hash::Hash,
     {
         std::iter::once(self.affix())
-            .chain(self.expr().idents())
+            .chain(self.inner_expr().idents())
             .collect()
     }
 
@@ -204,6 +210,61 @@ pub enum Range<Id, V> {
     /// sequence `[a + 0 * (b - a), a + (b a), a + 2 * (b - a), ..., a
     /// + k * (b - a)]` where `k * (b - a) < c`.
     FromThenTo([Expression<Id, V>; 3]),
+}
+
+impl<Id, V> Range<Id, V> {
+    /// Deconstructs the internal components of the range and returns
+    /// a pair with these parts. Since every `Range` expression
+    /// requires at least one (initial) component, the first component
+    /// of the returned pair will always be the initial component. 
+    /// 
+    /// The second component of the pair is an array containing 2
+    /// optional type elements, whose values may contain the relevant
+    /// component behind a `Some` variant -- if they exist -- or
+    /// otherwise `None`. 
+    /// 
+    /// Note that the order of the subexpression components in the
+    /// returned array *always* follows the order of
+    /// ```text
+    ///     <Increment>, <End>
+    /// ```
+    /// thus, the "parts" returned by this method are effectively
+    /// ```text
+    ///     (<Start>, [<Increment>, <End>])
+    /// ```
+    /// 
+    /// For example, the `From` variant only has an initial component,
+    /// so the pair returned would be `(<Initial>, [None, None])`
+    /// (where `<Initial>` is the contained subexpression). 
+    /// 
+    /// On the otherhand, the `FromTo` variant returns `(<Initial>,
+    /// [None, <End>])`.
+    pub fn parts(self) -> (Expression<Id, V>, [Option<Expression<Id, V>>; 2]) {
+        match self {
+            Range::From(ex) => (ex, [None, None]),
+            Range::FromThen([start, then]) => (start, [Some(then), None]),
+            Range::FromTo([start, end]) => (start, [None, Some(end)]),
+            Range::FromThenTo([start, then, end]) => (start, [Some(then), Some(end)]),
+        }
+    }
+
+    pub fn parts_ref(&self) -> (&Expression<Id, V>, [Option<&Expression<Id, V>>; 2]) {
+        match self {
+            Range::From(ex) => (ex, [None, None]),
+            Range::FromThen([start, then]) => (start, [Some(then), None]),
+            Range::FromTo([start, end]) => (start, [None, Some(end)]),
+            Range::FromThenTo([start, then, end]) => (start, [Some(then), Some(end)]),
+        }
+    }
+
+    pub fn parts_mut(&mut self) -> (&mut Expression<Id, V>, [Option<&mut Expression<Id, V>>; 2]) {
+        match self {
+            Range::From(ex) => (ex, [None, None]),
+            Range::FromThen([start, then]) => (start, [Some(then), None]),
+            Range::FromTo([start, end]) => (start, [None, Some(end)]),
+            Range::FromThenTo([start, then, end]) => (start, [Some(then), Some(end)]),
+        }
+    }
 }
 
 impl<Id, V, X> MapFst<Id, X> for Range<Id, V> {
@@ -716,7 +777,7 @@ impl<Id, V> Expression<Id, V> {
                     .chain(right.idents()),
             ),
             Expression::Section(s) => {
-                let (a, b) = s.as_tuple_ref();
+                let (a, b) = s.parts_ref();
                 idents.insert(a);
                 idents.extend(b.idents())
             }
@@ -809,7 +870,7 @@ impl<Id, V> Expression<Id, V> {
             }
             Expression::Section(sec) => {
                 vars.insert(sec.affix());
-                vars.extend(sec.expr().free_vars());
+                vars.extend(sec.inner_expr().free_vars());
             }
             Expression::Tuple(xs) | Expression::Array(xs) => {
                 xs.into_iter().for_each(|x| vars.extend(x.free_vars()))
