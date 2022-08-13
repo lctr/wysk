@@ -157,7 +157,7 @@ impl Atlas {
     pub fn add_path<P: AsRef<Path>>(&mut self, path: P) -> Option<FileId> {
         let path = path.as_ref();
         if let Some(n) = self.sources.iter().position(|fp| fp.path() == path) {
-            return Some(FileId(n));
+            Some(FileId(n))
         } else if is_target_file(&path) && !self.contains_path(path) {
             let file_id = FileId(self.len());
             self.sources.push(FilePath {
@@ -403,20 +403,17 @@ impl FilePath {
         let init = mine.chars().next().unwrap();
         if let Some(pn) = self.path.parent() {
             for rd in fs::read_dir(pn) {
-                for der in rd {
-                    if let Ok(de) = der {
-                        let their = de.path();
-                        if is_target_file(&their) {
-                            match their.file_name().and_then(|s| s.to_str()).map(|s| {
-                                let c0 = s.chars().next().unwrap();
-                                their.extension() == ext
-                                    && s.len() == len
-                                    && init == c0
-                                    && &mine[1..] == &s[1..]
-                            }) {
-                                Some(true) => return true,
-                                _ => (),
-                            }
+                for de in rd.flatten() {
+                    let their = de.path();
+                    if is_target_file(&their) {
+                        if let Some(true) = their.file_name().and_then(|s| s.to_str()).map(|s| {
+                            let c0 = s.chars().next().unwrap();
+                            their.extension() == ext
+                                && s.len() == len
+                                && init == c0
+                                && mine[1..] == s[1..]
+                        }) {
+                            return true;
                         }
                     }
                 }
