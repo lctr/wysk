@@ -442,7 +442,7 @@ impl<T> From<Ident> for Expression<Ident, T> {
 
 #[cfg(test)]
 mod tests {
-    use wy_span::Dummy;
+    use wy_span::{Dummy, Span};
 
     use super::*;
     /// let's take a stab at reordering expressions based on fixities we will be
