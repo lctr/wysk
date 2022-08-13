@@ -435,8 +435,14 @@ impl<Id, T> ReSpan for Expression<Spanned<Id>, Spanned<T>> {
             Expression::Cond(xyz) => {
                 spans.extend(xyz.as_mut().into_iter().flat_map(Self::spans_mut))
             }
-            Expression::Case(scrut, _) => spans.extend(scrut.spans_mut()),
-            Expression::Cast(x, _) => spans.extend(x.spans_mut()),
+            Expression::Case(scrut, alts) => {
+                spans.extend(scrut.spans_mut());
+                spans.extend(alts.spans_mut())
+            }
+            Expression::Cast(x, ty) => {
+                spans.extend(x.spans_mut());
+                spans.extend(ty.spans_mut());
+            }
             Expression::Do(stmts, ret) => {
                 spans.extend(stmts.spans_mut());
                 spans.extend(ret.spans_mut());
