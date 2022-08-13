@@ -113,7 +113,7 @@ pub enum Lexeme {
     Infix(Symbol),
     Label(Symbol),
     Lit(Literal),
-    Meta(Pragma),
+    Meta(Meta),
     Unknown(LexError),
     Eof,
 }
@@ -160,8 +160,8 @@ wy_common::variant_preds! {
     | is_unknown => Unknown (..)
     | is_left_delim => ParenL [ | Self::BrackL | Self::CurlyL ]
     | is_right_delim => ParenR [ | Self::BrackR | Self::CurlyR ]
-    | is_builtin_attr => Meta (Pragma::BuiltIn(_))
-    | is_custom_attr => Meta (Pragma::Custom(_))
+    | is_builtin_attr => Meta (Meta::BuiltIn(_))
+    | is_custom_attr => Meta (Meta::Custom(_))
 
 }
 
@@ -786,7 +786,7 @@ impl Lexlike for Literal {
     }
 }
 
-impl Lexlike for Pragma {
+impl Lexlike for Meta {
     fn cmp_lex(&self, lex: &Lexeme) -> bool {
         matches!(lex, Lexeme::Meta(p) if p == self)
     }
