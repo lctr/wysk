@@ -1,4 +1,4 @@
-use attr::Attribute;
+use attr::Pragma;
 use wy_common::{
     deque,
     functor::{MapFst, MapSnd, MapThrd},
@@ -6,7 +6,7 @@ use wy_common::{
 };
 use wy_failure::SrcPath;
 use wy_intern::symbol::Symbol;
-use wy_name::{module::ModuleId, Chain, Ident};
+use wy_name::{Chain, Ident};
 
 pub use wy_lexer::{
     comment::{self, Comment},
@@ -30,10 +30,12 @@ use expr::*;
 use fixity::*;
 use pattern::*;
 use stmt::*;
-use tipo::*;
-use wy_span::{Span, Spanned, Unspan};
+
+use wy_span::{Spanned, Unspan};
 
 pub type SpannedIdent = Spanned<Ident>;
+pub type VecIter<'a, X> = std::slice::Iter<'a, X>;
+pub type VecIterMut<'a, X> = std::slice::IterMut<'a, X>;
 
 #[derive(Clone, Debug)]
 pub struct Program<Id, T, U> {
@@ -47,11 +49,11 @@ impl<Id, T, U> Program<Id, T, U> {
         &self.module.modname
     }
 
-    pub fn module_id(&self) -> &U {
+    pub fn module_srcpath(&self) -> &U {
         &self.module.srcpath
     }
 
-    pub fn map_u<V>(self, mut f: impl FnMut(U) -> V) -> Program<Id, T, V> {
+    pub fn map_srcpath<V>(self, mut f: impl FnMut(U) -> V) -> Program<Id, T, V> {
         let Program {
             module,
             fixities,
@@ -92,6 +94,9 @@ impl<Id, T, U> Program<Id, T, U> {
 
     pub fn imports_iter(&self) -> VecIter<'_, ImportSpec<Spanned<Id>>> {
         self.module.imports_iter()
+    }
+    pub fn imports_iter_mut(&mut self) -> VecIterMut<'_, ImportSpec<Spanned<Id>>> {
+        self.module.imports_iter_mut()
     }
     pub fn infixes_iter(&self) -> VecIter<'_, FixityDecl<Spanned<Id>>> {
         self.module.infixes_iter()
@@ -196,7 +201,7 @@ pub struct Module<Id = Ident, T = Ident, P = SrcPath> {
     pub fundefs: Vec<FnDecl<Spanned<Id>, Spanned<T>>>,
     pub aliases: Vec<AliasDecl<Spanned<Id>, Spanned<T>>>,
     pub newtyps: Vec<NewtypeDecl<Spanned<Id>, Spanned<T>>>,
-    pub pragmas: Vec<Attribute<Spanned<Id>, Spanned<T>>>,
+    pub pragmas: Vec<Pragma<Spanned<Id>, Spanned<T>>>,
 }
 
 struct_field_iters! {
@@ -209,7 +214,7 @@ struct_field_iters! {
     | fundefs => fundefs_iter :: FnDecl<Spanned<Id>, Spanned<T>>
     | aliases => aliases_iter :: AliasDecl<Spanned<Id>, Spanned<T>>
     | newtyps => newtyps_iter :: NewtypeDecl<Spanned<Id>, Spanned<T>>
-    | pragmas => pragmas_iter :: Attribute<Spanned<Id>, Spanned<T>>
+    | pragmas => pragmas_iter :: Pragma<Spanned<Id>, Spanned<T>>
 }
 
 impl<Id, T, U, X> MapFst<Id, X> for Module<Id, T, U> {
@@ -361,9 +366,6 @@ where
     }
 }
 
-type VecIter<'a, X> = std::slice::Iter<'a, X>;
-type VecIterMut<'a, X> = std::slice::IterMut<'a, X>;
-
 impl<Id, T, P> Module<Id, T, P> {
     pub fn module_name(&self) -> &Chain<Id> {
         &self.modname
@@ -381,6 +383,54 @@ impl<Id, T, P> Module<Id, T, P> {
             aliases: self.aliases,
             newtyps: self.newtyps,
             pragmas: self.pragmas,
+        }
+    }
+
+    pub fn imports_iter_mut(&mut self) -> VecIterMut<'_, ImportSpec<Spanned<Id>>> {
+        self.imports.iter_mut()
+    }
+
+    pub fn infixes_iter_mut(&mut self) -> VecIterMut<'_, FixityDecl<Spanned<Id>>> {
+        self.infixes.iter_mut()
+    }
+
+    pub fn datatys_iter_mut(&mut self) -> VecIterMut<'_, DataDecl<Spanned<Id>, Spanned<T>>> {
+        self.datatys.iter_mut()
+    }
+
+    pub fn classes_iter_mut(&mut self) -> VecIterMut<'_, ClassDecl<Spanned<Id>, Spanned<T>>> {
+        self.classes.iter_mut()
+    }
+
+    pub fn implems_iter_mut(&mut self) -> VecIterMut<'_, InstDecl<Spanned<Id>, Spanned<T>>> {
+        self.implems.iter_mut()
+    }
+
+    pub fn fundefs_iter_mut(&mut self) -> VecIterMut<'_, FnDecl<Spanned<Id>, Spanned<T>>> {
+        self.fundefs.iter_mut()
+    }
+
+    pub fn aliases_iter_mut(&mut self) -> VecIterMut<'_, AliasDecl<Spanned<Id>, Spanned<T>>> {
+        self.aliases.iter_mut()
+    }
+
+    pub fn newtyps_iter_mut(&mut self) -> VecIterMut<'_, NewtypeDecl<Spanned<Id>, Spanned<T>>> {
+        self.newtyps.iter_mut()
+    }
+
+    pub fn pragmas_iter_mut(&mut self) -> VecIterMut<'_, Pragma<Spanned<Id>, Spanned<T>>> {
+        self.pragmas.iter_mut()
+    }
+
+    pub fn push_decl(&mut self, decl: Declaration<Spanned<Id>, Spanned<T>>) {
+        match decl {
+            Declaration::Data(data) => self.datatys.push(data),
+            Declaration::Alias(alias) => self.aliases.push(alias),
+            Declaration::Fixity(fixity) => self.infixes.push(fixity),
+            Declaration::Class(class) => self.classes.push(class),
+            Declaration::Instance(inst) => self.implems.push(inst),
+            Declaration::Function(fun) => self.fundefs.push(fun),
+            Declaration::Newtype(newty) => self.newtyps.push(newty),
         }
     }
 
@@ -467,7 +517,7 @@ pub struct SpanlessModule<Id, T, P> {
     pub fundefs: Vec<FnDecl<Id, T>>,
     pub aliases: Vec<AliasDecl<Id, T>>,
     pub newtyps: Vec<NewtypeDecl<Id, T>>,
-    pub pragmas: Vec<Attribute<Id, T>>,
+    pub pragmas: Vec<Pragma<Id, T>>,
 }
 
 /// Describe the declared dependencies on other modules within a given module.

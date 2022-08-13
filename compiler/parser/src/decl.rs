@@ -2,13 +2,12 @@ use crate::error::*;
 use crate::stream::*;
 
 use wy_lexer::lexpat;
-use wy_lexer::meta::Placement;
 use wy_lexer::token::*;
-use wy_name::ident::Ident;
-use wy_syntax::attr::Attribute;
+
 use wy_syntax::decl::MethodBody;
 use wy_syntax::decl::Selector;
 use wy_syntax::decl::TypeArgs;
+use wy_syntax::decl::WithClause;
 use wy_syntax::decl::{
     AliasDecl, ClassDecl, DataDecl, Declaration, FixityDecl, FnDecl, InstDecl, MethodDef,
     NewtypeDecl, TypeArg, Variant,
@@ -29,49 +28,8 @@ impl<'t> DeclParser<'t> {
             lexpat!(~[class]) => self.class_decl().map(D::Class),
             lexpat!(~[impl]) => self.inst_decl().map(D::Instance),
             lexpat!(~[newtype]) => self.newtype_decl().map(D::Newtype),
-            lexpat!(~[#]) => todo!(),
             _ => Err(self.expected(LexKind::Keyword)),
         }
-    }
-
-    fn attribute(&mut self) -> Parsed<Attribute<SpannedIdent, SpannedIdent>> {
-        self.eat(Lexeme::Pound)?;
-        let _bang = self.bump_on(Lexeme::Bang);
-        let is_after = self.lexer.get_mode().is_meta_after();
-        self.eat(Lexeme::BrackL)?;
-        let _attr = match self.bump() {
-            Token {
-                lexeme: Lexeme::Meta(pragma),
-                span: _,
-            } => {
-                let pl = if is_after {
-                    Placement::After
-                } else {
-                    Placement::Before
-                };
-                self.pragmas.push((pragma, pl));
-                Ok(())
-            }
-            t @ Token {
-                lexeme: Lexeme::Unknown(_lex),
-                span: _,
-            } => Err(ParseError::InvalidLexeme(
-                self.get_srcloc(),
-                t,
-                self.get_source(),
-            )),
-            Token {
-                lexeme: Lexeme::Eof,
-                span: _,
-            } => Err(ParseError::UnexpectedEof(
-                self.get_srcloc(),
-                self.get_source(),
-            )),
-            t => Err(self.expected(LexKind::from(t.lexeme))),
-        }?;
-        self.eat(Lexeme::BrackR)?;
-        self.lexer.reset_mode();
-        todo!()
     }
 
     fn fixity_decl(&mut self) -> Parsed<FixityDecl> {
@@ -81,8 +39,7 @@ impl<'t> DeclParser<'t> {
         let fixity = Fixity { prec, assoc };
         let infixes = self.with_fixity(fixity)?;
         let from_pragma = false;
-        let end = self.get_pos();
-        let span = Span(start, end);
+        let span = Span(start, self.get_pos());
         Ok(FixityDecl {
             span,
             infixes,
@@ -101,15 +58,17 @@ impl<'t> DeclParser<'t> {
         // <tycon> <tyvar>*
         let tdef = self.ty_simple()?;
         let (vnts, with) = if self.peek_on(Semi) {
-            (vec![], vec![])
+            (vec![], None)
         } else {
             self.eat(Equal)?;
             (self.data_variants()?, self.with_clause()?)
         };
         let end = self.get_pos();
         let span = Span(start, end);
+        let prag = vec![];
         Ok(DataDecl {
             span,
+            prag,
             tdef,
             pred,
             vnts,
@@ -117,18 +76,26 @@ impl<'t> DeclParser<'t> {
         })
     }
 
-    fn with_clause(&mut self) -> Parsed<Vec<SpannedIdent>> {
+    fn with_clause(&mut self) -> Parsed<Option<WithClause<SpannedIdent>>> {
         use Keyword::With;
         use Lexeme::{Comma, ParenL, ParenR};
-        let mut with = vec![];
+        let start = self.get_pos();
         if self.bump_on(With) {
+            let mut with = vec![];
             if self.peek_on(ParenL) {
                 with = self.delimited([ParenL, Comma, ParenR], Self::expect_upper)?
             } else {
                 with.push(self.expect_upper()?);
             }
+            let span = Span(start, self.get_pos());
+            Ok(Some(WithClause {
+                span,
+                names: with,
+                from_pragma: false,
+            }))
+        } else {
+            Ok(None)
         }
-        Ok(with)
     }
 
     fn function_decl(&mut self) -> Parsed<FnDecl> {
@@ -155,8 +122,10 @@ impl<'t> DeclParser<'t> {
         }
         let end = self.get_pos();
         let span = Span(start, end);
+        let prag = vec![];
         Ok(FnDecl {
             span,
+            prag,
             name,
             defs,
             sign,
@@ -173,8 +142,10 @@ impl<'t> DeclParser<'t> {
         let sign = self.ty_node()?;
         let end = self.get_pos();
         let span = Span(start, end);
+        let prag = vec![];
         Ok(AliasDecl {
             span,
+            prag,
             ldef,
             tipo: sign,
         })
@@ -188,6 +159,7 @@ impl<'t> DeclParser<'t> {
         self.eat(Lexeme::CurlyL)?;
         let mut defs = vec![];
         while !self.peek_on(Lexeme::CurlyR) {
+            let mut prag = self.attr_before()?;
             let start = self.get_pos();
             self.ignore(Keyword::Def);
             let name = self.binder_name()?;
@@ -198,8 +170,11 @@ impl<'t> DeclParser<'t> {
                 MethodBody::Default(self.match_arms()?)
             };
             let span = Span(start, self.get_pos());
+            prag.extend(self.attr_after()?);
+
             defs.push(MethodDef {
                 span,
+                prag,
                 name,
                 annt,
                 body,
@@ -209,8 +184,10 @@ impl<'t> DeclParser<'t> {
         self.eat(Lexeme::CurlyR)?;
         let end = self.get_pos();
         let span = Span(start, end);
+        let prag = vec![];
         Ok(ClassDecl {
             span,
+            prag,
             cdef,
             pred,
             defs,
@@ -233,8 +210,10 @@ impl<'t> DeclParser<'t> {
         self.eat(Lexeme::CurlyR)?;
         let end = self.get_pos();
         let span = Span(start, end);
+        let prag = vec![];
         Ok(InstDecl {
             span,
+            prag,
             name,
             pred,
             defs,
@@ -243,8 +222,8 @@ impl<'t> DeclParser<'t> {
     }
 
     fn newtype_decl(&mut self) -> Parsed<NewtypeDecl<SpannedIdent, SpannedIdent>> {
-        use Keyword::{Newtype, With};
-        use Lexeme::{Comma, CurlyL, CurlyR, Equal, ParenL, ParenR};
+        use Keyword::Newtype;
+        use Lexeme::{CurlyL, CurlyR, Equal};
         let start = self.get_pos();
         self.eat(Newtype)?;
         let tdef = self.ty_simple()?;
@@ -262,19 +241,13 @@ impl<'t> DeclParser<'t> {
                 ty
             }
         };
-        let with = if self.bump_on(With) {
-            if self.peek_on(ParenL) {
-                self.delimited([ParenL, Comma, ParenR], Self::expect_upper)?
-            } else {
-                vec![self.expect_upper()?]
-            }
-        } else {
-            vec![]
-        };
+        let with = self.with_clause()?;
         let end = self.get_pos();
         let span = Span(start, end);
+        let prag = vec![];
         Ok(NewtypeDecl {
             span,
+            prag,
             tdef,
             ctor,
             narg,
@@ -291,7 +264,9 @@ impl<'t> DeclParser<'t> {
 
     fn data_variant(&mut self) -> Parsed<Variant> {
         self.ignore(Lexeme::Pipe);
+        let start = self.get_pos();
         let name = self.expect_upper()?;
+        // let start = name.span().start();
         let args = if self.peek_on(Lexeme::CurlyL) {
             self.delimited(
                 [Lexeme::CurlyL, Lexeme::Comma, Lexeme::CurlyR],
@@ -302,7 +277,14 @@ impl<'t> DeclParser<'t> {
             self.many_while_on(Lexeme::begins_ty, Self::ty_atom)
                 .map(TypeArgs::Curried)?
         };
-        Ok(Variant { name, args })
+        let span = Span(start, self.get_pos());
+        let prag = vec![];
+        Ok(Variant {
+            name,
+            span,
+            prag,
+            args,
+        })
     }
 
     fn selector(&mut self) -> Parsed<Selector> {
@@ -319,6 +301,7 @@ mod test {
     use wy_failure::diff::diff_assert_eq;
     use wy_intern::Symbol;
     use wy_lexer::Literal;
+    use wy_name::Ident;
     use wy_syntax::{
         expr::Expression,
         pattern::Pattern,
@@ -330,10 +313,32 @@ mod test {
     use super::*;
 
     #[test]
+    fn inspect_data_decl_variant_spans() {
+        let src =
+            "data Foo a b = Foo a b | Bar a (Foo a b) | Baz { foo_a :: a, foo_b :: b } with Eq";
+        let data_decl = Parser::from_str(src).data_decl().unwrap();
+        println!("src[data_decl.span] = `{}`", &src[data_decl.span.range()]);
+        data_decl
+            .variants_iter()
+            .enumerate()
+            .for_each(|(n, vnt)| println!("src[(variant {n}).span] = `{}`", &src[vnt.span.range()]))
+    }
+
+    #[test]
     fn test_data_decl() {
         let src =
             "data Foo a b = Foo a b | Bar a (Foo a b) | Baz { foo_a :: a, foo_b :: b } with Eq";
-        println!("src[0..78] = `{}`", &src[0..78]);
+        let spans = {
+            let base = BytePos::strlen("data Foo a b = ");
+            let sep = BytePos::strlen("| ");
+            let dx0 = BytePos::strlen("Foo a b ");
+            let dx1 = BytePos::strlen("Bar a (Foo a b) ");
+            let dx2 = BytePos::strlen("Baz { foo_a :: a, foo_b :: b }");
+            let span_1 = Span(base, base + dx0);
+            let span_2 = Span(span_1.end() + sep, span_1.end() + sep + dx1);
+            let span_3 = Span(span_2.end() + sep, span_2.end() + sep + dx2);
+            [span_1, span_2, span_3]
+        };
         let decl = Parser::from_str(src)
             .data_decl()
             .map(|ty| {
@@ -348,15 +353,20 @@ mod test {
         let expected = {
             DataDecl {
                 span: Span::of_str(src),
+                prag: vec![],
                 tdef: SimpleType(foo, vec![a, b]),
                 pred: vec![],
                 vnts: vec![
                     Variant {
                         name: foo,
+                        span: spans[0],
+                        prag: vec![],
                         args: TypeArgs::Curried(vec![Type::Var(a), Type::Var(b)]),
                     },
                     Variant {
                         name: bar,
+                        span: spans[1],
+                        prag: vec![],
                         args: TypeArgs::Curried(vec![
                             Type::Var(a),
                             Type::Con(Con::Named(foo), vec![Type::Var(a), Type::Var(b)]),
@@ -364,6 +374,8 @@ mod test {
                     },
                     Variant {
                         name: baz,
+                        span: spans[2],
+                        prag: vec![],
                         args: TypeArgs::Record(vec![
                             Selector {
                                 name: foo_a,
@@ -376,7 +388,15 @@ mod test {
                         ]),
                     },
                 ],
-                with: vec![eq],
+                with: {
+                    let start_pos = BytePos::strlen("data Foo a b = Foo a b | Bar a (Foo a b) | Baz { foo_a :: a, foo_b :: b } ");
+                    let pos_diff = BytePos::strlen("with Eq");
+                    Some(WithClause {
+                        span: Span(start_pos, start_pos + pos_diff),
+                        names: vec![eq],
+                        from_pragma: false,
+                    })
+                },
             }
         };
         diff_assert_eq!(decl, expected)
@@ -406,6 +426,7 @@ impl |Eq a| Eq [a] {
         let expected = {
             InstDecl {
                 span: Span::of_str(src.trim_end()),
+                prag: vec![],
                 name: cl_eq,
                 tipo: Type::Vec(Box::new(Type::Var(a))),
                 pred: vec![Predicate {
@@ -470,6 +491,7 @@ impl |Eq a| Eq [a] {
             Symbol::intern_many(["Parser", "a", "parse", "String"]);
         let expected = NewtypeDecl {
             span: Span::of_str(src),
+            prag: vec![],
             tdef: SimpleType(Ident::Upper(parser_ty), vec![Ident::Lower(a)]),
             ctor: Ident::Upper(parser_ty),
             narg: TypeArg::Selector(Selector {
@@ -482,7 +504,7 @@ impl |Eq a| Eq [a] {
                     ]),
                 ),
             }),
-            with: vec![],
+            with: None,
         };
         assert_eq!(parsed, expected)
     }
@@ -540,6 +562,7 @@ fn some_record_function
             .unwrap();
         let expected = FnDecl {
             span: Span::of_str(src),
+            prag: vec![],
             name: some_record_function,
             sign: Signature::Implicit,
             defs: vec![
