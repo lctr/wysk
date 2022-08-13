@@ -23,6 +23,22 @@ impl SourceMap {
             .unwrap_or(BytePos::ZERO)
     }
 
+    pub fn has_file<P: AsRef<Path>>(&self, p: P) -> bool {
+        let path = p.as_ref();
+        self.iter_files().any(|file| file.path.path() == path)
+    }
+
+    pub fn file_init_pos<P: AsRef<Path>>(&self, p: P) -> Option<BytePos> {
+        let path = p.as_ref();
+        self.iter_files().find_map(|file| {
+            if file.path.path() == path && !file.rows.is_empty() {
+                Some(file.start_pos())
+            } else {
+                None
+            }
+        })
+    }
+
     pub fn add_from_filepath(&mut self, filepath: FilePath) -> IoResult<Arc<File>> {
         if let Some(file) = self.find_file_with_path(&filepath) {
             return Ok(file.clone());
@@ -156,6 +172,11 @@ impl File {
 
     pub fn src_path(&self) -> &FilePath {
         &self.path
+    }
+
+    pub fn start_pos(&self) -> BytePos {
+        assert!(!self.rows.is_empty());
+        self.rows[0]
     }
 
     pub fn row_at(&self, pos: BytePos) -> Row {
