@@ -393,8 +393,8 @@ mod tests {
 
     #[test]
     fn test_pat_dupe_binders() {
-        use crate::Tv;
-        use crate::Type;
+        use crate::tipo::Tv;
+        use crate::tipo::Type;
         use wy_name::ident::Ident::{self, Lower};
         use Pattern::*;
         let [a, b, c, d, e, f, g] =
