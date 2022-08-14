@@ -7,12 +7,13 @@ edition = "2021"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
-toml = "*" 
+toml = "0.5.9"
+
 wy_common = { path = "../common" }
 wy_sources = { path = "../sources" }
 wy_parser = { path = "../parser" }
 wy_syntax = { path = "../syntax" }
-wy_check = { path = "../check" }
+wy_semantics = { path = "../semantics" }
 wy_intern = { path = "../intern" }
 wy_name = { path = "../name" }
 wy_span = { path = "../span" }
