@@ -285,7 +285,7 @@ impl<'t> TypeParser<'t> {
                 }
             } else {
                 let var = Type::Var(Spanned(
-                    Ident::Lower(Symbol::from_str("a")),
+                    Ident::Lower(Symbol::for_str("a")),
                     Span(start, end),
                 ));
                 Ok(Type::Vec(Box::new(var)))

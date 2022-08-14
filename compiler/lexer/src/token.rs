@@ -58,13 +58,13 @@ impl PartialEq<Token> for Keyword {
 
 impl PartialEq<Lexeme> for Attr {
     fn eq(&self, other: &Lexeme) -> bool {
-        matches!(other.symbol(), Some(s) if s == Symbol::from_str(self.as_str()))
+        matches!(other.symbol(), Some(s) if s == Symbol::for_str(self.as_str()))
     }
 }
 
 impl PartialEq<Attr> for Lexeme {
     fn eq(&self, other: &Attr) -> bool {
-        matches!(self.symbol(), Some(s) if s == Symbol::from_str(other.as_str()))
+        matches!(self.symbol(), Some(s) if s == Symbol::for_str(other.as_str()))
     }
 }
 

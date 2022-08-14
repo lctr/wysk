@@ -56,7 +56,7 @@ impl Symbol {
     }
 
     #[inline]
-    pub fn from_str(s: &str) -> Symbol {
+    pub fn for_str(s: &str) -> Symbol {
         intern_once(s)
     }
 
@@ -100,7 +100,7 @@ impl FromIterator<char> for Symbol {
 impl From<&str> for Symbol {
     #[inline]
     fn from(s: &str) -> Self {
-        Self::from_str(s)
+        Self::for_str(s)
     }
 }
 
@@ -174,31 +174,31 @@ impl Symbolic for Symbol {
 
 impl Symbolic for str {
     fn get_symbol(&self) -> Symbol {
-        Symbol::from_str(self)
+        Symbol::for_str(self)
     }
 }
 
 impl Symbolic for &str {
     fn get_symbol(&self) -> Symbol {
-        Symbol::from_str(*self)
+        Symbol::for_str(*self)
     }
 }
 
 impl Symbolic for String {
     fn get_symbol(&self) -> Symbol {
-        Symbol::from_str(self.as_str())
+        Symbol::for_str(self.as_str())
     }
 }
 
 impl Symbolic for std::borrow::Cow<'_, str> {
     fn get_symbol(&self) -> Symbol {
-        Symbol::from_str(self.as_ref())
+        Symbol::for_str(self.as_ref())
     }
 }
 
 impl Symbolic for std::path::Path {
     fn get_symbol(&self) -> Symbol {
-        Symbol::from_str(self.to_string_lossy().as_ref())
+        Symbol::for_str(self.to_string_lossy().as_ref())
     }
 }
 
