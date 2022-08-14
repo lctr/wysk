@@ -1,7 +1,7 @@
 use std::{iter::Peekable, str::Chars};
 
 use wy_intern::symbol::Symbol;
-use wy_span::{BytePos, Coord, Location, Position, Span, WithLoc, WithSpan};
+use wy_span::{BytePos, Coord, Position, Region, Span, WithLoc, WithSpan};
 
 use crate::comment::Comment;
 use crate::meta::Placement;
@@ -107,8 +107,8 @@ impl<'t> Source<'t> {
 
     /// Given an initial `Loc` *start*, returns the `Location` generated
     /// from the *start* to the current `Loc`.
-    pub fn location_from(&self, start: Coord) -> Location {
-        Location {
+    pub fn location_from(&self, start: Coord) -> Region {
+        Region {
             start,
             end: self.get_coord(),
         }
@@ -116,7 +116,7 @@ impl<'t> Source<'t> {
 
     pub fn position_from(&self, start: (BytePos, Coord)) -> Position {
         let span = Span(start.0, self.get_pos());
-        let location = Location {
+        let location = Region {
             start: start.1,
             end: self.get_coord(),
         };
@@ -135,7 +135,7 @@ impl<'t> Source<'t> {
         }
         Position::new(
             Span(start_pos, self.get_pos()),
-            Location {
+            Region {
                 start: start_loc,
                 end: self.get_coord(),
             },
@@ -493,8 +493,8 @@ impl<'t> Lexer<'t> {
         Span(start, self.get_pos())
     }
 
-    pub fn loc_from(&self, start: Coord) -> Location {
-        Location {
+    pub fn loc_from(&self, start: Coord) -> Region {
+        Region {
             start,
             end: self.get_coord(),
         }
@@ -639,7 +639,7 @@ mod tests {
         assert_eq!(span, Span(one, one + "his"));
         assert_eq!(
             loc,
-            Location {
+            Region {
                 start: Coord {
                     row: Row::new(1),
                     col: Col::new(1)

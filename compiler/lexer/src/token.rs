@@ -4,7 +4,7 @@ use serde::Serialize;
 use wy_common::ref_lifting_strenum;
 use wy_intern::symbol::{self, Symbol};
 use wy_span::Dummy;
-pub use wy_span::{BytePos, Col, Coord, Located, Location, Row, Span, Spanned, WithLoc, WithSpan};
+pub use wy_span::{BytePos, Col, Coord, Located, Region, Row, Span, Spanned, WithLoc, WithSpan};
 
 use crate::literal::*;
 use crate::meta::*;
