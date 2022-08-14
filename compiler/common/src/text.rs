@@ -80,6 +80,72 @@ pub fn capitalize_first(s: impl AsRef<str>) -> String {
     buf
 }
 
+/// Compares two strings for equality while ignoring the ASCII case of
+/// the *first* character in each respective string. Note that this
+/// operation may not necessarily be cheap as it performs unicode NFC
+/// normalization on both strings (but does *not* allocate any
+/// `String`s); the function similarly named (without the `nfc`
+/// suffix) may be preferred otherwise.
+pub fn cmp_str_tails_nfc<S: AsRef<str>, T: AsRef<str>>(left: S, right: T) -> bool {
+    use unicode_normalization::*;
+    let sa = left.as_ref();
+    let sb = right.as_ref();
+    let mut left_chars = sa.nfc();
+    let mut right_chars = sb.nfc();
+    if left_chars.clone().count() != right_chars.clone().count() {
+        return false;
+    }
+    left_chars.next();
+    right_chars.next();
+    left_chars.zip(right_chars).all(|(lc, rc)| lc == rc)
+}
+
+pub fn cmp_str_tails<S: AsRef<str>, T: AsRef<str>>(s: S, t: T) -> bool {
+    let s = s.as_ref();
+    let t = t.as_ref();
+    if s.len() != t.len() {
+        false
+    } else {
+        let mut s = s.char_indices();
+        let mut t = t.char_indices();
+        s.next();
+        t.next();
+        match (s.next(), t.next()) {
+            // both are empty, so trivially tails are equal
+            (None, None) => true,
+            // ignore cmp on first char within char boundary, ensure
+            // only that char boundaries match
+            (Some((i, _ci)), Some((j, _cj))) if i == j => s
+                .zip(t)
+                .all(|((s_idx, s_c), (t_idx, t_c))| s_idx == t_idx && s_c == t_c),
+            // initial char boundaries don't match, so
+            // case we know they're not equal since the char indices
+            // would be out of sync and hence not composed of the same
+            // bytes in the same order (regardless of whether they are
+            // equilengthed, e.g., 'ébép' and 'ébép' are of the same
+            // length, but the first has 'e' + '\u+301' and 'é', while the
+            // second has 'é' and 'e' + '\u+301')
+            _ => false,
+        }
+    }
+}
+
+#[test]
+fn test_cmp_str_tails() {
+    let left = "ébép";
+    let right = "ébép";
+    assert!(!cmp_str_tails(left, right))
+}
+
+/// http://www.unicode.org/reports/tr31/
+pub fn is_xid_start(c: char) -> bool {
+    unicode_xid::UnicodeXID::is_xid_start(c)
+}
+
+pub fn is_xid_continue(c: char) -> bool {
+    unicode_xid::UnicodeXID::is_xid_continue(c)
+}
+
 #[test]
 fn test_capitalize_first() {
     assert_eq!(String::from("Function"), capitalize_first("function"))
