@@ -32,6 +32,9 @@ use fixity::*;
 use pattern::*;
 use stmt::*;
 
+#[allow(unused)]
+use node::*;
+
 use wy_span::{Spanned, Unspan};
 
 pub type SpannedIdent = Spanned<Ident>;
