@@ -1,12 +1,10 @@
 use serde::{Deserialize, Serialize};
 use wy_common::{
     deque,
-    functor::{Functor, MapFst, MapSnd},
     variant_preds, Deque, Set,
 };
 use wy_lexer::Literal;
 use wy_name::ident::{Ident, Identifier};
-use wy_span::Spanned;
 
 use crate::{decl::Arity, record::Record, stmt::Alternative, tipo::Type, Binding, SpannedIdent};
 
@@ -142,46 +140,6 @@ impl<Id, V> Section<Id, V> {
     }
 }
 
-impl<Id, V, X> MapFst<Id, X> for Section<Id, V> {
-    type WrapFst = Section<X, V>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        match self {
-            Section::Prefix { prefix, right } => Section::Prefix {
-                prefix: f.apply(prefix),
-                right: Box::new(right.map_fst(f)),
-            },
-            Section::Suffix { left, suffix } => Section::Suffix {
-                suffix: f.apply(suffix),
-                left: Box::new(left.map_fst(f)),
-            },
-        }
-    }
-}
-
-impl<Id, V, X> MapSnd<V, X> for Section<Id, V> {
-    type WrapSnd = Section<Id, X>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(V) -> X,
-    {
-        match self {
-            Section::Prefix { prefix, right } => Section::Prefix {
-                prefix,
-                right: Box::new(right.map_snd(f)),
-            },
-            Section::Suffix { left, suffix } => Section::Suffix {
-                suffix,
-                left: Box::new(left.map_snd(f)),
-            },
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Range<Id, V> {
     /// An infinite sequence with a starting point and no endpoint.
@@ -267,42 +225,7 @@ impl<Id, V> Range<Id, V> {
     }
 }
 
-impl<Id, V, X> MapFst<Id, X> for Range<Id, V> {
-    type WrapFst = Range<X, V>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        match self {
-            Range::From(x) => Range::From(x.map_fst(f)),
-            Range::FromThen([x, y]) => Range::FromThen([x.map_fst(f), y.map_fst(f)]),
-            Range::FromTo([x, y]) => Range::FromTo([x.map_fst(f), y.map_fst(f)]),
-            Range::FromThenTo([x, y, z]) => {
-                Range::FromThenTo([x.map_fst(f), y.map_fst(f), z.map_fst(f)])
-            }
-        }
-    }
-}
-impl<Id, V, X> MapSnd<V, X> for Range<Id, V> {
-    type WrapSnd = Range<Id, X>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(V) -> X,
-    {
-        match self {
-            Range::From(x) => Range::From(x.map_snd(f)),
-            Range::FromThen([x, y]) => Range::FromThen([x.map_snd(f), y.map_snd(f)]),
-            Range::FromTo([x, y]) => Range::FromTo([x.map_snd(f), y.map_snd(f)]),
-            Range::FromThenTo([x, y, z]) => {
-                Range::FromThenTo([x.map_snd(f), y.map_snd(f), z.map_snd(f)])
-            }
-        }
-    }
-}
-
-pub type RawExpression = Expression<Spanned<Ident>, Spanned<Ident>>;
+pub type RawExpression = Expression<SpannedIdent, SpannedIdent>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Expression<Id = SpannedIdent, V = SpannedIdent> {
@@ -422,100 +345,6 @@ variant_preds! {
 variant_preds! { |V| Expression[Ident, V]
     | is_list_cons => Infix { infix, ..} [if infix.is_cons_sign()]
 
-}
-
-impl<Id, V, X> MapFst<Id, X> for Expression<Id, V> {
-    type WrapFst = Expression<X, V>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        match self {
-            Expression::Ident(id) => Expression::Ident(f.apply(id)),
-            Expression::Path(head, tail) => Expression::Path(f.apply(head), Functor::fmap(tail, f)),
-            Expression::Lit(lit) => Expression::Lit(lit),
-            Expression::Neg(exp) => Expression::Neg(Box::new(exp.map_fst(f))),
-            Expression::Infix { infix, left, right } => Expression::Infix {
-                infix: f.apply(infix),
-                left: Box::new(left.map_fst(f)),
-                right: Box::new(right.map_fst(f)),
-            },
-            Expression::Section(sec) => Expression::Section(sec.map_fst(f)),
-            Expression::Tuple(xs) => Expression::Tuple(xs.map_fst(f)),
-            Expression::Array(xs) => Expression::Array(xs.map_fst(f)),
-            Expression::List(x, stmts) => {
-                Expression::List(Box::new(x.map_fst(f)), stmts.map_fst(f))
-            }
-            Expression::Dict(rec) => Expression::Dict(rec.map_fst(f)),
-            Expression::Lambda(pat, body) => {
-                Expression::Lambda(pat.map_fst(f), Box::new(body.map_fst(f)))
-            }
-            Expression::Let(bs, body) => Expression::Let(bs.map_fst(f), Box::new(body.map_fst(f))),
-            Expression::App(fun, arg) => {
-                Expression::App(Box::new(fun.map_fst(f)), Box::new(arg.map_fst(f)))
-            }
-            Expression::Cond(xyz) => {
-                let [x, y, z] = *xyz;
-                let x = x.map_fst(f);
-                let y = y.map_fst(f);
-                let z = z.map_fst(f);
-                Expression::Cond(Box::new([x, y, z]))
-            }
-            Expression::Case(e, a) => Expression::Case(Box::new(e.map_fst(f)), a.map_fst(f)),
-            Expression::Cast(e, ty) => Expression::Cast(Box::new(e.map_fst(f)), ty.map_fst(f)),
-            Expression::Do(stmts, e) => Expression::Do(stmts.map_fst(f), Box::new(e.map_fst(f))),
-            Expression::Range(rng) => Expression::Range(Box::new(rng.map_fst(f))),
-            Expression::Group(e) => Expression::Group(Box::new(e.map_fst(f))),
-        }
-    }
-}
-
-impl<Id, V, X> MapSnd<V, X> for Expression<Id, V> {
-    type WrapSnd = Expression<Id, X>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(V) -> X,
-    {
-        match self {
-            Expression::Ident(id) => Expression::Ident(id),
-            Expression::Path(head, tail) => Expression::Path(head, tail),
-            Expression::Lit(lit) => Expression::Lit(lit),
-            Expression::Neg(exp) => Expression::Neg(Box::new(exp.map_snd(f))),
-            Expression::Infix { infix, left, right } => Expression::Infix {
-                infix,
-                left: Box::new(left.map_snd(f)),
-                right: Box::new(right.map_snd(f)),
-            },
-            Expression::Section(sec) => Expression::Section(sec.map_snd(f)),
-            Expression::Tuple(xs) => Expression::Tuple(xs.map_snd(f)),
-            Expression::Array(xs) => Expression::Array(xs.map_snd(f)),
-            Expression::List(x, stmts) => {
-                Expression::List(Box::new(x.map_snd(f)), stmts.map_snd(f))
-            }
-            Expression::Dict(rec) => Expression::Dict(rec.map_snd(f)),
-            Expression::Lambda(pat, body) => {
-                Expression::Lambda(pat.map_snd(f), Box::new(body.map_snd(f)))
-            }
-            Expression::Let(bs, body) => Expression::Let(bs.map_snd(f), Box::new(body.map_snd(f))),
-            Expression::App(fun, arg) => {
-                Expression::App(Box::new(fun.map_snd(f)), Box::new(arg.map_snd(f)))
-            }
-            Expression::Cond(xyz) => {
-                let [x, y, z] = *xyz;
-                let x = x.map_snd(f);
-                let y = y.map_snd(f);
-                let z = z.map_snd(f);
-                Expression::Cond(Box::new([x, y, z]))
-            }
-            Expression::Case(e, a) => Expression::Case(Box::new(e.map_snd(f)), a.map_snd(f)),
-            Expression::Cast(e, ty) => Expression::Cast(Box::new(e.map_snd(f)), ty.map_snd(f)),
-            Expression::Do(stmts, e) => Expression::Do(stmts.map_snd(f), Box::new(e.map_snd(f))),
-            Expression::Range(rng) => Expression::Range(Box::new(rng.map_snd(f))),
-            Expression::Group(e) => Expression::Group(Box::new(e.map_snd(f))),
-        }
-    }
 }
 
 impl<Id, V> Expression<Id, V> {

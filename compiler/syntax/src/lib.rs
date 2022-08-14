@@ -1,7 +1,7 @@
 use attr::Pragma;
 use wy_common::{
     deque,
-    functor::{MapFst, MapSnd, MapThrd},
+    functor::{MapFst, MapSnd},
     struct_field_iters, HashMap,
 };
 use wy_failure::SrcPath;
@@ -18,6 +18,7 @@ pub mod attr;
 pub mod decl;
 pub mod expr;
 pub mod fixity;
+pub mod node;
 pub mod pattern;
 pub mod record;
 pub mod stmt;
@@ -121,74 +122,6 @@ impl<Id, T, U> Program<Id, T, U> {
     }
 }
 
-impl<Id, T, U, A> MapFst<Id, A> for Program<Id, T, U>
-where
-    Id: Eq + std::hash::Hash,
-    A: Eq + std::hash::Hash,
-{
-    type WrapFst = Program<A, T, U>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> A,
-    {
-        let Program {
-            module,
-            fixities,
-            comments,
-        } = self;
-        let module = module.map_fst(f);
-        let fixities = fixities.into_iter().map(|pair| pair.map_fst(f)).collect();
-        Program {
-            module,
-            fixities,
-            comments,
-        }
-    }
-}
-
-impl<Id, U, T, A> MapSnd<T, A> for Program<Id, T, U> {
-    type WrapSnd = Program<Id, A, U>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(T) -> A,
-    {
-        let Program {
-            module,
-            fixities,
-            comments,
-        } = self;
-        let module = module.map_snd(f);
-        Program {
-            module,
-            fixities,
-            comments,
-        }
-    }
-}
-
-impl<Id, U, T, A> MapThrd<U, A> for Program<Id, T, U> {
-    type WrapThrd = Program<Id, T, A>;
-
-    fn map_thrd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapThrd
-    where
-        F: FnMut(U) -> A,
-    {
-        let Program {
-            module,
-            fixities,
-            comments,
-        } = self;
-        let module = module.map_thrd(f);
-        Program {
-            module,
-            fixities,
-            comments,
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Module<Id = Ident, T = Ident, P = SrcPath> {
     pub srcpath: P,
@@ -215,134 +148,6 @@ struct_field_iters! {
     | aliases => aliases_iter :: AliasDecl<Spanned<Id>, Spanned<T>>
     | newtyps => newtyps_iter :: NewtypeDecl<Spanned<Id>, Spanned<T>>
     | pragmas => pragmas_iter :: Pragma<Spanned<Id>, Spanned<T>>
-}
-
-impl<Id, T, U, X> MapFst<Id, X> for Module<Id, T, U> {
-    type WrapFst = Module<X, T, U>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        let Module {
-            srcpath: uid,
-            modname,
-            imports,
-            infixes,
-            datatys,
-            classes,
-            implems,
-            fundefs,
-            aliases,
-            newtyps,
-            pragmas,
-        } = self;
-        let modname = modname.mapf(f);
-        let f = &mut wy_common::functor::Func::Fresh(|spanned: Spanned<Id>| spanned.mapf(f));
-        let imports = imports.into_iter().map(|i| i.mapf(f)).collect();
-        let infixes = infixes.into_iter().map(|d| d.mapf(f)).collect();
-        let datatys = datatys.map_fst(f);
-        let classes = classes.map_fst(f);
-        let implems = implems.map_fst(f);
-        let fundefs = fundefs.map_fst(f);
-        let aliases = aliases.map_fst(f);
-        let newtyps = newtyps.map_fst(f);
-        let pragmas = pragmas.map_fst(f);
-        Module {
-            srcpath: uid,
-            modname,
-            imports,
-            infixes,
-            datatys,
-            classes,
-            implems,
-            fundefs,
-            aliases,
-            newtyps,
-            pragmas,
-        }
-    }
-}
-
-impl<Id, T, U, X> MapThrd<U, X> for Module<Id, T, U> {
-    type WrapThrd = Module<Id, T, X>;
-
-    fn map_thrd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapThrd
-    where
-        F: FnMut(U) -> X,
-    {
-        let Module {
-            srcpath: uid,
-            modname,
-            imports,
-            infixes,
-            datatys,
-            classes,
-            implems,
-            fundefs,
-            aliases,
-            newtyps,
-            pragmas,
-        } = self;
-        let uid = f.apply(uid);
-        Module {
-            srcpath: uid,
-            modname,
-            imports,
-            infixes,
-            datatys,
-            classes,
-            implems,
-            fundefs,
-            aliases,
-            newtyps,
-            pragmas,
-        }
-    }
-}
-
-impl<Id, T, U, X> MapSnd<T, X> for Module<Id, T, U> {
-    type WrapSnd = Module<Id, X, U>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(T) -> X,
-    {
-        let Module {
-            srcpath,
-            modname,
-            imports,
-            infixes,
-            datatys,
-            classes,
-            implems,
-            fundefs,
-            aliases,
-            newtyps,
-            pragmas,
-        } = self;
-        let f = &mut wy_common::functor::Func::Fresh(|spanned: Spanned<T>| spanned.mapf(f));
-        let datatys = datatys.map_snd(f);
-        let classes = classes.map_snd(f);
-        let implems = implems.map_snd(f);
-        let fundefs = fundefs.map_snd(f);
-        let aliases = aliases.map_snd(f);
-        let newtyps = newtyps.map_snd(f);
-        let pragmas = pragmas.map_snd(f);
-        Module {
-            srcpath,
-            modname,
-            imports,
-            infixes,
-            datatys,
-            classes,
-            implems,
-            fundefs,
-            aliases,
-            newtyps,
-            pragmas,
-        }
-    }
 }
 
 impl<U, T> Default for Module<Ident, T, U>

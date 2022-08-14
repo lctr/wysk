@@ -1,9 +1,5 @@
 use serde::{Deserialize, Serialize};
-use wy_common::{
-    functor::{MapFst, MapSnd},
-    iter::Hashable,
-    HashMap, Set,
-};
+use wy_common::{iter::Hashable, HashMap, Set};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Record<Id, V> {
@@ -175,40 +171,6 @@ impl<Id, V> Record<Id, V> {
     }
 }
 
-impl<Id, X, V> MapFst<Id, X> for Record<Id, V>
-where
-    V: MapFst<Id, X>,
-{
-    type WrapFst = Record<X, V::WrapFst>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        match self {
-            Record::Anon(fields) => Record::Anon(fields.map_fst(f)),
-            Record::Data(con, fields) => Record::Data(f.apply(con), fields.map_fst(f)),
-        }
-    }
-}
-
-impl<Id, X, V, T> MapSnd<T, X> for Record<Id, V>
-where
-    V: MapSnd<T, X>,
-{
-    type WrapSnd = Record<Id, V::WrapSnd>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(T) -> X,
-    {
-        match self {
-            Record::Anon(fields) => Record::Anon(fields.map_snd(f)),
-            Record::Data(con, fields) => Record::Data(con, fields.map_snd(f)),
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Field<Id, V> {
     /// Primarily used in partial records to indicate that a given record's list
@@ -295,60 +257,6 @@ impl<Id, V> Field<Id, V> {
                 (a, None) => Field::Key(a),
                 (a, Some(b)) => Field::Entry(a, b),
             },
-        }
-    }
-}
-
-impl<Id, V, X> MapFst<Id, X> for Field<Id, V>
-where
-    V: MapFst<Id, X>,
-{
-    type WrapFst = Field<X, V::WrapFst>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        match self {
-            Field::Rest => Field::Rest,
-            Field::Key(k) => Field::Key(f.apply(k)),
-            Field::Entry(k, v) => Field::Entry(f.apply(k), v.map_fst(f)),
-        }
-    }
-}
-
-impl<'a, Id, V, X> MapFst<&'a Id, X> for &'a Field<Id, V>
-where
-    &'a V: MapFst<&'a Id, X>,
-{
-    type WrapFst = Field<X, <&'a V as MapFst<&'a Id, X>>::WrapFst>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(&'a Id) -> X,
-    {
-        match self {
-            Field::Rest => Field::Rest,
-            Field::Key(id) => Field::Key(f.apply(id)),
-            Field::Entry(id, val) => Field::Entry(f.apply(id), val.map_fst(f)),
-        }
-    }
-}
-
-impl<Id, V, X, T> MapSnd<T, X> for Field<Id, V>
-where
-    V: MapSnd<T, X>,
-{
-    type WrapSnd = Field<Id, V::WrapSnd>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(T) -> X,
-    {
-        match self {
-            Field::Rest => Field::Rest,
-            Field::Key(id) => Field::Key(id),
-            Field::Entry(id, v) => Field::Entry(id, v.map_snd(f)),
         }
     }
 }

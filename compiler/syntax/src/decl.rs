@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use wy_common::functor::{Functor, MapFst, MapSnd};
+use wy_common::functor::Functor;
 
 pub use wy_lexer::{
     comment::{self, Comment},
@@ -163,67 +163,6 @@ wy_common::struct_field_iters! {
     | vnts => variants_iter :: Variant<Id, V>
 }
 
-impl<Id, V, X> MapFst<Id, X> for DataDecl<Id, V> {
-    type WrapFst = DataDecl<X, V>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        let DataDecl {
-            span,
-            prag,
-            tdef,
-            pred,
-            vnts,
-            with,
-        } = self;
-        let prag = prag.into_iter().map(|prag| prag.map_fst(f)).collect();
-        let tdef = tdef.map_fst(f);
-        let pred = pred.map_fst(f);
-        let vnts = vnts.map_fst(f);
-        let with = with.map(|w| w.fmap(f));
-        DataDecl {
-            span,
-            prag,
-            tdef,
-            pred,
-            vnts,
-            with,
-        }
-    }
-}
-
-impl<Id, V, X> MapSnd<V, X> for DataDecl<Id, V> {
-    type WrapSnd = DataDecl<Id, X>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(V) -> X,
-    {
-        let DataDecl {
-            span,
-            prag,
-            tdef,
-            pred,
-            vnts,
-            with,
-        } = self;
-        let prag = prag.into_iter().map(|prag| prag.map_snd(f)).collect();
-        let tdef = tdef.map_snd(f);
-        let pred = pred.map_snd(f);
-        let vnts = vnts.map_snd(f);
-        DataDecl {
-            span,
-            prag,
-            tdef,
-            pred,
-            vnts,
-            with,
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WithClause<Id = SpannedIdent> {
     pub span: Span,
@@ -236,53 +175,10 @@ wy_common::struct_field_iters! {
     | names => names_iter :: Id
 }
 
-impl<Id, X> Functor<Id, X> for WithClause<Id> {
-    type Wrapper = WithClause<X>;
-
-    fn fmap<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::Wrapper
-    where
-        F: FnMut(Id) -> X,
-    {
-        WithClause {
-            span: self.span,
-            names: self.names.fmap(f),
-            from_pragma: self.from_pragma,
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Selector<Id = SpannedIdent, V = SpannedIdent> {
     pub name: Id,
     pub tipo: Type<Id, V>,
-}
-
-impl<Id, V, X> MapFst<Id, X> for Selector<Id, V> {
-    type WrapFst = Selector<X, V>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        Selector {
-            name: f.apply(self.name),
-            tipo: self.tipo.map_fst(f),
-        }
-    }
-}
-
-impl<Id, V, X> MapSnd<V, X> for Selector<Id, V> {
-    type WrapSnd = Selector<Id, X>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(V) -> X,
-    {
-        Selector {
-            name: self.name,
-            tipo: self.tipo.map_snd(f),
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -301,36 +197,6 @@ wy_common::variant_preds! {
     |Id, V| TypeArg[Id, V]
     | is_type => Type(_)
     | is_selector => Selector(..)
-}
-
-impl<Id, V, X> MapFst<Id, X> for TypeArg<Id, V> {
-    type WrapFst = TypeArg<X, V>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        match self {
-            TypeArg::Empty(_) => TypeArg::Empty(std::marker::PhantomData),
-            TypeArg::Type(t) => TypeArg::Type(t.map_fst(f)),
-            TypeArg::Selector(sel) => TypeArg::Selector(sel.map_fst(f)),
-        }
-    }
-}
-
-impl<Id, V, X> MapSnd<V, X> for TypeArg<Id, V> {
-    type WrapSnd = TypeArg<Id, X>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(V) -> X,
-    {
-        match self {
-            TypeArg::Empty(_) => TypeArg::Empty(std::marker::PhantomData),
-            TypeArg::Type(t) => TypeArg::Type(t.map_snd(f)),
-            TypeArg::Selector(sel) => TypeArg::Selector(sel.map_snd(f)),
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -362,34 +228,6 @@ impl<Id, V> TypeArgs<Id, V> {
     }
 }
 
-impl<Id, V, X> MapFst<Id, X> for TypeArgs<Id, V> {
-    type WrapFst = TypeArgs<X, V>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        match self {
-            TypeArgs::Curried(t) => TypeArgs::Curried(t.map_fst(f)),
-            TypeArgs::Record(sel) => TypeArgs::Record(sel.map_fst(f)),
-        }
-    }
-}
-
-impl<Id, V, X> MapSnd<V, X> for TypeArgs<Id, V> {
-    type WrapSnd = TypeArgs<Id, X>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(V) -> X,
-    {
-        match self {
-            TypeArgs::Curried(t) => TypeArgs::Curried(t.map_snd(f)),
-            TypeArgs::Record(sel) => TypeArgs::Record(sel.map_snd(f)),
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Variant<Id = SpannedIdent, V = SpannedIdent> {
     pub name: Id,
@@ -406,55 +244,6 @@ impl<Id, V> Variant<Id, V> {
     // pub fn args_iter_mut(&mut self) -> std::slice::IterMut<'_, TypeArg<Id, V>> {
     //     self.args.iter_mut()
     // }
-}
-
-impl<Id, V, X> MapFst<Id, X> for Variant<Id, V> {
-    type WrapFst = Variant<X, V>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        let Variant {
-            name,
-            span,
-            prag,
-            args,
-        } = self;
-        let name = f.apply(name);
-        let prag = prag.into_iter().map(|prag| prag.map_fst(f)).collect();
-        let args = args.map_fst(f);
-        Variant {
-            name,
-            span,
-            prag,
-            args,
-        }
-    }
-}
-
-impl<Id, V, X> MapSnd<V, X> for Variant<Id, V> {
-    type WrapSnd = Variant<Id, X>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(V) -> X,
-    {
-        let Variant {
-            name,
-            span,
-            prag,
-            args,
-        } = self;
-        let prag = prag.into_iter().map(|prag| prag.map_snd(f)).collect();
-        let args = args.map_snd(f);
-        Variant {
-            name,
-            span,
-            prag,
-            args,
-        }
-    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -503,38 +292,6 @@ pub struct AliasDecl<Id = SpannedIdent, V = SpannedIdent> {
     pub tipo: Type<Id, V>,
 }
 
-impl<Id, V, X> MapFst<Id, X> for AliasDecl<Id, V> {
-    type WrapFst = AliasDecl<X, V>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        AliasDecl {
-            span: self.span,
-            prag: self.prag.into_iter().map(|prag| prag.map_fst(f)).collect(),
-            ldef: self.ldef.map_fst(f),
-            tipo: self.tipo.map_fst(f),
-        }
-    }
-}
-
-impl<Id, V, X> MapSnd<V, X> for AliasDecl<Id, V> {
-    type WrapSnd = AliasDecl<Id, X>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(V) -> X,
-    {
-        AliasDecl {
-            span: self.span,
-            prag: self.prag.into_iter().map(|prag| prag.map_snd(f)).collect(),
-            ldef: self.ldef.map_snd(f),
-            tipo: self.tipo.map_snd(f),
-        }
-    }
-}
-
 /// `Newtype`s allow for *renaming* of types. Ideally little to no overhead is
 /// involved in working with newtypes, as the "type renaming" of a newtype is
 /// effectively forgotten post-typechecking. A newtype declaration is helpful
@@ -561,66 +318,6 @@ impl<Id, V> NewtypeDecl<Id, V> {
     }
 }
 
-impl<Id, V, X> MapFst<Id, X> for NewtypeDecl<Id, V> {
-    type WrapFst = NewtypeDecl<X, V>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        let NewtypeDecl {
-            span,
-            prag,
-            tdef,
-            ctor,
-            narg,
-            with,
-        } = self;
-        let prag = prag.into_iter().map(|prag| prag.map_fst(f)).collect();
-        let tdef = tdef.map_fst(f);
-        let ctor = f.apply(ctor);
-        let narg = narg.map_fst(f);
-        let with = with.map(|w| w.fmap(f));
-        NewtypeDecl {
-            span,
-            prag,
-            tdef,
-            ctor,
-            narg,
-            with,
-        }
-    }
-}
-
-impl<Id, V, X> MapSnd<V, X> for NewtypeDecl<Id, V> {
-    type WrapSnd = NewtypeDecl<Id, X>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(V) -> X,
-    {
-        let NewtypeDecl {
-            span,
-            prag,
-            tdef,
-            ctor,
-            narg,
-            with,
-        } = self;
-        let prag = prag.into_iter().map(|prag| prag.map_snd(f)).collect();
-        let tdef = tdef.map_snd(f);
-        let narg = narg.map_snd(f);
-        NewtypeDecl {
-            span,
-            prag,
-            tdef,
-            ctor,
-            narg,
-            with,
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClassDecl<Id = SpannedIdent, V = SpannedIdent> {
     pub span: Span,
@@ -643,62 +340,6 @@ impl<Id, V> ClassDecl<Id, V> {
     }
 }
 
-impl<Id, V, X> MapFst<Id, X> for ClassDecl<Id, V> {
-    type WrapFst = ClassDecl<X, V>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        let ClassDecl {
-            span,
-            prag,
-            cdef,
-            pred,
-            defs,
-        } = self;
-        let prag = prag.into_iter().map(|prag| prag.map_fst(f)).collect();
-        let cdef = cdef.map_fst(f);
-        let pred = pred.map_fst(f);
-        let defs = defs.map_fst(f);
-        ClassDecl {
-            span,
-            prag,
-            cdef,
-            pred,
-            defs,
-        }
-    }
-}
-
-impl<Id, V, X> MapSnd<V, X> for ClassDecl<Id, V> {
-    type WrapSnd = ClassDecl<Id, X>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(V) -> X,
-    {
-        let ClassDecl {
-            span,
-            prag,
-            cdef,
-            pred,
-            defs,
-        } = self;
-        let prag = prag.into_iter().map(|prag| prag.map_snd(f)).collect();
-        let cdef = cdef.map_snd(f);
-        let pred = pred.map_snd(f);
-        let defs = defs.map_snd(f);
-        ClassDecl {
-            span,
-            prag,
-            cdef,
-            pred,
-            defs,
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InstDecl<Id = SpannedIdent, V = SpannedIdent> {
     pub span: Span,
@@ -714,67 +355,6 @@ wy_common::struct_field_iters! {
     | pred => pred_iter :: Predicate<Id, V>
     | defs => defs_iter :: Binding<Id, V>
     | prag => prag_iter :: Pragma<Id, V>
-}
-
-impl<Id, V, X> MapFst<Id, X> for InstDecl<Id, V> {
-    type WrapFst = InstDecl<X, V>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        let InstDecl {
-            span,
-            prag,
-            name,
-            tipo,
-            pred,
-            defs,
-        } = self;
-        let prag = prag.into_iter().map(|prag| prag.map_fst(f)).collect();
-        let name = f.apply(name);
-        let tipo = tipo.map_fst(f);
-        let pred = pred.map_fst(f);
-        let defs = defs.map_fst(f);
-        InstDecl {
-            span,
-            prag,
-            name,
-            tipo,
-            pred,
-            defs,
-        }
-    }
-}
-
-impl<Id, V, X> MapSnd<V, X> for InstDecl<Id, V> {
-    type WrapSnd = InstDecl<Id, X>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(V) -> X,
-    {
-        let InstDecl {
-            span,
-            prag,
-            name,
-            tipo,
-            pred,
-            defs,
-        } = self;
-        let prag = prag.into_iter().map(|prag| prag.map_snd(f)).collect();
-        let tipo = tipo.map_snd(f);
-        let pred = pred.map_snd(f);
-        let defs = defs.map_snd(f);
-        InstDecl {
-            span,
-            prag,
-            name,
-            tipo,
-            pred,
-            defs,
-        }
-    }
 }
 
 impl<Id, V> InstDecl<Id, V> {
@@ -811,61 +391,6 @@ wy_common::struct_field_iters! {
     | prag => prag_iter :: Pragma<Id, V>
 }
 
-impl<Id, V, X> MapFst<Id, X> for FnDecl<Id, V> {
-    type WrapFst = FnDecl<X, V>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        let FnDecl {
-            span,
-            prag,
-            name,
-            sign,
-            defs,
-        } = self;
-        let prag = prag.into_iter().map(|prag| prag.map_fst(f)).collect();
-        let name = f.apply(name);
-        let sign = sign.map_fst(f);
-        let defs = defs.map_fst(f);
-        FnDecl {
-            span,
-            prag,
-            name,
-            sign,
-            defs,
-        }
-    }
-}
-
-impl<Id, V, X> MapSnd<V, X> for FnDecl<Id, V> {
-    type WrapSnd = FnDecl<Id, X>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(V) -> X,
-    {
-        let FnDecl {
-            span,
-            prag,
-            name,
-            sign,
-            defs,
-        } = self;
-        let prag = prag.into_iter().map(|prag| prag.map_snd(f)).collect();
-        let sign = sign.map_snd(f);
-        let defs = defs.map_snd(f);
-        FnDecl {
-            span,
-            prag,
-            name,
-            sign,
-            defs,
-        }
-    }
-}
-
 impl<Id, V> FnDecl<Id, V> {
     pub fn has_tysig(&self) -> bool {
         !self.sign.is_implicit()
@@ -876,34 +401,6 @@ impl<Id, V> FnDecl<Id, V> {
 pub enum MethodBody<Id = SpannedIdent, V = SpannedIdent> {
     Unimplemented,
     Default(Vec<Arm<Id, V>>),
-}
-
-impl<Id, V, X> MapFst<Id, X> for MethodBody<Id, V> {
-    type WrapFst = MethodBody<X, V>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        match self {
-            MethodBody::Unimplemented => MethodBody::Unimplemented,
-            MethodBody::Default(arms) => MethodBody::Default(arms.map_fst(f)),
-        }
-    }
-}
-
-impl<Id, V, X> MapSnd<V, X> for MethodBody<Id, V> {
-    type WrapSnd = MethodBody<Id, X>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(V) -> X,
-    {
-        match self {
-            MethodBody::Unimplemented => MethodBody::Unimplemented,
-            MethodBody::Default(arms) => MethodBody::Default(arms.map_snd(f)),
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -919,61 +416,6 @@ pub struct MethodDef<Id = SpannedIdent, V = SpannedIdent> {
 //     |Id, V| MethodDef<Id, V>
 //     | body => body_iter :: Match<Id, V>
 // }
-
-impl<Id, V, X> MapFst<Id, X> for MethodDef<Id, V> {
-    type WrapFst = MethodDef<X, V>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        let MethodDef {
-            span,
-            prag,
-            name,
-            annt,
-            body,
-        } = self;
-        let prag = prag.into_iter().map(|prag| prag.map_fst(f)).collect();
-        let name = f.apply(name);
-        let annt = annt.map_fst(f);
-        let body = body.map_fst(f);
-        MethodDef {
-            span,
-            prag,
-            name,
-            annt,
-            body,
-        }
-    }
-}
-
-impl<Id, V, X> MapSnd<V, X> for MethodDef<Id, V> {
-    type WrapSnd = MethodDef<Id, X>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(V) -> X,
-    {
-        let MethodDef {
-            span,
-            prag,
-            name,
-            annt,
-            body,
-        } = self;
-        let prag = prag.into_iter().map(|prag| prag.map_snd(f)).collect();
-        let annt = annt.map_snd(f);
-        let body = body.map_snd(f);
-        MethodDef {
-            span,
-            prag,
-            name,
-            annt,
-            body,
-        }
-    }
-}
 
 /// TODO: update `MethodImpl` to be suitable for use in `InstDecl`s
 /// for implemented methods
@@ -1044,44 +486,6 @@ impl<Id, V> Declaration<Id, V> {
             Declaration::Instance(i) => i.prag.extend(pragmas),
             Declaration::Function(f) => f.prag.extend(pragmas),
             Declaration::Newtype(n) => n.prag.extend(pragmas),
-        }
-    }
-}
-
-impl<Id, V, X> MapFst<Id, X> for Declaration<Id, V> {
-    type WrapFst = Declaration<X, V>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        match self {
-            Declaration::Data(d) => Declaration::Data(d.map_fst(f)),
-            Declaration::Alias(d) => Declaration::Alias(d.map_fst(f)),
-            Declaration::Fixity(d) => Declaration::Fixity(d.mapf(f)),
-            Declaration::Class(d) => Declaration::Class(d.map_fst(f)),
-            Declaration::Instance(d) => Declaration::Instance(d.map_fst(f)),
-            Declaration::Function(d) => Declaration::Function(d.map_fst(f)),
-            Declaration::Newtype(d) => Declaration::Newtype(d.map_fst(f)),
-        }
-    }
-}
-
-impl<Id, V, X> MapSnd<V, X> for Declaration<Id, V> {
-    type WrapSnd = Declaration<Id, X>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(V) -> X,
-    {
-        match self {
-            Declaration::Data(d) => Declaration::Data(d.map_snd(f)),
-            Declaration::Alias(d) => Declaration::Alias(d.map_snd(f)),
-            Declaration::Fixity(d) => Declaration::Fixity(d),
-            Declaration::Class(d) => Declaration::Class(d.map_snd(f)),
-            Declaration::Instance(d) => Declaration::Instance(d.map_snd(f)),
-            Declaration::Function(d) => Declaration::Function(d.map_snd(f)),
-            Declaration::Newtype(d) => Declaration::Newtype(d.map_snd(f)),
         }
     }
 }

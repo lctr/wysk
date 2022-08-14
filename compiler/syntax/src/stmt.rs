@@ -1,8 +1,5 @@
 use serde::{Deserialize, Serialize};
-use wy_common::{
-    functor::{MapFst, MapSnd},
-    Set,
-};
+use wy_common::Set;
 
 use crate::{expr::Expression, pattern::Pattern, tipo::Signature, SpannedIdent};
 
@@ -71,58 +68,6 @@ impl<Id, V> Arm<Id, V> {
         ids.extend(self.body.bound_vars());
         self.wher_iter().for_each(|b| ids.extend(b.bound_vars()));
         ids
-    }
-}
-
-impl<Id, V, X> MapFst<Id, X> for Arm<Id, V> {
-    type WrapFst = Arm<X, V>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        let Arm {
-            args,
-            cond,
-            body,
-            wher,
-        } = self;
-        let args = args.map_fst(f);
-        let cond = cond.map_fst(f);
-        let body = body.map_fst(f);
-        let wher = wher.map_fst(f);
-        Arm {
-            args,
-            cond,
-            body,
-            wher,
-        }
-    }
-}
-
-impl<Id, V, X> MapSnd<V, X> for Arm<Id, V> {
-    type WrapSnd = Arm<Id, X>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(V) -> X,
-    {
-        let Arm {
-            args,
-            cond,
-            body,
-            wher,
-        } = self;
-        let args = args.map_snd(f);
-        let cond = cond.map_snd(f);
-        let body = body.map_snd(f);
-        let wher = wher.map_snd(f);
-        Arm {
-            args,
-            cond,
-            body,
-            wher,
-        }
     }
 }
 
@@ -212,58 +157,6 @@ impl<Id, V> Alternative<Id, V> {
             vars.remove(id);
         });
         vars
-    }
-}
-
-impl<Id, V, X> MapFst<Id, X> for Alternative<Id, V> {
-    type WrapFst = Alternative<X, V>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        let Alternative {
-            pat,
-            cond,
-            body,
-            wher,
-        } = self;
-        let pat = pat.map_fst(f);
-        let cond = cond.map_fst(f);
-        let body = body.map_fst(f);
-        let wher = wher.map_fst(f);
-        Alternative {
-            pat,
-            cond,
-            body,
-            wher,
-        }
-    }
-}
-
-impl<Id, V, X> MapSnd<V, X> for Alternative<Id, V> {
-    type WrapSnd = Alternative<Id, X>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(V) -> X,
-    {
-        let Alternative {
-            pat,
-            cond,
-            body,
-            wher,
-        } = self;
-        let pat = pat.map_snd(f);
-        let cond = cond.map_snd(f);
-        let body = body.map_snd(f);
-        let wher = wher.map_snd(f);
-        Alternative {
-            pat,
-            cond,
-            body,
-            wher,
-        }
     }
 }
 
@@ -366,35 +259,6 @@ impl<Id, V> Binding<Id, V> {
     }
 }
 
-impl<Id, V, X> MapFst<Id, X> for Binding<Id, V> {
-    type WrapFst = Binding<X, V>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        let Binding { name, tsig, arms } = self;
-        let name = f.apply(name);
-        let tsig = tsig.map_fst(f);
-        let arms = arms.map_fst(f);
-        Binding { name, arms, tsig }
-    }
-}
-
-impl<Id, V, X> MapSnd<V, X> for Binding<Id, V> {
-    type WrapSnd = Binding<Id, X>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(V) -> X,
-    {
-        let Binding { name, tsig, arms } = self;
-        let tsig = tsig.map_snd(f);
-        let arms = arms.map_snd(f);
-        Binding { name, arms, tsig }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Statement<Id, V> {
     // <PAT> <- <EXPR>
@@ -459,36 +323,6 @@ impl<Id, V> Statement<Id, V> {
             Statement::JustLet(bindings) => {
                 bindings.into_iter().flat_map(Binding::binders).collect()
             }
-        }
-    }
-}
-
-impl<Id, V, X> MapFst<Id, X> for Statement<Id, V> {
-    type WrapFst = Statement<X, V>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        match self {
-            Statement::Generator(pat, ex) => Statement::Generator(pat.map_fst(f), ex.map_fst(f)),
-            Statement::Predicate(ex) => Statement::Predicate(ex.map_fst(f)),
-            Statement::JustLet(binds) => Statement::JustLet(binds.map_fst(f)),
-        }
-    }
-}
-
-impl<Id, V, X> MapSnd<V, X> for Statement<Id, V> {
-    type WrapSnd = Statement<Id, X>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(V) -> X,
-    {
-        match self {
-            Statement::Generator(pat, ex) => Statement::Generator(pat.map_snd(f), ex.map_snd(f)),
-            Statement::Predicate(ex) => Statement::Predicate(ex.map_snd(f)),
-            Statement::JustLet(binds) => Statement::JustLet(binds.map_snd(f)),
         }
     }
 }

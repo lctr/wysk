@@ -1,10 +1,7 @@
 use super::tipo::Type;
 use crate::{record::Record, SpannedIdent};
 use serde::{Deserialize, Serialize};
-use wy_common::{
-    functor::{MapFst, MapSnd},
-    variant_preds, Set,
-};
+use wy_common::{variant_preds, Set};
 use wy_lexer::literal::Literal;
 
 variant_preds! { |Id, V| Pattern[Id, V]
@@ -321,66 +318,6 @@ impl<Id, V> Pattern<Id, V> {
                     .unwrap_or_else(|| false)
             }),
             Pattern::Cast(pat, _) => pat.valid_expr(),
-        }
-    }
-}
-
-impl<Id, V, X> MapFst<Id, X> for Pattern<Id, V> {
-    type WrapFst = Pattern<X, V>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        match self {
-            Pattern::Wild => Pattern::Wild,
-            Pattern::Var(id) => Pattern::Var(f.apply(id)),
-            Pattern::Lit(lit) => Pattern::Lit(lit),
-            Pattern::Neg(pat) => Pattern::Neg(Box::new(pat.map_fst(f))),
-            Pattern::Dat(id, args) => Pattern::Dat(f.apply(id), args.map_fst(f)),
-            Pattern::Tup(pats) => Pattern::Tup(pats.map_fst(f)),
-            Pattern::Vec(pats) => Pattern::Vec(pats.map_fst(f)),
-            Pattern::Lnk(head, tail) => {
-                let head = head.map_fst(f);
-                let tail = tail.map_fst(f);
-                Pattern::Lnk(Box::new(head), Box::new(tail))
-            }
-            Pattern::At(id, pat) => {
-                let id = f.apply(id);
-                let pat = pat.map_fst(f);
-                Pattern::At(id, Box::new(pat))
-            }
-            Pattern::Or(pats) => Pattern::Or(pats.map_fst(f)),
-            Pattern::Rec(rec) => Pattern::Rec(rec.map_fst(f)),
-            Pattern::Cast(pat, ty) => Pattern::Cast(Box::new(pat.map_fst(f)), ty.map_fst(f)),
-        }
-    }
-}
-
-impl<Id, V, X> MapSnd<V, X> for Pattern<Id, V> {
-    type WrapSnd = Pattern<Id, X>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(V) -> X,
-    {
-        match self {
-            Pattern::Wild => Pattern::Wild,
-            Pattern::Var(id) => Pattern::Var(id),
-            Pattern::Lit(lit) => Pattern::Lit(lit),
-            Pattern::Neg(pat) => Pattern::Neg(Box::new(pat.map_snd(f))),
-            Pattern::Dat(id, args) => Pattern::Dat(id, args.map_snd(f)),
-            Pattern::Tup(pats) => Pattern::Tup(pats.map_snd(f)),
-            Pattern::Vec(pats) => Pattern::Vec(pats.map_snd(f)),
-            Pattern::Lnk(head, tail) => {
-                let head = head.map_snd(f);
-                let tail = tail.map_snd(f);
-                Pattern::Lnk(Box::new(head), Box::new(tail))
-            }
-            Pattern::At(id, pat) => Pattern::At(id, Box::new(pat.map_snd(f))),
-            Pattern::Or(pats) => Pattern::Or(pats.map_snd(f)),
-            Pattern::Rec(rec) => Pattern::Rec(rec.map_snd(f)),
-            Pattern::Cast(pat, ty) => Pattern::Cast(Box::new(pat.map_snd(f)), ty.map_snd(f)),
         }
     }
 }

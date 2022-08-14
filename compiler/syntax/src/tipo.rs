@@ -2,7 +2,7 @@ use std::fmt;
 use std::{fmt::Write, hash::Hash};
 
 use serde::{Deserialize, Serialize};
-use wy_common::functor::{MapFst, MapSnd};
+
 use wy_common::Set;
 use wy_common::{either::Either, push_if_absent, Map};
 // use wy_common::Mappable;
@@ -157,28 +157,6 @@ impl<Id, V> Var<Id, V> {
     }
 }
 
-impl<Id, V, X> MapFst<Id, X> for Var<Id, V> {
-    type WrapFst = Var<X, V>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        Var(f.apply(self.0), self.1)
-    }
-}
-
-impl<Id, V, X> MapSnd<V, X> for Var<Id, V> {
-    type WrapSnd = Var<Id, X>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(V) -> X,
-    {
-        Var(self.0, f.apply(self.1))
-    }
-}
-
 impl<Id: fmt::Debug, V> fmt::Debug for Var<Id, V>
 where
     V: fmt::Debug,
@@ -291,42 +269,6 @@ pub enum Con<Id = SpannedIdent, V = SpannedIdent> {
     /// Type constructor aliases, used to superficially preserve type aliases
     /// within an environment where the alias can be resolved
     Alias(Id),
-}
-
-impl<Id, V, X> MapFst<Id, X> for Con<Id, V> {
-    type WrapFst = Con<X, V>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        match self {
-            Con::List => Con::List,
-            Con::Tuple(n) => Con::Tuple(n),
-            Con::Arrow => Con::Arrow,
-            Con::Named(id) => Con::Named(f.apply(id)),
-            Con::Free(v) => Con::Free(v),
-            Con::Alias(id) => Con::Alias(f.apply(id)),
-        }
-    }
-}
-
-impl<Id, V, X> MapSnd<V, X> for Con<Id, V> {
-    type WrapSnd = Con<Id, X>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(V) -> X,
-    {
-        match self {
-            Con::List => Con::List,
-            Con::Tuple(n) => Con::Tuple(n),
-            Con::Arrow => Con::Arrow,
-            Con::Named(id) => Con::Named(id),
-            Con::Free(v) => Con::Free(f.apply(v)),
-            Con::Alias(id) => Con::Alias(id),
-        }
-    }
 }
 
 impl<Id, V> Con<Id, V> {
@@ -539,46 +481,6 @@ wy_common::variant_preds! {
     | is_con_var => Con(Con::Free(_), _)
     | is_concrete_con => Con(Con::Named(_), _)
     | is_alias_con => Con(Con::Alias(_), _)
-}
-
-impl<Id, V, X> MapFst<Id, X> for Type<Id, V> {
-    type WrapFst = Type<X, V>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        match self {
-            Type::Var(v) => Type::Var(v),
-            Type::Con(con, args) => Type::Con(con.map_fst(f), args.map_fst(f)),
-            Type::Fun(t1, t2) => {
-                let t1 = Box::new(t1.map_fst(f));
-                let t2 = Box::new(t2.map_fst(f));
-                Type::Fun(t1, t2)
-            }
-            Type::Tup(ts) => Type::Tup(ts.map_fst(f)),
-            Type::Vec(t) => Type::Vec(Box::new(t.map_fst(f))),
-            Type::Rec(rec) => Type::Rec(rec.map_fst(f)),
-        }
-    }
-}
-
-impl<Id, V, X> MapSnd<V, X> for Type<Id, V> {
-    type WrapSnd = Type<Id, X>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(V) -> X,
-    {
-        match self {
-            Type::Var(v) => Type::Var(f.apply(v)),
-            Type::Con(con, args) => Type::Con(con.map_snd(f), args.map_snd(f)),
-            Type::Fun(t1, t2) => Type::Fun(Box::new(t1.map_snd(f)), Box::new(t2.map_snd(f))),
-            Type::Tup(ts) => Type::Tup(ts.map_snd(f)),
-            Type::Vec(t) => Type::Vec(Box::new(t.map_snd(f))),
-            Type::Rec(rec) => Type::Rec(rec.map_snd(f)),
-        }
-    }
 }
 
 impl<Id, V> Type<Id, V> {
@@ -1425,29 +1327,6 @@ where
     }
 }
 
-impl<Id, V, X> MapFst<Id, X> for SimpleType<Id, V> {
-    type WrapFst = SimpleType<X, V>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        SimpleType(f.apply(self.0), self.1)
-    }
-}
-
-impl<Id, V, X> MapSnd<V, X> for SimpleType<Id, V> {
-    type WrapSnd = SimpleType<Id, X>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(V) -> X,
-    {
-        use wy_common::functor::Functor;
-        SimpleType(self.0, Functor::fmap(self.1, f))
-    }
-}
-
 /// A parameter for `Predicate`s. This should *generally* be a single
 /// type variable, but it is possible for it to be a generic type
 /// application while still being valid (= in head-normal form), such
@@ -1518,32 +1397,6 @@ impl<Id, V> Predicate<Id, V> {
     }
 }
 
-impl<Id, V, X> MapFst<Id, X> for Predicate<Id, V> {
-    type WrapFst = Predicate<X, V>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        let Predicate { class, head } = self;
-        let class = f.apply(class);
-        Predicate { class, head }
-    }
-}
-
-impl<Id, V, X> MapSnd<V, X> for Predicate<Id, V> {
-    type WrapSnd = Predicate<Id, X>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(V) -> X,
-    {
-        let Predicate { class, head } = self;
-        let head = head.mapf(f);
-        Predicate { class, head }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Qualified<Id = SpannedIdent, V = SpannedIdent> {
     pub pred: Vec<Predicate<Id, V>>,
@@ -1565,34 +1418,6 @@ impl<Id, V> Qualified<Id, V> {
     }
 }
 
-impl<Id, V, X> MapFst<Id, X> for Qualified<Id, V> {
-    type WrapFst = Qualified<X, V>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        Qualified {
-            pred: self.pred.map_fst(f),
-            tipo: self.tipo.map_fst(f),
-        }
-    }
-}
-
-impl<Id, V, X> MapSnd<V, X> for Qualified<Id, V> {
-    type WrapSnd = Qualified<Id, X>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(V) -> X,
-    {
-        Qualified {
-            pred: self.pred.map_snd(f),
-            tipo: self.tipo.map_snd(f),
-        }
-    }
-}
-
 /// Quantified variables, referring to explicitly quantified (type)
 /// variables in source code such as `foo :: forall a b . a -> b`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1601,28 +1426,6 @@ pub struct Quantified<Id = SpannedIdent, V = Tv>(pub Vec<Var<Id, V>>);
 impl<X, V> Default for Quantified<X, V> {
     fn default() -> Self {
         Self(Default::default())
-    }
-}
-
-impl<Id, V, X> MapFst<Id, X> for Quantified<Id, V> {
-    type WrapFst = Quantified<X, V>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        Quantified(self.0.map_fst(f))
-    }
-}
-
-impl<Id, V, X> MapSnd<V, X> for Quantified<Id, V> {
-    type WrapSnd = Quantified<Id, X>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(V) -> X,
-    {
-        Quantified(self.0.map_snd(f))
     }
 }
 
@@ -1797,34 +1600,6 @@ impl<Id, V> Annotation<Id, V> {
     }
 }
 
-impl<Id, V, X> MapFst<Id, X> for Annotation<Id, V> {
-    type WrapFst = Annotation<X, V>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        Annotation {
-            quant: self.quant.map_fst(f),
-            qual: self.qual.map_fst(f),
-        }
-    }
-}
-
-impl<Id, V, X> MapSnd<V, X> for Annotation<Id, V> {
-    type WrapSnd = Annotation<Id, X>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(V) -> X,
-    {
-        Annotation {
-            quant: self.quant.map_snd(f),
-            qual: self.qual.map_snd(f),
-        }
-    }
-}
-
 /// An explicit type signature corresponds to the type annotation found in
 /// source code and is never overwritten (only isomorphically modified
 /// in terms of representation), but rather used as a reference with
@@ -1859,34 +1634,6 @@ wy_common::variant_preds! {
     | is_implicit => Implicit
     | is_explicit => Explicit (_)
     | is_quantified => Explicit (Annotation { quant, ..}) [if !quant.is_empty()]
-}
-
-impl<Id, V, X> MapFst<Id, X> for Signature<Id, V> {
-    type WrapFst = Signature<X, V>;
-
-    fn map_fst<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapFst
-    where
-        F: FnMut(Id) -> X,
-    {
-        match self {
-            Signature::Implicit => Signature::Implicit,
-            Signature::Explicit(ann) => Signature::Explicit(ann.map_fst(f)),
-        }
-    }
-}
-
-impl<Id, V, X> MapSnd<V, X> for Signature<Id, V> {
-    type WrapSnd = Signature<Id, X>;
-
-    fn map_snd<F>(self, f: &mut wy_common::functor::Func<'_, F>) -> Self::WrapSnd
-    where
-        F: FnMut(V) -> X,
-    {
-        match self {
-            Signature::Implicit => Signature::Implicit,
-            Signature::Explicit(ann) => Signature::Explicit(ann.map_snd(f)),
-        }
-    }
 }
 
 impl<Id, V> Signature<Id, V> {
