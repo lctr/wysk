@@ -1,5 +1,7 @@
 use std::fmt::Write;
 
+pub use unicode_normalization::UnicodeNormalization;
+
 /// Generate a textual representation of a variable not bound to a specific name.
 /// This is useful when generating type variables whose actual *names* only matter when displayed to the user.
 pub fn display_var(n: u32) -> String {
@@ -137,11 +139,30 @@ fn test_cmp_str_tails() {
     assert!(!cmp_str_tails(left, right))
 }
 
+/// Shortcut to get the number of characters in an iterator over a
+/// string in Unicode Normalization Form C (canonical decomposition
+/// followed by canonical composition).
+pub fn chars_nfc_count<S: AsRef<str>>(s: S) -> usize {
+    s.as_ref().chars().nfc().count()
+}
+
+/// Shortcut to return an iterator of chars over a string in Unicode
+/// Normalization Form C (canonical decomposition followed by
+/// canonical composition).
+pub fn unicode_nfc(s: &str) -> impl Iterator<Item = char> + '_ {
+    s.chars().nfc()
+}
+
+/// Returns whether the specified character satisfies the 'XID_Start'
+/// Unicode property.
+///
 /// http://www.unicode.org/reports/tr31/
 pub fn is_xid_start(c: char) -> bool {
     unicode_xid::UnicodeXID::is_xid_start(c)
 }
 
+/// Returns whether the specified char satisfies the 'XID_Continue'
+/// Unicode property.
 pub fn is_xid_continue(c: char) -> bool {
     unicode_xid::UnicodeXID::is_xid_continue(c)
 }
