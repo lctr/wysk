@@ -20,6 +20,5 @@ wy_session = { path = "../session" }
 wy_semantics = { path = "../semantics" }
 wy_graph = { path = "../graph" }
 
-wy_ast = { path = "../ast" }
 wy_simple = { path = "../simple" }
 wy_resolver = { path = "../resolver" }
