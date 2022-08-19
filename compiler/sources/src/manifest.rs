@@ -51,10 +51,9 @@ impl Manifest {
         toml::to_string_pretty(self).unwrap()
     }
 
-    pub fn save<P: AsRef<Path>>(self, directory: P) -> Self {
+    pub fn save<P: AsRef<Path>>(&self, directory: P) -> std::io::Result<P> {
         let path = directory.as_ref().join(Self::FILENAME);
-        let _ = fs::write(path, self.toml_text());
-        self
+        fs::write(path, self.toml_text()).and(Ok(directory))
     }
 
     pub fn from_path<P: AsRef<Path>>(path: P) -> Option<Manifest> {
