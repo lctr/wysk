@@ -38,6 +38,15 @@ impl Coord {
         Self::default()
     }
 
+    #[inline]
+    pub fn row(&self) -> Row {
+        self.row
+    }
+
+    pub fn col(&self) -> Col {
+        self.col
+    }
+
     /// Increments the `col` field by 1 and, for the char given,
     /// returns a `BytePos` containing the number of bytes in the utf8
     /// encoding of that character.
