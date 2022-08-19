@@ -785,8 +785,7 @@ where
             (Con::List, Con::List) | (Con::Arrow, Con::Arrow) => true,
             (Con::Tuple(a), Con::Tuple(b)) => a == b,
             (Con::Named(a), Con::Named(b)) => a.spanless_eq(b),
-            (Con::Free(a), Con::Free(b)) => a.spanless_eq(b),
-            (Con::Alias(a), Con::Alias(b)) => a.spanless_eq(b),
+            (Con::Varied(a), Con::Varied(b)) => a.spanless_eq(b),
             _ => false,
         }
     }
@@ -810,7 +809,6 @@ where
             }
             (Type::Tup(these), Type::Tup(those)) => these.spanless_eq(those),
             (Type::Vec(this), Type::Vec(that)) => this.as_ref().spanless_eq(that.as_ref()),
-            (Type::Rec(this), Type::Rec(that)) => this.spanless_eq(that),
             _ => false,
         }
     }

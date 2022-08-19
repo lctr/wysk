@@ -103,7 +103,7 @@ impl<Id, T, U, X> MapFst<Id, X> for Module<Id, T, U> {
             pragmas,
         } = self;
         let modname = modname.mapf(f);
-        let f = &mut Func::Fresh(|spanned: Spanned<Id>| spanned.mapf(f));
+        let f = &mut Func::New(|spanned: Spanned<Id>| spanned.mapf(f));
         let imports = imports.into_iter().map(|i| i.mapf(f)).collect();
         let infixes = infixes.into_iter().map(|d| d.mapf(f)).collect();
         let datatys = datatys.map_fst(f);
@@ -186,7 +186,7 @@ impl<Id, T, U, X> MapSnd<T, X> for Module<Id, T, U> {
             newtyps,
             pragmas,
         } = self;
-        let f = &mut Func::Fresh(|spanned: Spanned<T>| spanned.mapf(f));
+        let f = &mut Func::New(|spanned: Spanned<T>| spanned.mapf(f));
         let datatys = datatys.map_snd(f);
         let classes = classes.map_snd(f);
         let implems = implems.map_snd(f);
@@ -920,8 +920,7 @@ impl<Id, V, X> MapFst<Id, X> for Con<Id, V> {
             Con::Tuple(n) => Con::Tuple(n),
             Con::Arrow => Con::Arrow,
             Con::Named(id) => Con::Named(f.apply(id)),
-            Con::Free(v) => Con::Free(v),
-            Con::Alias(id) => Con::Alias(f.apply(id)),
+            Con::Varied(v) => Con::Varied(v),
         }
     }
 }
@@ -938,8 +937,7 @@ impl<Id, V, X> MapSnd<V, X> for Con<Id, V> {
             Con::Tuple(n) => Con::Tuple(n),
             Con::Arrow => Con::Arrow,
             Con::Named(id) => Con::Named(id),
-            Con::Free(v) => Con::Free(f.apply(v)),
-            Con::Alias(id) => Con::Alias(id),
+            Con::Varied(v) => Con::Varied(f.apply(v)),
         }
     }
 }
@@ -961,7 +959,6 @@ impl<Id, V, X> MapFst<Id, X> for Type<Id, V> {
             }
             Type::Tup(ts) => Type::Tup(ts.map_fst(f)),
             Type::Vec(t) => Type::Vec(Box::new(t.map_fst(f))),
-            Type::Rec(rec) => Type::Rec(rec.map_fst(f)),
         }
     }
 }
@@ -979,7 +976,6 @@ impl<Id, V, X> MapSnd<V, X> for Type<Id, V> {
             Type::Fun(t1, t2) => Type::Fun(Box::new(t1.map_snd(f)), Box::new(t2.map_snd(f))),
             Type::Tup(ts) => Type::Tup(ts.map_snd(f)),
             Type::Vec(t) => Type::Vec(Box::new(t.map_snd(f))),
-            Type::Rec(rec) => Type::Rec(rec.map_snd(f)),
         }
     }
 }

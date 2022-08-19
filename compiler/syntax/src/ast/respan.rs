@@ -539,8 +539,8 @@ impl<Id, T> ReSpan for Con<Spanned<Id>, Spanned<T>> {
     fn spans_mut(&mut self) -> Vec<&mut Span> {
         match self {
             Con::List | Con::Tuple(_) | Con::Arrow => vec![],
-            Con::Named(spnd) | Con::Alias(spnd) => vec![spnd.span_mut()],
-            Con::Free(spnd) => vec![spnd.span_mut()],
+            Con::Named(spnd) => vec![spnd.span_mut()],
+            Con::Varied(spnd) => vec![spnd.span_mut()],
         }
     }
 }
@@ -560,7 +560,6 @@ impl<Id, T> ReSpan for Type<Spanned<Id>, Spanned<T>> {
             }
             Type::Tup(ts) => spans.extend(ts.spans_mut()),
             Type::Vec(t) => spans.extend(t.spans_mut()),
-            Type::Rec(rec) => spans.extend(rec.spans_mut()),
         };
         spans
     }
