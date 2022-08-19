@@ -11,22 +11,6 @@ pub mod files;
 pub mod manifest;
 pub mod paths;
 
-#[derive(Debug)]
-pub enum Config {
-    /// Used whenever a manifest file cannot be found.
-    Script,
-    Project(Manifest),
-}
-
-impl Config {
-    pub fn manifest(&self) -> Option<&Manifest> {
-        match self {
-            Config::Script => None,
-            Config::Project(man) => Some(man),
-        }
-    }
-}
-
 pub struct ProjectBuilder {
     root_dir: Option<Directory>,
     atlas: Atlas,
@@ -58,7 +42,7 @@ impl ProjectBuilder {
         if let Some(manifest) = self.manifest.take() {
             manifest
                 .workspaces()
-                .flat_map(|p| self.atlas.add_path(p))
+                .flat_map(|p| self.atlas.add_filepath(p))
                 .for_each(|f| {
                     if self.submodules.contains(&f) {
                         self.submodules.push(f)
@@ -86,19 +70,16 @@ impl ProjectBuilder {
             submodules: _,
         } = self;
         root_dir.map(|root_dir| {
-            let config = manifest
-                .map(Config::Project)
-                .unwrap_or_else(|| Config::Script);
             let mut source_map = SourceMap::new();
             let mut submodules = vec![];
-            atlas.sources_iter().for_each(|fp| {
+            atlas.filepaths_iter().for_each(|fp| {
                 if let Ok(file) = source_map.add_from_filepath(fp.clone()) {
-                    submodules.push(file.src_path().file_id())
+                    submodules.push(file.src_path().id())
                 }
             });
             Project {
                 atlas,
-                config,
+                manifest,
                 source_map,
                 root_dir,
                 submodules,
@@ -110,7 +91,7 @@ impl ProjectBuilder {
 #[derive(Debug)]
 pub struct Project {
     atlas: Atlas,
-    config: Config,
+    manifest: Option<Manifest>,
     source_map: SourceMap,
     root_dir: Directory,
     submodules: Vec<FileId>,
@@ -137,14 +118,14 @@ impl Project {
     pub fn atlas_mut(&mut self) -> &mut Atlas {
         &mut self.atlas
     }
-    pub fn config(&self) -> &Config {
-        &self.config
-    }
     pub fn manifest(&self) -> Option<&Manifest> {
-        self.config.manifest()
+        self.manifest.as_ref()
     }
-    pub fn sources(&self) -> std::slice::Iter<'_, FilePath> {
-        self.atlas.sources_iter()
+    pub fn manifest_mut(&mut self) -> Option<&mut Manifest> {
+        self.manifest.as_mut()
+    }
+    pub fn filepaths(&self) -> std::slice::Iter<'_, FilePath> {
+        self.atlas.filepaths_iter()
     }
     pub fn source_map(&self) -> &SourceMap {
         &self.source_map
@@ -165,7 +146,7 @@ impl Project {
 
 /// Alias for the associated method `Project::new_from_dir`
 pub fn new_project(path: impl AsRef<Path>) -> Option<Project> {
-    Project::new_from_dir(Directory::new(0, path))
+    Project::new_from_dir(Directory::new(path))
 }
 
 #[cfg(test)]
@@ -174,7 +155,7 @@ mod test {
 
     #[test]
     fn inspect_prelude_project() {
-        let dir = Directory::new(0, paths::PRELUDE_PATH);
+        let dir = Directory::new(paths::PRELUDE_PATH);
         let project = new_project(dir);
         println!("{:#?}", &project)
     }
