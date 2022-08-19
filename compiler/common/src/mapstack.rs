@@ -92,6 +92,17 @@ impl<K> Scoped<K> {
             Scoped::Local(k) => Scoped::Local(f(k)),
         }
     }
+
+    /// Returns the change in depth provided by this scoped key.
+    /// Functions as an identifier function for scopes, adding `1` if
+    /// it marks the beginning of a scope and otherwise adding `0`.
+    fn depth_incr(depth: usize, scoped: &Self) -> usize {
+        if scoped.is_init() {
+            depth
+        } else {
+            depth + 1
+        }
+    }
 }
 
 /// A `MapStack` struct is essentially a collection of stacked maps. With
@@ -144,9 +155,7 @@ where
     /// scopes* have been added (including the current one), **starting from
     /// 0**.
     pub fn depth(&self) -> usize {
-        self.scopes
-            .iter()
-            .fold(0, |a, c| a + if c.is_init() { 1 } else { 0 })
+        self.scopes.iter().fold(0, Scoped::depth_incr)
     }
 
     /// Introduce a new scope. Upon entering a new scope, a `Scope::Init` is
@@ -224,11 +233,8 @@ where
         for scoped in self.scopes.iter().rev() {
             match scoped {
                 Scoped::Init => break,
-                Scoped::Local(key) => {
-                    if key == k {
-                        return true;
-                    }
-                }
+                Scoped::Local(key) if key == k => return true,
+                _ => (),
             }
         }
         false
@@ -238,7 +244,7 @@ where
     /// containing immutable references to keys and their corresponding stacks
     /// of values.
     #[inline]
-    pub fn iter(&self) -> impl Iterator<Item = (&K, &Vec<V>)> {
+    pub fn iter(&self) -> std::collections::hash_map::Iter<'_, K, Vec<V>> {
         self.store.iter()
     }
 
@@ -246,7 +252,7 @@ where
     /// containing immutable references to the key with *mutable* references to
     /// each key's corresponding stack of values.
     #[inline]
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&K, &mut Vec<V>)> {
+    pub fn iter_mut(&mut self) -> std::collections::hash_map::IterMut<'_, K, Vec<V>> {
         self.store.iter_mut()
     }
 
