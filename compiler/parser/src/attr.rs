@@ -109,9 +109,7 @@ impl<'t> Parser<'t> {
                 ..
             })
             | None => self.unexpected_eof().err(),
-            Some(t) if t.is_brack_r() => self
-                .custom_error("while parsing attribute; cannot have empty pragma or attribute")
-                .err(),
+            Some(t) if t.is_brack_r() => self.empty_pragma().err(),
             _ => self
                 .custom_error("is not a valid pragma or attribute name")
                 .err(),

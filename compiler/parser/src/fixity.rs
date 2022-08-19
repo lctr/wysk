@@ -37,19 +37,14 @@ impl<'t> FixityParser<'t> {
             }
         }
 
-        Err(ParseError::InvalidPrec(
-            self.srcloc(),
-            self.bump(),
-            self.text(),
-        ))
+        self.invalid_fixity_prec().err()
     }
 
     pub(crate) fn with_fixity(&mut self, fixity: Fixity) -> Parsed<Vec<SpannedIdent>> {
         self.many_while_on(Lexeme::is_infix, |p| {
-            let srcloc = p.srcloc();
             p.expect_infix().and_then(|spanned @ Spanned(infix, span)| {
                 if p.fixities.contains_key(&infix) {
-                    Err(ParseError::FixityExists(srcloc, infix, span, p.text()))
+                    p.fixity_exists(infix, span).err()
                 } else {
                     p.fixities.insert(infix, fixity);
                     Ok(spanned)

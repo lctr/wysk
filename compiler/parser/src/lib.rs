@@ -35,7 +35,7 @@ impl<'t> Parser<'t> {
             })
             .map(|id| self.bumped(id))
             .ok_or_else(|| {
-                self.expected(match kind {
+                self.expected_token(match kind {
                     IdentKind::Upper => LexKind::Upper,
                     IdentKind::Lower => LexKind::Lower,
                     IdentKind::Infix => LexKind::Infix,
@@ -80,7 +80,7 @@ impl<'t> Parser<'t> {
             })
             // .and_then(Token::lift(Lexeme::mk_id(Ident::NAMES)))
             .map(|id| self.bumped(id))
-            .ok_or_else(|| self.expected(LexKind::Identifier))
+            .ok_or_else(|| self.expected_token(LexKind::Identifier))
     }
 
     #[inline]
@@ -88,7 +88,7 @@ impl<'t> Parser<'t> {
         self.peek()
             .and_then(Token::lift(Lexeme::literal))
             .map(|lit| self.bumped(lit))
-            .ok_or_else(|| self.expected(LexKind::Literal))
+            .ok_or_else(|| self.expected_token(LexKind::Literal))
     }
 }
 
