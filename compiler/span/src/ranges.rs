@@ -297,7 +297,7 @@ impl std::ops::Index<Span> for str {
 /// corresponds to the bottom right. Note that the `row` values of the
 /// contained `Coord` values may coincide, effectively describing a line
 /// (with the same analogously applying to respective `col` values).
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Region {
     pub start: Coord,
     pub end: Coord,
@@ -397,7 +397,58 @@ impl std::ops::Index<Region> for String {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct CoordSpan {
+    pub coord: Coord,
+    pub span: Span,
+}
+
+impl CoordSpan {
+    pub fn row(&self) -> Row {
+        self.coord.row
+    }
+    pub fn col(&self) -> Col {
+        self.coord.col
+    }
+    pub fn coord(&self) -> Coord {
+        self.coord
+    }
+    pub fn start(&self) -> BytePos {
+        self.span.start()
+    }
+    pub fn end(&self) -> BytePos {
+        self.span.end()
+    }
+    pub fn span(&self) -> Span {
+        self.span
+    }
+    pub fn len(&self) -> usize {
+        self.span.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.span.is_empty()
+    }
+    pub fn range(&self) -> std::ops::Range<usize> {
+        self.span.range()
+    }
+}
+
+impl PartialEq<Coord> for CoordSpan {
+    fn eq(&self, other: &Coord) -> bool {
+        self.coord == *other
+    }
+}
+
+impl std::ops::Index<CoordSpan> for str {
+    type Output = str;
+
+    fn index(&self, index: CoordSpan) -> &Self::Output {
+        debug_assert!(index.span().contained_in(self));
+        &self[index.span()]
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Position {
     pub span: Span,
     pub region: Region,
