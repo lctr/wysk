@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use wy_common::either::Either;
 pub use wy_intern::symbol::{Symbol, Symbolic};
 use wy_span::Spanned;
 
@@ -152,11 +153,81 @@ impl Ident {
 
     /// Returns a reference to the inner integer value if the identifier is a `Fresh` variant,
     /// otherwise it returns `None`.
-    pub fn fresh_val(&self) -> Option<&u32> {
+    pub fn fresh_val(&self) -> Option<u32> {
         if let Self::Fresh(n) = self {
-            Some(n)
+            Some(*n)
         } else {
             None
+        }
+    }
+
+    /// Applies a given closure to the identifier *only if* it is an
+    /// `Upper` variant, returning it as a `Left` variant of the sum
+    /// type `Either`; otherwise, the identifier will simply be
+    /// wrapped in an `Either::Right`.
+    pub fn map_upper<F, U>(self, f: F) -> Either<U, Self>
+    where
+        F: FnOnce(Self) -> U,
+    {
+        match self {
+            id @ Ident::Upper(_) => Either::Left(f(id)),
+            id => Either::Right(id),
+        }
+    }
+
+    /// Applies a given closure to the identifier *only if* it is a
+    /// `Lower` variant, returning it as a `Left` variant of the sum
+    /// type `Either`; otherwise, the identifier will simply be
+    /// wrapped in an `Either::Right`.
+    pub fn map_lower<F, U>(self, f: F) -> Either<U, Self>
+    where
+        F: FnOnce(Self) -> U,
+    {
+        match self {
+            id @ Ident::Lower(_) => Either::Left(f(id)),
+            id => Either::Right(id),
+        }
+    }
+
+    /// Applies a given closure to the identifier *only if* it is an
+    /// `Infix` variant, returning it as a `Left` variant of the sum
+    /// type `Either`; otherwise, the identifier will simply be
+    /// wrapped in an `Either::Right`.
+    pub fn map_infix<F, U>(self, f: F) -> Either<U, Self>
+    where
+        F: FnOnce(Self) -> U,
+    {
+        match self {
+            id @ Ident::Infix(_) => Either::Left(f(id)),
+            id => Either::Right(id),
+        }
+    }
+
+    /// Applies a given closure to the identifier *only if* it is a
+    /// `Label` variant, returning it as a `Left` variant of the sum
+    /// type `Either`; otherwise, the identifier will simply be
+    /// wrapped in an `Either::Right`.
+    pub fn map_label<F, U>(self, f: F) -> Either<U, Self>
+    where
+        F: FnOnce(Self) -> U,
+    {
+        match self {
+            id @ Ident::Label(_) => Either::Left(f(id)),
+            id => Either::Right(id),
+        }
+    }
+
+    /// Applies a given closure to the identifier *only if* it is a
+    /// `Fresh` variant, returning it as a `Left` variant of the sum
+    /// type `Either`; otherwise, the identifier will simply be
+    /// wrapped in an `Either::Right`.
+    pub fn map_fresh<F, U>(self, f: F) -> Either<U, Self>
+    where
+        F: FnOnce(Self) -> U,
+    {
+        match self {
+            id @ Ident::Fresh(_) => Either::Left(f(id)),
+            id => Either::Right(id),
         }
     }
 }
@@ -169,8 +240,8 @@ pub fn max_fresh_value<I: std::ops::Deref<Target = Ident>>(
 ) -> Option<u32> {
     iter.into_iter()
         .fold(None, |a, c| match (a, c.fresh_val()) {
-            (None, v) => v.copied(),
-            (Some(a), m @ Some(n)) if *n > a => m.copied(),
+            (None, v) => v,
+            (Some(a), m @ Some(n)) if n > a => m,
             _ => a,
         })
 }
@@ -180,8 +251,8 @@ pub fn min_fresh_value<I: std::ops::Deref<Target = Ident>>(
 ) -> Option<u32> {
     iter.into_iter()
         .fold(None, |a, c| match (a, c.fresh_val()) {
-            (None, v) => v.copied(),
-            (Some(a), m @ Some(n)) if *n < a => m.copied(),
+            (None, v) => v,
+            (Some(a), m @ Some(n)) if n < a => m,
             _ => a,
         })
 }
@@ -274,11 +345,8 @@ pub trait Identifier: Eq {
         }
     }
 
-    fn map_symbol<X>(&self, f: impl Fn(Symbol) -> X) -> X
-    where
-        Self: Symbolic,
-    {
-        self.get_symbol().pure(f)
+    fn map_symbol<X>(&self, f: impl FnOnce(Symbol) -> X) -> X {
+        f(self.get_ident().get_symbol())
     }
 }
 
