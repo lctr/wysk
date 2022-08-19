@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use wy_common::{deque, Deque};
 use wy_intern::{Symbol, Symbolic};
-use wy_span::Spanned;
+use wy_span::{Span, Spanned};
 
 use crate::ident::{Ident, Identifier};
 
@@ -25,6 +25,18 @@ impl From<Chain<Ident>> for Ident {
 impl From<&Chain<Ident>> for Ident {
     fn from(chain: &Chain<Ident>) -> Self {
         chain.last().constructor()(chain.flattened_symbol())
+    }
+}
+
+impl<Id> From<Chain<Spanned<Id>>> for Chain<Id> {
+    fn from(ch: Chain<Spanned<Id>>) -> Self {
+        ch.map(Spanned::take_item)
+    }
+}
+
+impl From<Chain<Spanned<Ident>>> for Ident {
+    fn from(ch: Chain<Spanned<Ident>>) -> Self {
+        ch.map(Spanned::take_item).into()
     }
 }
 
@@ -295,6 +307,16 @@ impl<Id> Chain<Id> {
     }
 }
 
+impl<Id> Chain<Spanned<Id>> {
+    pub fn total_span(&self) -> Span {
+        self.root().span().union(&self.last().span())
+    }
+
+    pub fn spans_iter(&self) -> impl Iterator<Item = Span> + '_ {
+        self.iter().map(|s| s.span())
+    }
+}
+
 impl<Id> IntoIterator for Chain<Id> {
     type Item = Id;
 
@@ -376,22 +398,28 @@ where
 
 /// Printer to display infix identifiers wrapped within parentheses
 /// when within `Chain`s.
-pub struct ChainPrinter<'id>(&'id Chain<Ident>);
+pub struct ChainPrinter<'id, Id>(&'id Chain<Id>);
 
-impl<'id> ChainPrinter<'id> {
+impl<'id, Id> ChainPrinter<'id, Id> {
     #[inline]
-    pub fn each(&self) -> impl Iterator<Item = &'id Ident> + '_ {
+    pub fn each(&self) -> impl Iterator<Item = &'id Id> + '_ {
         self.0.iter()
     }
 }
 
-impl<'id> std::fmt::Display for ChainPrinter<'id> {
+impl<'id, Id> std::fmt::Display for ChainPrinter<'id, Id>
+where
+    Id: Identifier,
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (n, id) in self.each().enumerate() {
+        for (n, is_infix, id) in self.each().enumerate().map(|(n, id)| {
+            let ident = id.get_ident();
+            (n, ident.is_infix(), ident.symbol())
+        }) {
             if n > 0 {
                 write!(f, ".")?;
             }
-            if id.is_infix() {
+            if is_infix {
                 write!(f, "({})", id)?;
             } else {
                 write!(f, "{}", id)?;
