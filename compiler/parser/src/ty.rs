@@ -1,19 +1,15 @@
 use std::iter;
 
 use wy_intern::Symbol;
-use wy_lexer::lexpat;
-use wy_lexer::token::{LexKind, Token};
-use wy_lexer::Keyword;
-use wy_lexer::Lexeme;
+use wy_lexer::{lexpat, token::Token, Keyword, Lexeme};
 use wy_name::ident::Ident;
 use wy_span::{Span, Spanned, WithLoc, WithSpan};
-use wy_syntax::record::Field;
-use wy_syntax::record::Record;
-use wy_syntax::tipo::{Annotation, Type};
-use wy_syntax::tipo::{Con, Quantified, Signature};
-use wy_syntax::tipo::{Parameter, Predicate};
-use wy_syntax::tipo::{Qualified, SimpleType};
-use wy_syntax::SpannedIdent;
+use wy_syntax::{
+    tipo::{
+        Annotation, Con, Parameter, Predicate, Qualified, Quantified, Signature, SimpleType, Type,
+    },
+    SpannedIdent,
+};
 
 use crate::error::*;
 use crate::stream::*;
@@ -146,7 +142,7 @@ impl<'t> TypeParser<'t> {
                 } else {
                     Type::Con(
                         if id.item().is_lower() {
-                            Con::Free(id)
+                            Con::Varied(id)
                         } else {
                             Con::Named(id)
                         },
@@ -174,9 +170,8 @@ impl<'t> TypeParser<'t> {
                 .expect_upper()
                 .map(|con| Type::Con(Con::Named(con), vec![])),
             Some(t) if t.is_brack_l() => self.brack_ty(),
-            // Some(t) if t.is_curly_l()  => self.curly_ty(),
             Some(t) if t.is_paren_l() => self.paren_ty(),
-            _ => self.invalid_type().err(),
+            _ => self.invalid_type_start().err(),
         }
     }
 
@@ -225,17 +220,12 @@ impl<'t> TypeParser<'t> {
 
         let mut args = vec![];
         match ty {
-            Type::Var(n) | Type::Con(Con::Named(n) | Con::Free(n), _)
+            Type::Var(n) | Type::Con(Con::Named(n) | Con::Varied(n), _)
                 if self.peek_on(Lexeme::begins_ty) =>
             {
                 while !(self.is_done() || lexpat!(self on [parenR]|[,]|[->])) {
                     if !self.peek_on(Lexeme::begins_ty) {
-                        return Err(ParseError::Expected(
-                            self.srcloc(),
-                            LexKind::AnyOf(&[LexKind::Upper, LexKind::Lower]),
-                            self.lookahead::<1>()[0],
-                            self.text(),
-                        ));
+                        return self.invalid_type_start().err();
                     };
                     args.push(self.ty_atom()?);
                 }
@@ -250,14 +240,7 @@ impl<'t> TypeParser<'t> {
                     ty = self.arrow_ty(ty)?;
                     break;
                 }
-                _ => {
-                    return Err(ParseError::Unbalanced {
-                        srcloc: self.srcloc(),
-                        found: self.bump(),
-                        delim: Lexeme::ParenR,
-                        source: self.text(),
-                    })
-                }
+                _ => return self.unbalanced_paren().err(),
             }
         }
 
@@ -295,26 +278,6 @@ impl<'t> TypeParser<'t> {
             self.eat(Lexeme::BrackR)?;
             Ok(Type::Vec(Box::new(tipo)))
         }
-    }
-
-    pub fn curly_ty(&mut self) -> Parsed<Type> {
-        use Lexeme::{Comma, CurlyL, CurlyR};
-
-        Ok(Type::Rec(Record::Anon(
-            self.delimited([CurlyL, Comma, CurlyR], |parse| {
-                parse.record_entry_ty(Self::ty_node)
-            })?,
-        )))
-    }
-
-    fn record_entry_ty<F>(&mut self, mut f: F) -> Parsed<Field<SpannedIdent, Type>>
-    where
-        F: FnMut(&mut Self) -> Parsed<Type>,
-    {
-        let key = self.expect_lower()?;
-        self.eat(Lexeme::Colon2)?;
-        let typ = f(self)?;
-        Ok(Field::Entry(key, typ))
     }
 }
 
@@ -357,8 +320,8 @@ mod test {
             Parser::from_str(src)
                 .ty_node()
                 .map(|ty| {
-                    ty.map_fst(&mut Func::Fresh(Spanned::take_item))
-                        .map_snd(&mut Func::Fresh(Spanned::take_item))
+                    ty.map_fst(&mut Func::New(Spanned::take_item))
+                        .map_snd(&mut Func::New(Spanned::take_item))
                 })
                 .map(|result| assert_eq!(result, expected))
                 .unwrap();
@@ -382,8 +345,8 @@ mod test {
             Parser::from_str(src)
                 .ty_node()
                 .map(|ty| {
-                    ty.map_fst(&mut Func::Fresh(Spanned::take_item))
-                        .map_snd(&mut Func::Fresh(Spanned::take_item))
+                    ty.map_fst(&mut Func::New(Spanned::take_item))
+                        .map_snd(&mut Func::New(Spanned::take_item))
                 })
                 .map(|result| assert_eq!(result, expected))
                 .unwrap();
@@ -396,8 +359,8 @@ mod test {
         let result = Parser::from_str(src)
             .ty_node()
             .map(|ty| {
-                ty.map_fst(&mut Func::Fresh(Spanned::take_item))
-                    .map_snd(&mut Func::Fresh(Spanned::take_item))
+                ty.map_fst(&mut Func::New(Spanned::take_item))
+                    .map_snd(&mut Func::New(Spanned::take_item))
             })
             .unwrap();
         let [foo_ty, x, y, z, bar_ty] = Symbol::intern_many(["Foo", "x", "y", "z", "Bar"]);
@@ -422,8 +385,8 @@ mod test {
         let result = Parser::from_str(src)
             .ty_node()
             .map(|ty| {
-                ty.map_fst(&mut Func::Fresh(Spanned::take_item))
-                    .map_snd(&mut Func::Fresh(Spanned::take_item))
+                ty.map_fst(&mut Func::New(Spanned::take_item))
+                    .map_snd(&mut Func::New(Spanned::take_item))
             })
             .unwrap();
         println!("{}", &result);
@@ -455,8 +418,8 @@ mod test {
         let sig = Parser::from_str(src)
             .ty_signature()
             .map(|ty| {
-                ty.map_fst(&mut Func::Fresh(Spanned::take_item))
-                    .map_snd(&mut Func::Fresh(Spanned::take_item))
+                ty.map_fst(&mut Func::New(Spanned::take_item))
+                    .map_snd(&mut Func::New(Spanned::take_item))
             })
             .unwrap();
         let [a, b, m] = Symbol::intern_many_with(["a", "b", "m"], Ident::Lower);
@@ -475,13 +438,13 @@ mod test {
                     },
                 ],
                 tipo: Type::Fun(
-                    Box::new(Type::Con(Con::Free(m), vec![Type::Var(a)])),
+                    Box::new(Type::Con(Con::Varied(m), vec![Type::Var(a)])),
                     Box::new(Type::Fun(
                         Box::new(Type::Fun(
                             Box::new(Type::Var(a)),
-                            Box::new(Type::Con(Con::Free(m), vec![Type::Var(b)])),
+                            Box::new(Type::Con(Con::Varied(m), vec![Type::Var(b)])),
                         )),
-                        Box::new(Type::Con(Con::Free(m), vec![Type::Var(b)])),
+                        Box::new(Type::Con(Con::Varied(m), vec![Type::Var(b)])),
                     )),
                 ),
             },
