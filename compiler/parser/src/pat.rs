@@ -2,6 +2,7 @@ use wy_common::Deque;
 use wy_lexer::lexpat;
 use wy_lexer::{Lexeme, Token};
 
+use wy_span::{Span, WithLoc};
 use wy_syntax::pattern::RawPattern;
 use wy_syntax::record::{Field, Record};
 use wy_syntax::SpannedIdent;
@@ -23,14 +24,24 @@ impl<'t> PatParser<'t> {
             // only numbers are allowed as negated patterns without
             // needing parentheses surroundthing them
             Some(t) if t.is_minus_sign() => {
+                let coord = self.get_coord();
                 let neg = self.bump();
                 if self.peek_on(Lexeme::is_numeric) {
                     Ok(RawPattern::Neg(Box::new(self.lit_pattern()?)))
                 } else {
                     self.queue.push_front(neg);
-                    Err(self.snapshot()).map_err(|(srcloc, token, txt)| {
-                        ParseError::InvalidNegatedPattern(srcloc, token, txt)
-                    })
+                    let tok = self.next_token();
+                    ParseError::new(
+                        true,
+                        coord,
+                        Span(neg.span.start(), tok.span.end()),
+                        SyntaxError::InvalidNegatedPattern,
+                        [("", Evidence::Tok(tok)), ("", Evidence::Empty)],
+                    )
+                    .err()
+                    // Err(self.snapshot()).map_err(|(srcloc, token, txt)| {
+                    //     ParseError::InvalidNegatedPattern(srcloc, token, txt)
+                    // })
                 }
             }
             lexpat!(~[parenL]) => self.grouped_pattern(),
@@ -101,15 +112,6 @@ impl<'t> PatParser<'t> {
 
     fn grouped_pattern(&mut self) -> Parsed<RawPattern> {
         use Lexeme::{Comma, ParenL, ParenR};
-
-        let pat_err = |this: &mut Self| {
-            Err(ParseError::Unbalanced {
-                srcloc: this.srcloc(),
-                found: this.lookahead::<1>()[0],
-                delim: ParenR,
-                source: this.text(),
-            })
-        };
 
         self.eat(ParenL)?;
 
@@ -188,7 +190,7 @@ impl<'t> PatParser<'t> {
                         self.eat(ParenR)?;
                         Ok(pat)
                     }
-                    _ => pat_err(self),
+                    _ => self.unbalanced_paren().err(),
                 }
             }
 
@@ -210,11 +212,11 @@ impl<'t> PatParser<'t> {
                         self.eat(ParenR)?;
                         Ok(pat)
                     }
-                    _ => pat_err(self),
+                    _ => self.unbalanced_paren().err(),
                 }
             }
 
-            _ => pat_err(self),
+            _ => self.unbalanced_paren().err(),
         }
     }
 
@@ -249,17 +251,10 @@ impl<'t> PatParser<'t> {
             elems.push(self.pattern()?);
         }
         elems.reverse();
-        elems
+        Ok(elems
             .into_iter()
             .reduce(|a, c| RawPattern::Lnk(Box::new(c), Box::new(a)))
-            .ok_or_else(|| {
-                ParseError::Custom(
-                    self.srcloc(),
-                    self.lookahead::<1>()[0],
-                    "after failure to reduce cons pattern",
-                    self.text(),
-                )
-            })
+            .unwrap())
     }
 
     fn union_pattern(&mut self, first: RawPattern) -> Parsed<RawPattern> {
@@ -320,7 +315,7 @@ mod test {
 
     #[test]
     fn test_pattern() {
-        let int = |n| Pattern::Lit(Literal::mk_simple_integer(n));
+        let int = |n| Pattern::Lit(Literal::simple_int(n));
         let [a, b, c, d] = Symbol::intern_many(["a", "b", "c", "d"]);
         let id = |s| Pattern::Var(Ident::Lower(s));
         let lnk = |px, py| Pattern::Lnk(Box::new(px), Box::new(py));
@@ -332,14 +327,14 @@ mod test {
             ),
             (
                 "-3",
-                Pattern::Neg(Box::new(Pattern::Lit(Literal::mk_simple_integer(3)))),
+                Pattern::Neg(Box::new(Pattern::Lit(Literal::simple_int(3)))),
             ),
             (
                 "(-1, -2, -3)",
                 Pattern::Tup(vec![
-                    Pattern::Neg(Box::new(Pattern::Lit(Literal::mk_simple_integer(1)))),
-                    Pattern::Neg(Box::new(Pattern::Lit(Literal::mk_simple_integer(2)))),
-                    Pattern::Neg(Box::new(Pattern::Lit(Literal::mk_simple_integer(3)))),
+                    Pattern::Neg(Box::new(Pattern::Lit(Literal::simple_int(1)))),
+                    Pattern::Neg(Box::new(Pattern::Lit(Literal::simple_int(2)))),
+                    Pattern::Neg(Box::new(Pattern::Lit(Literal::simple_int(3)))),
                 ]),
             ),
             ("(a:b:(c:d))", lnk(id(a), lnk(id(b), lnk(id(c), id(d))))),
@@ -360,8 +355,8 @@ mod test {
         for (s, x) in pairs {
             assert_eq!(
                 Parser::from_str(s).pattern().map(|expr| expr
-                    .map_fst(&mut Func::Fresh(Spanned::take_item))
-                    .map_snd(&mut Func::Fresh(Spanned::take_item))),
+                    .map_fst(&mut Func::New(Spanned::take_item))
+                    .map_snd(&mut Func::New(Spanned::take_item))),
                 Ok(x)
             )
         }
@@ -378,8 +373,8 @@ mod test {
         assert_eq!(
             Ok(link),
             Parser::from_str("(a:b:c)").pattern().map(|expr| expr
-                .map_fst(&mut Func::Fresh(Spanned::take_item))
-                .map_snd(&mut Func::Fresh(Spanned::take_item)))
+                .map_fst(&mut Func::New(Spanned::take_item))
+                .map_snd(&mut Func::New(Spanned::take_item)))
         )
     }
 }

@@ -3,8 +3,8 @@ use wy_common::{
     deque,
     variant_preds, Deque, Set,
 };
-use wy_lexer::Literal;
-use wy_name::ident::{Ident, Identifier};
+pub use wy_lexer::Literal;
+pub use wy_name::ident::{Ident, Identifier};
 
 use crate::{decl::Arity, record::Record, stmt::Alternative, tipo::Type, Binding, SpannedIdent};
 
@@ -815,7 +815,7 @@ mod tests {
     fn test_flatten_app() {
         let [f, g, h]: [Expression<Ident, Ident>; 3] =
             symbol::intern_many_with(["f", "g", "h"], |sym| Expression::Ident(Ident::Lower(sym)));
-        let lit = |n| Expression::Lit(Literal::mk_simple_integer(n));
+        let lit = |n| Expression::Lit(Literal::simple_int(n));
         let [one, three, four]: [Expression<Ident, Ident>; 3] = [lit(1), lit(3), lit(4)];
 
         // (((f (g 1)) h) 3) 4)

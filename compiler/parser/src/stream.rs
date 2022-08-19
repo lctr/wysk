@@ -1,16 +1,13 @@
 use std::path::Path;
 
 use wy_common::Deque;
-use wy_lexer::{
-    token::{LexKind, Lexlike},
-    Lexeme, Lexer, Token,
-};
+use wy_lexer::{token::Lexlike, Lexeme, Lexer, Token};
 use wy_name::ident::Ident;
 
-use wy_span::{BytePos, Coord, Dummy, Span, WithLoc, WithSpan};
+use wy_span::{ranges::CoordSpan, BytePos, Coord, Dummy, Span, WithLoc, WithSpan};
 use wy_syntax::fixity::FixityTable;
 
-use crate::error::{ParseError, Parsed, Report, SrcLoc, SrcPath};
+use crate::error::{Expects, ParseError, Parsed, ParserErrors, Report, SrcLoc, SrcPath};
 
 #[derive(Debug)]
 pub struct Parser<'t> {
@@ -18,6 +15,7 @@ pub struct Parser<'t> {
     pub(crate) queue: Deque<Token>,
     pub fixities: FixityTable,
     pub path: SrcPath,
+    pub errors: ParserErrors,
 }
 
 impl<'t> WithSpan for Parser<'t> {
@@ -37,20 +35,21 @@ impl<'t> WithLoc for Parser<'t> {
 }
 
 impl<'t> Report for Parser<'t> {
-    fn get_srcloc(&mut self) -> SrcLoc {
-        Parser::srcloc(self)
-    }
-
-    fn get_source(&self) -> String {
-        Parser::text(self)
-    }
-
     fn next_token(&mut self) -> Token {
-        let pos = self.get_pos();
-        self.peek_ahead().copied().unwrap_or_else(|| Token {
-            lexeme: Lexeme::Eof,
-            span: Span(pos, pos),
-        })
+        self.peek_ahead()
+            .copied()
+            .unwrap_or_else(|| self.lexer.eof_token())
+    }
+
+    fn next_coord_span(&mut self) -> CoordSpan {
+        CoordSpan {
+            coord: self.get_coord(),
+            span: self.next_token().span,
+        }
+    }
+
+    fn store_error(&mut self, error: ParseError) {
+        self.errors.push(error)
     }
 }
 
@@ -61,6 +60,7 @@ impl<'t> Parser<'t> {
             path: SrcPath::File(path.as_ref().to_path_buf()),
             queue: Deque::new(),
             fixities: FixityTable::new(Ident::Infix),
+            errors: ParserErrors::default(),
         }
     }
 
@@ -70,6 +70,7 @@ impl<'t> Parser<'t> {
             path: SrcPath::Direct,
             queue: Deque::new(),
             fixities: FixityTable::new(Ident::Infix),
+            errors: ParserErrors::default(),
         }
     }
 
@@ -115,9 +116,9 @@ impl<'t> Parser<'t> {
 
             t if t.cmp_lex(lexeme) => Ok(self.bump()),
 
-            Some(_) => match *lexeme {
-                delim if delim.is_right_delim() => Err(self.unbalanced(delim)),
-                found => self.expected(LexKind::Specified(found)).err(),
+            Some(_t) => match *lexeme {
+                delim if delim.is_right_delim() => self.unbalanced_delim(delim).err(),
+                expected => self.expected_token(expected).err(),
             },
         }
     }
@@ -471,7 +472,7 @@ mod test {
         assert_eq!(
             parser.peek_ahead(),
             Some(&Token {
-                lexeme: Lexeme::Lit(Literal::mk_simple_integer(1)),
+                lexeme: Lexeme::Lit(Literal::simple_int(1)),
                 span: Span(BytePos::strlen("foo bar ["), BytePos::strlen("foo bar [1"))
             })
         )

@@ -163,7 +163,7 @@ impl Literal {
         suffix: None,
     };
 
-    pub fn mk_simple_integer(val: usize) -> Self {
+    pub fn simple_int(val: usize) -> Self {
         let symbol = match val {
             0 => wy_intern::sym::DIGIT_0,
             1 => wy_intern::sym::DIGIT_1,

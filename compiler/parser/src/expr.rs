@@ -371,7 +371,8 @@ impl<'t> ExprParser<'t> {
         } else if self.bump_on(If) {
             Ok((args, Some(self.expression()?)))
         } else {
-            self.invalid_pattern().err()
+            self.custom_error("").err()
+            // self.invalid_pattern().err()
         }
     }
 
@@ -623,8 +624,8 @@ y -> y;
         let [a, b, c, d, h, f, x, y] =
             Symbol::intern_many(["A", "B", "c", "d", "h", "f", "x", "y"]);
         let expr = Parser::from_str(src).case_expr().map(|expr| {
-            expr.map_fst(&mut Func::Fresh(Spanned::take_item))
-                .map_snd(&mut Func::Fresh(Spanned::take_item))
+            expr.map_fst(&mut Func::New(Spanned::take_item))
+                .map_snd(&mut Func::New(Spanned::take_item))
         });
         println!("{:#?}", &expr);
         let expected = Expression::Case(
@@ -664,7 +665,7 @@ y -> y;
         use Expression::Lit;
         let [op1, op2, plus, times, minus, fun] =
             Symbol::intern_many(["<>", "><", "+", "*", "-", "fun"]);
-        let int = |n| Lit(Literal::mk_simple_integer(n));
+        let int = |n| Lit(Literal::simple_int(n));
 
         let tests = [
             (
@@ -704,8 +705,8 @@ y -> y;
                 Parser::from_str(src)
                     .expression()
                     .map(|expr| expr
-                        .map_fst(&mut Func::Fresh(Spanned::take_item))
-                        .map_snd(&mut Func::Fresh(Spanned::take_item)))
+                        .map_fst(&mut Func::New(Spanned::take_item))
+                        .map_snd(&mut Func::New(Spanned::take_item)))
                     .unwrap(),
                 expected
             );
@@ -724,8 +725,8 @@ y -> y;
         let actual = Parser::from_str(src)
             .expression()
             .map(|expr| {
-                expr.map_fst(&mut Func::Fresh(Spanned::take_item))
-                    .map_snd(&mut Func::Fresh(Spanned::take_item))
+                expr.map_fst(&mut Func::New(Spanned::take_item))
+                    .map_snd(&mut Func::New(Spanned::take_item))
             })
             .unwrap();
         let expected = Expression::Let(
@@ -735,15 +736,15 @@ y -> y;
                     tsig: Signature::Implicit,
                     arms: vec![
                         Arm {
-                            args: vec![Pattern::Lit(Literal::mk_simple_integer(1))],
+                            args: vec![Pattern::Lit(Literal::simple_int(1))],
                             cond: None,
-                            body: Expression::Lit(Literal::mk_simple_integer(2)),
+                            body: Expression::Lit(Literal::simple_int(2)),
                             wher: vec![],
                         },
                         Arm {
-                            args: vec![Pattern::Lit(Literal::mk_simple_integer(3))],
+                            args: vec![Pattern::Lit(Literal::simple_int(3))],
                             cond: None,
-                            body: Expression::Lit(Literal::mk_simple_integer(4)),
+                            body: Expression::Lit(Literal::simple_int(4)),
                             wher: vec![],
                         },
                     ],
@@ -764,7 +765,7 @@ y -> y;
                                 body: Expression::Infix {
                                     left: Box::new(Expression::Ident(x)),
                                     infix: Ident::Infix(Symbol::intern("+")),
-                                    right: Box::new(Expression::Lit(Literal::mk_simple_integer(2))),
+                                    right: Box::new(Expression::Lit(Literal::simple_int(2))),
                                 },
                                 wher: vec![],
                             }],
@@ -777,12 +778,12 @@ y -> y;
                     Box::new(Expression::Ident(bar)),
                     Box::new(Expression::App(
                         Box::new(Expression::Ident(foo)),
-                        Box::new(Expression::Lit(Literal::mk_simple_integer(1))),
+                        Box::new(Expression::Lit(Literal::simple_int(1))),
                     )),
                 )),
                 Box::new(Expression::App(
                     Box::new(Expression::Ident(foo)),
-                    Box::new(Expression::Lit(Literal::mk_simple_integer(2))),
+                    Box::new(Expression::Lit(Literal::simple_int(2))),
                 )),
             )),
         );
@@ -854,8 +855,8 @@ y -> y;
                 Parser::from_str(src)
                     .expression()
                     .map(|expr| expr
-                        .map_fst(&mut Func::Fresh(Spanned::take_item))
-                        .map_snd(&mut Func::Fresh(Spanned::take_item)))
+                        .map_fst(&mut Func::New(Spanned::take_item))
+                        .map_snd(&mut Func::New(Spanned::take_item)))
                     .unwrap(),
                 expected
             );
@@ -894,8 +895,8 @@ y -> y;
                             Pattern::Var(x),
                             Expression::Range(Box::new(Range::FromThenTo([
                                 Expression::Lit(Literal::DIGIT_ZERO),
-                                Expression::Lit(Literal::mk_simple_integer(5)),
-                                Expression::Lit(Literal::mk_simple_integer(10)),
+                                Expression::Lit(Literal::simple_int(5)),
+                                Expression::Lit(Literal::simple_int(10)),
                             ]))),
                         ),
                         Statement::Generator(
@@ -913,8 +914,8 @@ y -> y;
             let actual = Parser::from_str(src)
                 .expression()
                 .map(|expr| {
-                    expr.map_fst(&mut Func::Fresh(Spanned::take_item))
-                        .map_snd(&mut Func::Fresh(Spanned::take_item))
+                    expr.map_fst(&mut Func::New(Spanned::take_item))
+                        .map_snd(&mut Func::New(Spanned::take_item))
                 })
                 .unwrap();
             diff_assert_eq!(actual, expected);
@@ -934,21 +935,33 @@ y -> y;
                 Box::new(E::Ident(map)),
                 Box::new(E::Section(Prefix {
                     prefix: plus,
-                    right: Box::new(E::Lit(Literal::mk_simple_integer(5))),
+                    right: Box::new(E::Lit(Literal::simple_int(5))),
                 })),
             )),
             Box::new(E::Array(vec![
-                E::Lit(Literal::mk_simple_integer(1)),
-                E::Lit(Literal::mk_simple_integer(2)),
-                E::Lit(Literal::mk_simple_integer(3)),
+                E::Lit(Literal::simple_int(1)),
+                E::Lit(Literal::simple_int(2)),
+                E::Lit(Literal::simple_int(3)),
             ])),
         );
 
         diff_assert_eq!(
             Parser::from_str(src).expression().map(|expr| expr
-                .map_fst(&mut Func::Fresh(Spanned::take_item))
-                .map_snd(&mut Func::Fresh(Spanned::take_item))),
+                .map_fst(&mut Func::New(Spanned::take_item))
+                .map_snd(&mut Func::New(Spanned::take_item))),
             Ok(expected)
         )
+    }
+
+    fn de_span(expr: Expression) -> Expression<Ident, Ident> {
+        expr.map_fst(&mut Func::New(Spanned::take_item))
+            .map_snd(&mut Func::New(Spanned::take_item))
+    }
+
+    #[test]
+    fn test_expr_app_assoc() {
+        let without_parens = de_span(Parser::from_str("f x y").expression().unwrap());
+        let with_parens = de_span(Parser::from_str("(f x) y").expression().unwrap());
+        assert_eq!(without_parens, with_parens);
     }
 }

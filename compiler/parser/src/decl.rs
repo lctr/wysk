@@ -342,8 +342,8 @@ mod test {
         let decl = Parser::from_str(src)
             .data_decl()
             .map(|ty| {
-                ty.map_fst(&mut Func::Fresh(Spanned::take_item))
-                    .map_snd(&mut Func::Fresh(Spanned::take_item))
+                ty.map_fst(&mut Func::New(Spanned::take_item))
+                    .map_snd(&mut Func::New(Spanned::take_item))
             })
             .unwrap();
         let [a, b, foo_a, foo_b] =
@@ -419,8 +419,8 @@ impl |Eq a| Eq [a] {
         let actual = Parser::from_str(src)
             .inst_decl()
             .map(|ty| {
-                ty.map_fst(&mut Func::Fresh(Spanned::take_item))
-                    .map_snd(&mut Func::Fresh(Spanned::take_item))
+                ty.map_fst(&mut Func::New(Spanned::take_item))
+                    .map_snd(&mut Func::New(Spanned::take_item))
             })
             .unwrap();
         let expected = {
@@ -483,8 +483,8 @@ impl |Eq a| Eq [a] {
         let parsed = Parser::from_str(src)
             .newtype_decl()
             .map(|ty| {
-                ty.map_fst(&mut Func::Fresh(Spanned::take_item))
-                    .map_snd(&mut Func::Fresh(Spanned::take_item))
+                ty.map_fst(&mut Func::New(Spanned::take_item))
+                    .map_snd(&mut Func::New(Spanned::take_item))
             })
             .unwrap();
         let [parser_ty, a, parse, string_ty] =
@@ -552,12 +552,12 @@ fn some_record_function
             Symbol::intern_many_with(["a", "b", "c", "some_record_function"], Ident::Lower);
         let [con_a] = Symbol::intern_many_with(["A"], Ident::Upper);
         let [plus] = Symbol::intern_many_with(["+"], Ident::Infix);
-        let mkint = Literal::mk_simple_integer;
+        let mkint = Literal::simple_int;
         let actual = Parser::from_str(src)
             .function_decl()
             .map(|ty| {
-                ty.map_fst(&mut Func::Fresh(Spanned::take_item))
-                    .map_snd(&mut Func::Fresh(Spanned::take_item))
+                ty.map_fst(&mut Func::New(Spanned::take_item))
+                    .map_snd(&mut Func::New(Spanned::take_item))
             })
             .unwrap();
         let expected = FnDecl {
