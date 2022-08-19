@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use wy_common::{deque, Deque};
 use wy_intern::{Symbol, Symbolic};
+use wy_span::Spanned;
 
 use crate::ident::{Ident, Identifier};
 
@@ -375,16 +376,16 @@ where
 
 /// Printer to display infix identifiers wrapped within parentheses
 /// when within `Chain`s.
-pub struct Chained<'id>(&'id Chain<Ident>);
+pub struct ChainPrinter<'id>(&'id Chain<Ident>);
 
-impl<'id> Chained<'id> {
+impl<'id> ChainPrinter<'id> {
     #[inline]
     pub fn each(&self) -> impl Iterator<Item = &'id Ident> + '_ {
         self.0.iter()
     }
 }
 
-impl<'id> std::fmt::Display for Chained<'id> {
+impl<'id> std::fmt::Display for ChainPrinter<'id> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (n, id) in self.each().enumerate() {
             if n > 0 {
