@@ -7,27 +7,16 @@ pub use serde;
 pub mod either;
 pub mod functor;
 pub mod iter;
+mod macros;
 pub mod mapstack;
 pub mod newtypes;
 pub mod text;
 
 // pub use functor::Mappable;
-pub use iter::{Deque, HashMap, HashSet, Hashable, Map, Set, VecDeque};
-
-#[macro_export]
-macro_rules! deque {
-    () => { $crate::Deque::new() };
-    (
-        $($ex0:expr $(, $expr:expr)*)+
-    ) => {{
-        let mut deq = $crate::Deque::new();
-        $(
-            deq.push_back($ex0);
-            $(deq.push_back($expr);)*
-        )+
-        deq
-    }};
-}
+pub use iter::{
+    deque::{Deque, VecDeque},
+    HashMap, HashSet, Hashable, Map, Set,
+};
 
 /// Generates `.iter()` methods for the provided fields in a struct.
 ///
