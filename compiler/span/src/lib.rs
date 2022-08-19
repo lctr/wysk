@@ -8,6 +8,7 @@ pub mod wrappers;
 pub use col::Col;
 pub use coord::Coord;
 pub use pos::BytePos;
+use ranges::CoordSpan;
 pub use ranges::{Position, Region, Span};
 pub use row::Row;
 pub use wrappers::{Located, Positioned, Spanned};
@@ -140,6 +141,29 @@ pub trait WithLoc {
     }
 }
 
+pub trait WithCoordSpan {
+    fn get_coord_span(&self) -> CoordSpan;
+
+    fn get_coord(&self) -> Coord {
+        self.get_coord_span().coord()
+    }
+    fn get_span(&self) -> Span {
+        self.get_coord_span().span()
+    }
+    fn get_row(&self) -> Row {
+        self.get_coord().row
+    }
+    fn get_col(&self) -> Col {
+        self.get_coord().col
+    }
+    fn start(&self) -> BytePos {
+        self.get_span().start()
+    }
+    fn end(&self) -> BytePos {
+        self.get_span().end()
+    }
+}
+
 pub trait WithPosition: WithSpan + WithLoc {
     fn get_position(&self) -> Position;
     fn get_span(&self) -> Span {
@@ -253,6 +277,12 @@ impl WithSpan for BytePos {
 
 impl WithLoc for Coord {
     fn get_coord(&self) -> Coord {
+        *self
+    }
+}
+
+impl WithCoordSpan for CoordSpan {
+    fn get_coord_span(&self) -> CoordSpan {
         *self
     }
 }
