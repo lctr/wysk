@@ -1,14 +1,12 @@
 use std::{
     env,
+    error::Error,
     ffi::OsStr,
     fs,
-    ops::Mul,
     path::{Path, PathBuf},
 };
 
 use serde::{Deserialize, Serialize};
-
-// use wy_failure::{Failure, Outcome};
 
 use crate::manifest::Manifest;
 
@@ -18,30 +16,57 @@ pub const WY_FILE_EXT: &'static str = "wy";
 
 pub type IoResult<X> = Result<X, std::io::Error>;
 
-pub fn ext_str(p: &impl AsRef<Path>) -> Option<&str> {
-    p.as_ref().extension().and_then(OsStr::to_str)
+pub fn ext_str(p: &Path) -> Option<&str> {
+    p.extension().and_then(OsStr::to_str)
 }
 
-pub fn is_target_file<P: AsRef<Path>>(p: &P) -> bool {
-    wy_common::case!(Some(WY_FILE_EXT), ext_str(p))
-}
-
-pub fn some_target_entry(entry: fs::DirEntry) -> Option<PathBuf> {
-    let path = entry.path();
-    if is_target_file(&path) {
-        Some(path)
-    } else {
-        None
-    }
+pub fn is_target_file<P: AsRef<Path>>(p: P) -> bool {
+    matches!(ext_str(p.as_ref()), Some(ext) if ext == WY_FILE_EXT)
 }
 
 /// Checks whether the given path corresponds to a manifest file. Accepts
 /// files named `manifest.toml` case insensitively.
-pub fn is_manifest_file<P: AsRef<Path>>(p: &P) -> bool {
-    let path = p.as_ref();
+pub fn is_manifest_file(path: &Path) -> bool {
     path.ends_with("Manifest.toml")
         || path.ends_with("manifest.toml")
         || path.ends_with("MANIFEST.toml")
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct CfgId(pub(crate) usize);
+
+impl std::fmt::Debug for CfgId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "CfgId({})", &self.0)
+    }
+}
+
+impl std::fmt::Display for CfgId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "CfgId({})", &self.0)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CfgPath {
+    id: CfgId,
+    path: PathBuf,
+}
+
+impl CfgPath {
+    pub fn id(&self) -> CfgId {
+        self.id
+    }
+
+    pub fn path(&self) -> &Path {
+        self.path.as_path()
+    }
+}
+
+impl AsRef<Path> for CfgPath {
+    fn as_ref(&self) -> &Path {
+        self.path.as_path()
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -59,21 +84,31 @@ impl std::fmt::Display for FileId {
     }
 }
 
-/// Will generate an `Atlas` given a path, but unlike the standard methods in
-/// creating an `Atlas`, this function will *only* look at files contained
-/// within the immediate descendant `src` directory.
-pub fn new_sources(p: impl AsRef<Path>) -> Option<Atlas> {
-    let p = p.as_ref();
-    let path = if p.ends_with("src") {
-        p.to_path_buf()
-    } else {
-        p.join("src")
-    };
-    if p.exists() {
-        Atlas::new_within_dir(path).ok()
-    } else {
-        None
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum AtlasItem<'atlas> {
+    CfgPath(&'atlas CfgPath),
+    FilePath(&'atlas FilePath),
+}
+
+impl<'a> AtlasItem<'a> {
+    pub fn is_cfgpath(&self) -> bool {
+        matches!(self, Self::CfgPath(_))
     }
+    pub fn is_filepath(&self) -> bool {
+        matches!(self, Self::FilePath(_))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum AtlasItemId {
+    CfgId(CfgId),
+    FileId(FileId),
+}
+
+wy_common::variant_preds! {
+    AtlasItemId
+    | is_cfg_id => CfgId(_)
+    | is_file_id => FileId(_)
 }
 
 /// Collection of source file paths which will be visited and
@@ -89,108 +124,125 @@ pub fn new_sources(p: impl AsRef<Path>) -> Option<Atlas> {
 /// Additionally, a project generally contains all of the source files within
 /// the `src` subdirectory contained within the directory within which the
 /// compiler is run.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Atlas {
-    sources: Vec<FilePath>,
+    filepaths: Vec<FilePath>,
+    cfgpaths: Vec<CfgPath>,
 }
 
 impl Atlas {
     pub fn new() -> Self {
-        Self { sources: vec![] }
+        Self {
+            filepaths: vec![],
+            cfgpaths: vec![],
+        }
     }
 
     pub fn with_prelude() -> IoResult<Self> {
         Self::new_within_dir(PRELUDE_PATH)
     }
 
-    /// Shortcut for calling `Atlas::walk_dir` and building an `Atlas` from the
-    /// results.
-    pub fn try_with_path<P: AsRef<Path>>(p: P) -> IoResult<Self> {
-        Self::walk_path(p).map(|pbs| Self {
-            sources: pbs
-                .into_iter()
-                .enumerate()
-                .map(|(n, path)| FilePath {
-                    fid: FileId(n),
-                    path,
-                })
-                .collect(),
-        })
+    #[inline]
+    pub fn filepath_count(&self) -> usize {
+        self.filepaths.len()
     }
 
-    /// Returns the length of the inner vector containing all the `Src`
-    /// instances. The value returned corresponds to the number of files found
-    /// ending in `.wy` within the current directory as well as within ancestor
-    /// directories.
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.sources.len()
+    pub fn cfgpath_count(&self) -> usize {
+        self.cfgpaths.len()
     }
 
     #[inline]
-    pub fn has(&self, mut f: impl FnMut(&FilePath) -> bool) -> bool {
-        self.find_src(|s| f(*s)).is_some()
-    }
-
-    #[inline]
-    pub fn has_src_path(&self, path: impl AsRef<Path>) -> bool {
+    pub fn has_filepath(&self, path: impl AsRef<Path>) -> bool {
         let p = path.as_ref();
-        self.sources_iter().any(|src| src.path() == p)
+        self.filepaths_iter().any(|src| src.path() == p)
     }
 
-    pub fn find_src(&self, f: impl FnMut(&&FilePath) -> bool) -> Option<&FilePath> {
-        self.sources_iter().find(f)
+    pub fn find_filepath(&self, f: impl FnMut(&&FilePath) -> bool) -> Option<&FilePath> {
+        self.filepaths_iter().find(f)
+    }
+
+    #[inline]
+    pub fn has_cfgpath(&self, path: impl AsRef<Path>) -> bool {
+        let p = path.as_ref();
+        self.cfgpaths.iter().any(|cfg| cfg.path() == p)
+    }
+
+    pub fn find_cfgpath(&self, f: impl FnMut(&&CfgPath) -> bool) -> Option<&CfgPath> {
+        self.cfgpaths_iter().find(f)
     }
 
     pub fn new_within_dir(dir: impl AsRef<Path>) -> IoResult<Self> {
         let mut atlas = Self::new();
         let paths = Self::walk_path(dir.as_ref())?;
-        let _ = atlas.add_paths(paths);
+        atlas.add_paths(paths);
         Ok(atlas)
     }
 
+    /// Returns `true` if a given path has been stored as either a
+    /// `FilePath` or a `CfgPath`.
     pub fn contains_path(&self, path: impl AsRef<Path>) -> bool {
         let path = path.as_ref();
-        self.sources.iter().any(|fp| fp.path() == path)
+        self.cfgpaths_iter()
+            .map(|cfg| cfg.path())
+            .chain(self.filepaths_iter().map(|fp| fp.path()))
+            .any(|p| p == path)
     }
 
-    pub fn add_path<P: AsRef<Path>>(&mut self, path: P) -> Option<FileId> {
+    pub fn add_filepath<P: AsRef<Path>>(&mut self, path: P) -> Option<FileId> {
         let path = path.as_ref();
-        if let Some(n) = self.sources.iter().position(|fp| fp.path() == path) {
-            Some(FileId(n))
-        } else if is_target_file(&path) && !self.contains_path(path) {
-            let file_id = FileId(self.len());
-            self.sources.push(FilePath {
-                fid: file_id,
-                path: path.to_path_buf(),
-            });
-            Some(file_id)
+        if is_target_file(&path) {
+            if let Some(n) = self.find_filepath(|fp| fp.path() == path) {
+                Some(n.id())
+            } else {
+                let id = FileId(self.filepath_count());
+                self.filepaths.push(FilePath {
+                    id,
+                    path: path.to_path_buf(),
+                });
+                Some(id)
+            }
         } else {
             None
         }
     }
 
-    pub fn add_paths<'a, P: AsRef<Path>, I: IntoIterator<Item = P> + 'a>(
-        &'a mut self,
-        paths: I,
-    ) -> impl Iterator<Item = FileId> + 'a {
-        paths.into_iter().flat_map(|p| self.add_path(p))
-    }
-
-    pub fn add_source(&mut self, path: impl AsRef<Path>) {
+    pub fn add_cfgpath<P: AsRef<Path>>(&mut self, path: P) -> Option<CfgId> {
         let path = path.as_ref();
-        if is_target_file(&path) && !self.contains_path(path) {
-            self.sources.push(FilePath {
-                fid: FileId(self.len()),
-                path: path.to_path_buf(),
-            })
+        if is_manifest_file(&path) {
+            if let Some(n) = self.find_cfgpath(|fp| fp.path() == path) {
+                Some(n.id())
+            } else {
+                let id = CfgId(self.cfgpath_count());
+                self.cfgpaths.push(CfgPath {
+                    id,
+                    path: path.to_path_buf(),
+                });
+                Some(id)
+            }
+        } else {
+            None
         }
     }
 
-    pub fn add_sources<P: AsRef<Path>>(&mut self, sources: impl Iterator<Item = P>) {
-        for path in sources {
-            self.add_source(path)
+    pub fn add_path(&mut self, path: impl AsRef<Path>) -> Option<AtlasItemId> {
+        let path = path.as_ref();
+        if is_target_file(&path) {
+            self.add_filepath(path).map(AtlasItemId::FileId)
+        } else if is_manifest_file(path) {
+            self.add_cfgpath(path).map(AtlasItemId::CfgId)
+        } else {
+            None
         }
+    }
+
+    pub fn add_paths<P: AsRef<Path>, I: IntoIterator<Item = P>>(
+        &mut self,
+        paths: I,
+    ) -> Vec<AtlasItemId> {
+        paths
+            .into_iter()
+            .flat_map(|path| self.add_path(path))
+            .collect()
     }
 
     pub fn add_dir(&mut self, dir: Directory) {
@@ -202,43 +254,57 @@ impl Atlas {
             .for_each(|dir| self.extend(dir.all_wysk_files()))
     }
 
-    pub fn sources(&self) -> &[FilePath] {
-        self.sources.as_slice()
+    pub fn filepaths(&self) -> &[FilePath] {
+        self.filepaths.as_slice()
     }
 
     #[inline]
-    pub fn sources_iter(&self) -> std::slice::Iter<'_, FilePath> {
-        self.sources.iter()
+    pub fn filepaths_iter(&self) -> std::slice::Iter<'_, FilePath> {
+        self.filepaths.iter()
     }
 
     #[inline]
-    pub fn sources_iter_mut(&mut self) -> std::slice::IterMut<'_, FilePath> {
-        self.sources.iter_mut()
+    pub fn filepaths_iter_mut(&mut self) -> std::slice::IterMut<'_, FilePath> {
+        self.filepaths.iter_mut()
     }
 
-    pub fn relative_depth(root: impl AsRef<Path>, other: impl AsRef<Path>) -> IoResult<isize> {
-        root.as_ref().canonicalize().and_then(|root_p| {
-            other.as_ref().canonicalize().map(|other_p| {
-                let root_len = root_p.components().count();
-                let other_len = other_p.components().count();
-                if root_len < other_len { 1 } else { -1 }.mul(root_len.abs_diff(other_len) as isize)
-            })
-        })
+    pub fn cfgpaths(&self) -> &[CfgPath] {
+        self.cfgpaths.as_slice()
+    }
+
+    #[inline]
+    pub fn cfgpaths_iter(&self) -> std::slice::Iter<'_, CfgPath> {
+        self.cfgpaths.iter()
+    }
+
+    #[inline]
+    pub fn cfgpaths_iter_mut(&mut self) -> std::slice::IterMut<'_, CfgPath> {
+        self.cfgpaths.iter_mut()
+    }
+
+    pub fn stored_items(&self) -> impl Iterator<Item = AtlasItem> + '_ {
+        self.cfgpaths_iter()
+            .map(|cfg| AtlasItem::CfgPath(cfg))
+            .chain(self.filepaths_iter().map(|fp| AtlasItem::FilePath(fp)))
     }
 
     pub fn walk_dir(dir: &Directory) -> Self {
-        Self::walk_path(dir.path()).into_iter().flatten().collect()
+        Self::walk_path(dir.path())
+            .into_iter()
+            .flatten()
+            .fold(Self::new(), |mut this, path| todo!())
     }
 
-    /// Returns a vector containing the paths of **all** files ending in `.wy`
-    /// contained within the given directory (and subdirectories). Returns an
-    /// error if the given path is invalid.
+    /// Returns a vector containing the paths of **all** manifest
+    /// files (named `manifest.toml`) and wysk files (ending in `.wy`)
+    /// contained within the given directory (and subdirectories).
+    /// Returns an error if the given path is invalid.
     pub fn walk_path<P: AsRef<Path>>(p: P) -> IoResult<Vec<PathBuf>> {
         let mut paths = vec![];
         let mut queue: Vec<PathBuf> = vec![PathBuf::from(p.as_ref())];
         while let Some(x) = queue.pop() {
             if x.is_file() {
-                if is_target_file(&x) {
+                if is_target_file(&x) || is_manifest_file(&x) {
                     paths.push(x);
                 }
             } else if x.is_dir() {
@@ -296,36 +362,13 @@ impl std::ops::Index<FileId> for Atlas {
     type Output = FilePath;
 
     fn index(&self, index: FileId) -> &Self::Output {
-        &self.sources[index.0]
+        &self.filepaths[index.0]
     }
 }
 
 impl<P: AsRef<Path>> Extend<P> for Atlas {
     fn extend<T: IntoIterator<Item = P>>(&mut self, iter: T) {
-        self.add_sources(iter.into_iter())
-    }
-}
-
-impl FromIterator<PathBuf> for Atlas {
-    fn from_iter<T: IntoIterator<Item = PathBuf>>(iter: T) -> Self {
-        Self {
-            sources: iter
-                .into_iter()
-                .enumerate()
-                .map(|(n, p)| FilePath {
-                    fid: FileId(n),
-                    path: p,
-                })
-                .collect(),
-        }
-    }
-}
-
-impl FromIterator<FilePath> for Atlas {
-    fn from_iter<T: IntoIterator<Item = FilePath>>(iter: T) -> Self {
-        Atlas {
-            sources: iter.into_iter().collect(),
-        }
+        self.add_paths(iter);
     }
 }
 
@@ -336,7 +379,7 @@ impl FromIterator<FilePath> for Atlas {
 /// inadvertently being included in the `Atlas` file tree, etc.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FilePath {
-    fid: FileId,
+    id: FileId,
     path: PathBuf,
 }
 
@@ -346,8 +389,8 @@ impl FilePath {
     pub const MOD_PATH: &'static str = "mod.wy";
 
     /// Returns the `FileId` generated for this `Src` instance.
-    pub fn file_id(&self) -> FileId {
-        self.fid
+    pub fn id(&self) -> FileId {
+        self.id
     }
 
     pub fn file_name(&self) -> &str {
@@ -359,8 +402,8 @@ impl FilePath {
     /// Checks whether the first character of the file's name begins with an
     /// ascii alphabetic character
     pub fn name_is_valid(&self) -> bool {
-        self.file_name()
-            .starts_with(|c: char| c.is_ascii_alphabetic())
+        let filename = self.file_name();
+        filename.starts_with(|c: char| c.is_ascii_alphabetic())
     }
 
     /// Returns a string corresponding to the file's name with the first letter
@@ -396,7 +439,7 @@ impl FilePath {
     /// Note that this method will perform an IO search for files within the
     /// same directory. Additionally, this is not necessary for filesystems with
     /// case-insensitive filenames.
-    pub fn ambiguous_sibling(&self) -> bool {
+    pub fn has_ambiguous_sibling(&self) -> bool {
         let ext = self.path.extension();
         let mine = self.file_name();
         let len = mine.len();
@@ -441,7 +484,7 @@ impl FilePath {
             .ok()
             .and_then(|p| p.parent().map(Path::to_path_buf))
             .unwrap_or_else(|| PathBuf::from("."));
-        Directory::new(1, p)
+        Directory::new(p)
     }
 
     /// Converts a given path-like type `P` implementing `AsRef<Path>` into an
@@ -506,36 +549,6 @@ impl FilePath {
             false
         }
     }
-    /// Transparent wrapper over the `components` method from the `std::path`
-    /// module of the Rust standard library.
-    pub fn components(&self) -> std::path::Components {
-        self.path.components()
-    }
-
-    pub fn display(&self) -> String {
-        let mut parts = vec![];
-        let path = self.path.canonicalize().unwrap();
-        for (n, c) in path
-            .components()
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .enumerate()
-        {
-            if n < 4 {
-                parts.push(c.as_os_str().to_string_lossy());
-                if n < 3 {
-                    parts.push(if cfg!(windows) { "\\" } else { "/" }.into())
-                }
-            } else {
-                break;
-            }
-        }
-        parts.into_iter().rfold(String::new(), |mut a, c| {
-            a.push_str(c.as_ref());
-            a
-        })
-    }
 }
 
 impl AsRef<Path> for FilePath {
@@ -552,7 +565,6 @@ impl std::fmt::Display for FilePath {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Directory {
-    depth: usize,
     path: PathBuf,
 }
 
@@ -565,9 +577,8 @@ impl AsRef<Path> for Directory {
 impl Directory {
     pub const SRC_DIR: &'static str = "src";
 
-    pub fn new(depth: usize, path: impl AsRef<Path>) -> Self {
+    pub fn new(path: impl AsRef<Path>) -> Self {
         let mut dir = Self {
-            depth,
             path: path.as_ref().to_path_buf(),
         };
         dir.normalize();
@@ -577,22 +588,13 @@ impl Directory {
     /// Transparent wrapper around `std::env::current_dir()` with a depth of
     /// `0`.
     #[inline]
-    pub fn current_dir() -> IoResult<Self> {
-        env::current_dir().and_then(|pb| pb.canonicalize().map(|pb| Directory::new(0, pb)))
+    pub fn from_current_dir() -> IoResult<Self> {
+        env::current_dir().and_then(|pb| pb.canonicalize().map(|pb| Directory::new(pb)))
     }
 
     #[inline]
     pub fn path(&self) -> &Path {
         self.path.as_path()
-    }
-
-    /// Returns the relative number of directories between this directory and
-    /// the "root" directory, where *root* directory here refers not to that of
-    /// the OS but rather to the oldest `Dir` ancestor from which this `Dir` was
-    /// formed.
-    #[inline]
-    pub fn depth(&self) -> usize {
-        self.depth
     }
 
     pub fn is_src_dir(&self) -> bool {
@@ -603,6 +605,22 @@ impl Directory {
         self.path.join(Manifest::FILENAME).exists()
     }
 
+    pub fn manifest_paths(&self) -> impl Iterator<Item = PathBuf> + '_ {
+        self.path.read_dir().into_iter().flat_map(|rd| {
+            rd.filter_map(|res| {
+                res.ok().map(|de| {
+                    let path = de.path();
+                    if is_manifest_file(&path) {
+                        Some(path)
+                    } else {
+                        None
+                    }
+                })
+            })
+            .flatten()
+        })
+    }
+
     pub fn read_manifest(&self) -> Option<Manifest> {
         Manifest::from_path(self.path.join(Manifest::FILENAME))
     }
@@ -611,8 +629,9 @@ impl Directory {
         self.path.join(Self::SRC_DIR).exists()
     }
 
-    /// Returns an iterator of immediate descendant `Src` files.
-    pub fn imm_wysk_files(&self) -> impl Iterator<Item = FilePath> + '_ {
+    /// Returns an iterator of immediate descendant paths ending
+    /// in `.wy`.
+    pub fn immediate_wysk_files(&self) -> impl Iterator<Item = PathBuf> + '_ {
         self.path.read_dir().into_iter().flat_map(|rd| {
             rd.filter_map(|res| {
                 res.ok().map(|de| {
@@ -625,25 +644,15 @@ impl Directory {
                 })
             })
             .flatten()
-            .enumerate()
-            .map(|(n, path)| FilePath {
-                fid: FileId(n),
-                path,
-            })
         })
     }
 
     /// Recursively searches all children of this directory and returns an
-    /// iterator containing `Src` instances.
-    pub fn all_wysk_files(&self) -> impl Iterator<Item = FilePath> + '_ {
+    /// iterator containing paths ending in `.wy`.
+    pub fn all_wysk_files(&self) -> impl Iterator<Item = PathBuf> + '_ {
         self.all_sub_dirs()
             .into_iter()
-            .flat_map(move |dir| dir.imm_wysk_files().collect::<Vec<_>>())
-            .enumerate()
-            .map(|(n, FilePath { path, .. })| FilePath {
-                fid: FileId(n),
-                path,
-            })
+            .flat_map(move |dir| dir.immediate_wysk_files().collect::<Vec<_>>())
     }
 
     #[inline]
@@ -669,18 +678,6 @@ impl Directory {
         }
     }
 
-    #[inline]
-    pub fn is_root(&self) -> bool {
-        self.depth == 0
-    }
-
-    #[inline]
-    /// Transparent wrapper over the `components` method from the `std::path`
-    /// module of the Rust standard library.
-    pub fn components(&self) -> std::path::Components {
-        self.path.components()
-    }
-
     /// Returns an iterator of `Dir`s corresponding to immediate descendant
     /// directories. Since the directories returned are immediate descendants of
     /// `Self`, it follows that all returned directories have a `depth` of
@@ -700,7 +697,7 @@ impl Directory {
                                 None
                             }
                         })
-                        .map(|path| Directory::new(self.depth + 1, path))
+                        .map(|path| Directory::new(path))
                 })
             })
             .flatten()
@@ -709,7 +706,6 @@ impl Directory {
     /// Returns a list of `Dir`s corresponding to all the subdirectories
     /// recursively found within the `path` field.
     pub fn all_sub_dirs(&self) -> Vec<Self> {
-        let mut depth = self.depth + 1;
         let mut dirs = vec![];
         let mut des = vec![];
         let mut paths = vec![];
@@ -733,180 +729,12 @@ impl Directory {
                     paths.push(path);
                 }
             }
-            depth += 1;
             while let Some(path) = paths.pop() {
                 reader(path.as_path(), &mut des);
-                dirs.push(Directory::new(depth, path))
+                dirs.push(Directory::new(path))
             }
         }
         dirs
-    }
-}
-
-/// Represents the kind of resource from which input will be sourced.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Resource {
-    Stdin,
-    ModuleFile { path: PathBuf, depth: isize },
-    Standalone { path: PathBuf },
-}
-
-impl Default for Resource {
-    fn default() -> Self {
-        Resource::Stdin
-    }
-}
-
-impl Resource {
-    pub const DOT_WY: &'static str = ".wy";
-
-    pub fn is_file(&self) -> bool {
-        matches!(
-            self,
-            Resource::ModuleFile { .. } | Resource::Standalone { .. }
-        )
-    }
-
-    /// Returns `true` if this is a `File` variant with a path
-    /// pointing to an existing file ending in the Wysk file extension `.wy`.
-    pub fn is_valid_file(&self) -> bool {
-        matches!(self, Resource::ModuleFile { path, .. } | Resource::Standalone { path, ..} if path.exists() && path.to_string_lossy().ends_with(Self::DOT_WY))
-    }
-
-    pub fn path(&self) -> Option<&Path> {
-        match self {
-            Resource::Stdin => None,
-            Resource::ModuleFile { path, .. } | Resource::Standalone { path, .. } => {
-                Some(path.as_path())
-            }
-        }
-    }
-
-    /// If the resource corresponds to the standard input, then it
-    /// will return `None` and IO will need to be done separately. If
-    /// the resource corresponds to a filepath ending in `.wy`, then
-    /// it will read the file and return the text contents -- if the
-    /// file is valid -- as an owned string wrapped in a `Some` variant..
-    pub fn read_text(&self) -> Option<String> {
-        match self {
-            Resource::Stdin => None,
-            Resource::ModuleFile { path, .. } | Resource::Standalone { path, .. } => {
-                std::fs::read_to_string(path).ok()
-            }
-        }
-    }
-
-    pub fn guess_qualified_name(&self, depth_offset: isize) -> Option<String> {
-        match self {
-            Resource::Stdin => None,
-            Resource::ModuleFile { path, depth } => path.canonicalize().ok().and_then(|p| {
-                use wy_common::text::capitalize_first;
-                let mut parts = vec![];
-                let mut depth = *depth + depth_offset;
-                let mut path = p.components().rev().peekable();
-                while depth > 0 && path.peek().is_some() {
-                    let o = path.next().and_then(|c| c.as_os_str().to_str());
-                    if !matches!(&o, &Some("src")) {
-                        depth -= 1;
-                        parts.extend(o);
-                    }
-                }
-                if parts.is_empty() {
-                    return None;
-                }
-                Some(parts.into_iter().rfold(String::new(), |mut a, c| {
-                    if !a.is_empty() {
-                        a.push('.');
-                    }
-                    a.push_str(&*capitalize_first(if c.ends_with(".wy") {
-                        &c[0..c.len() - 3]
-                    } else {
-                        c
-                    }));
-                    a
-                }))
-            }),
-            Resource::Standalone { path, .. } => path
-                .canonicalize()
-                .ok()
-                .map(|pb| pb.to_string_lossy().to_string()),
-        }
-    }
-
-    /// Goes through all the descendants within a given directory,
-    /// returning the `FilePath` instances for all files ending in the
-    /// given extension.
-    pub fn within_dir(p: impl AsRef<Path>, ext: impl AsRef<str>) -> impl Iterator<Item = Resource> {
-        let mut dirnum = 0isize;
-        let mut stack = wy_common::Deque::new();
-        let mut entries = vec![];
-        let ext = ext.as_ref();
-        // if let Ok(p) = p.as_ref().canonicalize() {
-        //     stack.push_back(p)
-        // }
-        stack.push_back(p.as_ref().to_path_buf());
-        while let Some(path) = stack.pop_front() {
-            let mut incr = false;
-            path.read_dir().into_iter().for_each(|rdir| {
-                rdir.for_each(|ds| {
-                    ds.into_iter().for_each(|entry| {
-                        let pe = entry.path();
-                        if pe.is_file() && pe.to_string_lossy().ends_with(ext) {
-                            incr = true;
-                            entries.push((dirnum, pe));
-                        } else if pe.is_dir() {
-                            stack.push_back(pe);
-                        }
-                    });
-                });
-            });
-            if incr {
-                dirnum += 1;
-            }
-        }
-        entries
-            .into_iter()
-            .map(|(depth, path)| Resource::ModuleFile { path, depth })
-    }
-}
-
-impl std::fmt::Display for Resource {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Stdin => write!(f, "<stdin>"),
-            Self::ModuleFile { path, .. } | Resource::Standalone { path, .. } => {
-                write!(f, "{:?}", path)
-            }
-        }
-    }
-}
-
-impl PartialEq<PathBuf> for Resource {
-    fn eq(&self, other: &PathBuf) -> bool {
-        matches!(self, Resource::ModuleFile { path, ..} | Resource::Standalone { path, .. } if path == other)
-    }
-}
-
-impl PartialEq<Resource> for PathBuf {
-    fn eq(&self, other: &Resource) -> bool {
-        matches!(other, Resource::ModuleFile { path, ..} | Resource::Standalone { path, .. } if self == path)
-    }
-}
-
-impl PartialEq<Path> for Resource {
-    fn eq(&self, other: &Path) -> bool {
-        match self {
-            Resource::Stdin => false,
-            Resource::ModuleFile { path, .. } | Resource::Standalone { path, .. } => {
-                other == path.as_path()
-            }
-        }
-    }
-}
-
-impl PartialEq<Resource> for Path {
-    fn eq(&self, other: &Resource) -> bool {
-        matches!(other, Resource::ModuleFile { path, ..} | Resource::Standalone { path, .. } if path.as_path() == self)
     }
 }
 
@@ -934,70 +762,16 @@ mod test {
     #[test]
     fn test_subdirs() {
         let root = Directory {
-            depth: 0,
             path: PathBuf::from("../../language"),
         };
         let subdirs = root.all_sub_dirs();
         println!("subdirectories: {:#?}", &subdirs);
         assert!(subdirs[3].is_src_dir());
-        println!("{:?}", root.imm_wysk_files().collect::<Vec<_>>());
+        println!("{:?}", root.immediate_wysk_files().collect::<Vec<_>>());
         println!("all {:?}", root.all_wysk_files().collect::<Vec<_>>());
         println!(
             "displayed: {:#?}",
-            root.all_wysk_files()
-                .map(|fp| fp.display())
-                .collect::<Vec<_>>()
+            root.all_wysk_files().collect::<Vec<_>>()
         )
-    }
-
-    #[test]
-    fn test_get_file_name() {
-        let fp = Resource::ModuleFile {
-            path: PathBuf::from("../../language/prelude/src/function.wy"),
-            depth: 1,
-        };
-        assert_eq!(Some(String::from("Function")), fp.guess_qualified_name(0))
-    }
-
-    #[test]
-    fn test_dir_filepath_qualified_names() {
-        let actual = Resource::within_dir("../../language/prelude", ".wy")
-            .inspect(|s| println!("{s:?}"))
-            .flat_map(|fp| fp.guess_qualified_name(0))
-            .collect::<Vec<_>>();
-        // zip since we only want to look at the following
-
-        [
-            "List",
-            "Lib",
-            "Function",
-            "Numeric",
-            "Container",
-            "Predicate",
-        ]
-        .into_iter()
-        .map(String::from)
-        .zip(actual)
-        .for_each(|(expected, actual)| assert_eq!(actual, expected));
-    }
-
-    #[test]
-    fn test_dir_filepath_qualified_names_with_offset_2() {
-        let actual = Resource::within_dir("../../language/prelude", ".wy")
-            .inspect(|s| println!("{s:?}"))
-            .flat_map(|fp| fp.guess_qualified_name(2))
-            .collect::<Vec<_>>();
-        let expected = [
-            "Prelude.List",
-            "Prelude.Lib",
-            "Prelude.Function",
-            "Prelude.Numeric",
-            "Prelude.Container",
-            "Prelude.Predicate",
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect::<Vec<_>>();
-        assert_eq!(actual, expected)
     }
 }
