@@ -158,7 +158,7 @@ macro_rules! global_string_interner {
             }
 
             pub fn intern_nfc_normalized<S: AsRef<str>>(s: S) -> Self {
-                use unicode_normalization::UnicodeNormalization;
+                use wy_common::text::UnicodeNormalization;
                 Self::intern(s.as_ref().nfc().collect::<String>())
             }
 
