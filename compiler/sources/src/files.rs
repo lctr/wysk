@@ -2,7 +2,7 @@ use std::{fmt, path::Path, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 use wy_intern::Symbol;
-use wy_span::{BytePos, Col, Coord, Location, Row, Span};
+use wy_span::{BytePos, Col, Coord, Region, Row, Span};
 
 use crate::paths::{FileId, FilePath, IoResult};
 
@@ -167,7 +167,7 @@ impl File {
     }
 
     pub fn id(&self) -> FileId {
-        self.src_path().file_id()
+        self.src_path().id()
     }
 
     pub fn src_path(&self) -> &FilePath {
@@ -201,7 +201,7 @@ impl File {
     }
 
     pub fn row_span(&self, row: Row) -> Span {
-        assert!(row > 0 && row.as_usize() < self.rows.len());
+        assert!(row > 0u32 && row.as_usize() < self.rows.len());
         Span(
             self.rows[if !row.is_zero() { row - 1u32 } else { row }.as_usize()],
             *self.rows.get(row.as_usize()).unwrap_or(&self.span.end()),
@@ -220,12 +220,12 @@ impl File {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FilePos {
+pub struct FileCoord {
     pub file: Arc<File>,
     pub coord: Coord,
 }
 
-impl std::fmt::Display for FilePos {
+impl std::fmt::Display for FileCoord {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}:{}", self.file.src_path(), &self.coord)
     }
@@ -234,7 +234,7 @@ impl std::fmt::Display for FilePos {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileRegion {
     pub file: Arc<File>,
-    pub region: Location,
+    pub region: Region,
 }
 
 impl std::fmt::Display for FileRegion {
