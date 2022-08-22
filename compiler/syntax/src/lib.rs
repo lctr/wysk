@@ -18,12 +18,12 @@ pub mod attr;
 pub mod decl;
 pub mod expr;
 pub mod fixity;
+pub mod module;
 pub mod node;
 pub mod pattern;
 pub mod record;
 pub mod stmt;
 pub mod tipo;
-pub mod types;
 pub mod visit;
 
 use decl::*;
@@ -41,7 +41,7 @@ pub type SpannedIdent = Spanned<Ident>;
 pub type VecIter<'a, X> = std::slice::Iter<'a, X>;
 pub type VecIterMut<'a, X> = std::slice::IterMut<'a, X>;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Program<Id, T, U> {
     pub module: Module<Id, T, U>,
     pub fixities: FixityTable<Id>,
@@ -55,6 +55,13 @@ impl<Id, T, U> Program<Id, T, U> {
 
     pub fn module_srcpath(&self) -> &U {
         &self.module.srcpath
+    }
+
+    pub fn fixities_iter(&self) -> std::collections::hash_map::Iter<'_, Id, fixity::Fixity>
+    where
+        Id: Eq + std::hash::Hash,
+    {
+        self.fixities.iter()
     }
 
     pub fn map_srcpath<V>(self, mut f: impl FnMut(U) -> V) -> Program<Id, T, V> {
@@ -122,6 +129,22 @@ impl<Id, T, U> Program<Id, T, U> {
     }
     pub fn newtyps_iter(&self) -> VecIter<'_, NewtypeDecl<Spanned<Id>, Spanned<T>>> {
         self.module.newtyps_iter()
+    }
+}
+
+impl<Id, T, U> std::fmt::Debug for Program<Id, T, U>
+where
+    Id: std::fmt::Debug,
+    T: std::fmt::Debug,
+    U: std::fmt::Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Program")
+            .field("module", &self.module)
+            .field("fixities", &self.fixities)
+            .finish_non_exhaustive()
+        // .field("comments", &self.comments)
+        // .finish()
     }
 }
 
@@ -257,8 +280,8 @@ impl<Id, T, P> Module<Id, T, P> {
             pragmas,
         } = self;
 
-        let fid = &mut wy_common::functor::Func::Fresh(|spanned: Spanned<Id>| spanned.unspan());
-        let ftv = &mut wy_common::functor::Func::Fresh(|spanned: Spanned<T>| spanned.unspan());
+        let fid = &mut wy_common::functor::Func::New(|spanned: Spanned<Id>| spanned.unspan());
+        let ftv = &mut wy_common::functor::Func::New(|spanned: Spanned<T>| spanned.unspan());
         let imports = imports
             .into_iter()
             .map(|impspec| impspec.mapf(fid))
