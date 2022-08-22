@@ -13,6 +13,7 @@ use wy_syntax::decl::{
     NewtypeDecl, TypeArg, Variant,
 };
 use wy_syntax::fixity::Fixity;
+use wy_syntax::stmt::Arm;
 use wy_syntax::SpannedIdent;
 
 type DeclParser<'t> = Parser<'t>;
@@ -28,7 +29,11 @@ impl<'t> DeclParser<'t> {
             lexpat!(~[class]) => self.class_decl().map(D::Class),
             lexpat!(~[impl]) => self.inst_decl().map(D::Instance),
             lexpat!(~[newtype]) => self.newtype_decl().map(D::Newtype),
-            _ => Err(self.expected(LexKind::Keyword)),
+            Some(t) => Err({
+                let t = *t;
+                self.expected(LexKind::Keyword, t)
+            }),
+            _ => self.unexpected_eof().err(),
         }
     }
 
@@ -163,11 +168,36 @@ impl<'t> DeclParser<'t> {
             let start = self.get_pos();
             self.ignore(Keyword::Def);
             let name = self.binder_name()?;
+            self.eat(Lexeme::Colon2)?;
             let annt = self.ty_annotation()?;
-            let body = if self.peek_on([Lexeme::Semi, Lexeme::Comma]) {
-                MethodBody::Unimplemented
-            } else {
-                MethodBody::Default(self.match_arms()?)
+            let body = match self.peek().copied().ok_or_else(|| self.unexpected_eof())? {
+                Token {
+                    lexeme: Lexeme::Semi | Lexeme::Comma | Lexeme::CurlyR | Lexeme::Kw(Keyword::Def),
+                    ..
+                } => MethodBody::Unimplemented,
+                Token {
+                    lexeme: Lexeme::Equal,
+                    ..
+                } => {
+                    self.bump();
+                    let body = self.expression()?;
+                    let wher = self.where_clause()?;
+                    MethodBody::Default(vec![Arm {
+                        args: vec![],
+                        cond: None,
+                        body,
+                        wher,
+                    }])
+                }
+                Token {
+                    lexeme: Lexeme::Pipe,
+                    ..
+                } => MethodBody::Default(self.match_arms()?),
+                t => {
+                    return self
+                        .custom_error(t, " invalid token for class method")
+                        .err()
+                }
             };
             let span = Span(start, self.get_pos());
             prag.extend(self.attr_after()?);
@@ -236,7 +266,10 @@ impl<'t> DeclParser<'t> {
         } else {
             let ty = self.ty_node().map(TypeArg::Type)?;
             if self.peek_on(Lexeme::begins_ty) {
-                return Err(self.custom_error("newtypes are allowed only a single type argument"));
+                return self.current_token().and_then(|tok| {
+                    self.custom_error(tok, " newtypes are allowed only a single type argument")
+                        .err()
+                });
             } else {
                 ty
             }
@@ -639,5 +672,17 @@ fn some_record_function
             ],
         };
         assert_eq!(actual, expected)
+    }
+
+    #[test]
+    fn this_shouldnt_fail() {
+        let src = r#"
+class Functor f {
+    map :: (a -> b) -> f a -> f b;
+    (/>) :: b -> f a -> f b
+        = map \> const
+    }
+"#;
+        println!("{:?}", Parser::from_str(src).declaration())
     }
 }
