@@ -110,9 +110,12 @@ impl<'t> Parser<'t> {
             })
             | None => self.unexpected_eof().err(),
             Some(t) if t.is_brack_r() => self.empty_pragma().err(),
-            _ => self
-                .custom_error("is not a valid pragma or attribute name")
-                .err(),
+            Some(t) => {
+                let t = *t;
+                self.custom_error(t, " is not a valid pragma or attribute name")
+                    .err()
+            }
+            _ => self.unexpected_eof().err(),
         }?;
         self.eat(Lexeme::BrackR)?;
         self.lexer.reset_mode();
@@ -178,14 +181,20 @@ impl<'t> Parser<'t> {
                     "r" | "R" | "right" | "Right" | "RIGHT" => Ok(Assoc::Right),
                     "n" | "N" | "none" | "None" | "NONE" => Ok(Assoc::None),
                     _ => {
-                        return parser
-                            .custom_error("invalid associativity value for fixity attribute")
-                            .err()
+                        return parser.current_token().and_then(|tok| {
+                            parser
+                                .custom_error(
+                                    tok,
+                                    " invalid associativity value for fixity attribute",
+                                )
+                                .err()
+                        })
                     }
                 },
                 Some(t) if t.is_brack_r() => {
                     if first {
-                        parser.custom_error("prematurely closing fixity attribute while expecting associativity").err()
+                        let t = *t;
+                        parser.custom_error(t, " prematurely closing fixity attribute while expecting associativity").err()
                     } else {
                         Ok(Assoc::None)
                     }
@@ -195,49 +204,66 @@ impl<'t> Parser<'t> {
                     lexeme: Lexeme::Eof,
                     ..
                 }) => parser.unexpected_eof().err(),
-                Some(t) => parser
-                    .custom_error("invalid associativity value for fixity attribute")
-                    .err(),
+                Some(t) => {
+                    let t = *t;
+                    parser
+                        .custom_error(t, " invalid associativity value for fixity attribute")
+                        .err()
+                }
             }
         }
 
         match self.peek() {
-            None |
-            Some(Token { lexeme: Lexeme::Eof, .. }) => {
-                self.unexpected_eof().err()
-            }
+            None
+            | Some(Token {
+                lexeme: Lexeme::Eof,
+                ..
+            }) => self.unexpected_eof().err(),
             Some(t) if t.is_brack_r() => {
-                self.custom_error("prematurely closing fixity attribute").err()
+                let t = *t;
+                self.custom_error(t, " prematurely closing fixity attribute")
+                    .err()
             }
-            Some(Token { lexeme: Lexeme::Lit(lit), ..}) if lit.is_bare_int() => {
+            Some(Token {
+                lexeme: Lexeme::Lit(lit),
+                ..
+            }) if lit.is_bare_int() => {
                 let prec = self.fixity_prec()?;
                 let assoc = valid_assoc(self, false)?;
                 self.bump();
                 let fixity = Fixity { assoc, prec };
                 Ok(Attribute::Fixity(fixity))
             }
-            Some(Token { lexeme: Lexeme::Upper(_) | Lexeme::Lower(_), ..}) => {
+            Some(Token {
+                lexeme: Lexeme::Upper(_) | Lexeme::Lower(_),
+                ..
+            }) => {
                 let assoc = valid_assoc(self, true)?;
                 self.bump();
                 let prec = match self.peek() {
-                    Some(Token { lexeme: Lexeme::Lit(lit), .. }) if lit.is_bare_int() => {
-                        self.fixity_prec()
-                    }
-                    Some(t) if t.is_brack_r() => {
-                        Ok(Prec::MAX)
-                    }
-                    None | Some(Token { lexeme: Lexeme::Eof, .. }) => {
-                        self.unexpected_eof().err()
-                    }
-                    _ => {
-                        self.custom_error("is not a valid precedence value; expected a digit between 0 and 9 or a closing right bracket").err()
+                    Some(Token {
+                        lexeme: Lexeme::Lit(lit),
+                        ..
+                    }) if lit.is_bare_int() => self.fixity_prec(),
+                    Some(t) if t.is_brack_r() => Ok(Prec::MAX),
+                    None
+                    | Some(Token {
+                        lexeme: Lexeme::Eof,
+                        ..
+                    }) => self.unexpected_eof().err(),
+                    Some(t) => {
+                        let t = *t;
+                        self.custom_error(t, " is not a valid precedence value; expected a digit between 0 and 9 or a closing right bracket").err()
                     }
                 }?;
                 let fixity = Fixity { assoc, prec };
                 Ok(Attribute::Fixity(fixity))
             }
             // report invalid fixity pragma value
-            _ => self.custom_error("is not a valid fixity attribute parameter, expected -- in any order -- a single digit and/or one of: `l`, `L`, `left`, `Left`, `LEFT`, `infixl`, `r`, `R`, `right`, `Right`, `RIGHT`, `infixr`, `n`, `N`, `none`, `None`, `NONE` or `infix`").err()
+            Some(t) => {
+                let t = *t;
+                self.custom_error(t, " is not a valid fixity attribute parameter, expected -- in any order -- a single digit and/or one of: `l`, `L`, `left`, `Left`, `LEFT`, `infixl`, `r`, `R`, `right`, `Right`, `RIGHT`, `infixr`, `n`, `N`, `none`, `None`, `NONE` or `infix`").err()
+            }
         }
     }
 

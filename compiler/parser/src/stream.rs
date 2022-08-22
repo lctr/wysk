@@ -74,6 +74,20 @@ impl<'t> Parser<'t> {
         }
     }
 
+    pub fn catch_err<F, X>(&mut self, mut f: F, mut recover: impl FnMut(&mut Self)) -> Parsed<X>
+    where
+        F: FnMut(&mut Self) -> Parsed<X>,
+    {
+        match f(self) {
+            Ok(x) => Ok(x),
+            Err(e) => {
+                self.errors.push(e.clone());
+                recover(self);
+                Err(e)
+            }
+        }
+    }
+
     /// Advance the underlying stream of tokens, retuning the unwrapped result
     /// of `Lexer::next`. If `Lexer::next` returns `None`, then the token
     /// corresponding to the `EOF` lexeme is returned.
@@ -127,6 +141,10 @@ impl<'t> Parser<'t> {
         let mut buf = String::new();
         self.lexer.write_to_string(&mut buf);
         buf
+    }
+
+    pub fn current_token(&mut self) -> Result<Token, ParseError> {
+        self.peek().copied().ok_or_else(|| self.unexpected_eof())
     }
 
     /// Bumps the lexer twice, storing the two tokens returns, and

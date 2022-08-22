@@ -2,6 +2,7 @@ use std::fmt;
 
 pub use wy_failure;
 pub use wy_failure::show::DialogueList;
+use wy_failure::Dialogue;
 pub use wy_failure::Failure;
 pub use wy_failure::SrcLoc;
 pub use wy_failure::SrcPath;
@@ -20,6 +21,7 @@ use wy_span::Span;
 use wy_span::Spanned;
 use wy_span::WithCoordSpan;
 use wy_span::WithLoc;
+use wy_syntax::ast::respan::ReSpan;
 use wy_syntax::fixity::Assoc;
 use wy_syntax::fixity::Prec;
 
@@ -39,9 +41,9 @@ pub trait Report: WithLoc {
     fn report_error<X: Into<Evidence>>(
         &mut self,
         syntax_err: SyntaxError,
+        token: Token,
         text_slots: impl IntoIterator<Item = (&'static str, X)>,
     ) -> ParseError {
-        let token = self.next_token();
         let coord = self.current_coord();
         ParseError::new(
             true,
@@ -63,8 +65,7 @@ pub trait Report: WithLoc {
         )
     }
 
-    fn custom_error(&mut self, message: &'static str) -> ParseError {
-        let token = self.next_token();
+    fn custom_error(&mut self, token: Token, message: &'static str) -> ParseError {
         ParseError::new(
             false,
             self.current_coord(),
@@ -81,9 +82,6 @@ pub trait Report: WithLoc {
 }
 
 pub trait TakeEvidence: Report {
-    fn token_evidence(&mut self) -> Evidence {
-        Evidence::Tok(self.next_token())
-    }
     fn take_evidence(x: impl Into<Evidence>) -> Evidence {
         x.into()
     }
@@ -97,22 +95,20 @@ pub trait ReportPragma: TakeEvidence {
 }
 
 pub trait Expects: TakeEvidence {
-    fn expected<L>(&mut self, expected: L) -> ParseError
+    fn expected<L>(&mut self, expected: L, found: Token) -> ParseError
     where
         LexKind: From<L>,
     {
-        let token = self.next_token();
         let lexkind = LexKind::from(expected);
         ParseError::new(
             true,
             self.get_coord(),
-            token.span,
+            found.span,
             UnexpectedToken,
-            [("", lexkind.into()), ("", token.into())],
+            [("", lexkind.into()), ("", found.into())],
         )
     }
-    fn invalid_fn_ident(&mut self) -> ParseError {
-        let token = self.next_token();
+    fn invalid_fn_ident(&mut self, token: Token) -> ParseError {
         let coord = self.get_coord();
         ParseError::new(
             true,
@@ -123,9 +119,9 @@ pub trait Expects: TakeEvidence {
         )
     }
 
-    fn invalid_type_start(&mut self) -> ParseError {
-        let tok = self.token_evidence();
-        self.report_error(ExpectedTypeStart, [("", tok)])
+    fn invalid_type_start(&mut self, token: Token) -> ParseError {
+        let tok = Evidence::Tok(token);
+        self.report_error(ExpectedTypeStart, token, [("", tok)])
     }
 
     fn unbalanced_delim(&mut self, delim: Lexeme) -> ParseError {
@@ -152,9 +148,8 @@ pub trait Expects: TakeEvidence {
         self.unbalanced_delim(Lexeme::CurlyR)
     }
 
-    fn invalid_fixity_prec(&mut self) -> ParseError {
-        let tok = self.next_token();
-        self.report_error(InvalidFixityPrec, [("", tok)])
+    fn invalid_fixity_prec(&mut self, token: Token) -> ParseError {
+        self.report_error(InvalidFixityPrec, token, [("", token)])
     }
 
     fn fixity_exists(&mut self, infix: Ident, span: Span) -> ParseError {
@@ -353,7 +348,7 @@ impl SyntaxError {
             ExpectedToken => (2, &["expected the token ", " but instead found "]),
             ExpectedTupleNotSection => (2, &["unexpected operator ", " in tuple"]),
             ExpectedTypeSignature => (1, &["expected type signature after `::`, but found "]),
-            ExpectedTypeStart => (2, &["the token ", " does not begin a pattern"]),
+            ExpectedTypeStart => (2, &["the token ", " does not begin a valid type"]),
             FixityExpectedInfix => (1, &["expected infix for fixity declaration, but instead found"]),
             FixityAlreadyDefined => (2, &["the operator ", " has already had its fixity defined"]),
             IncompletePragma => (2, &["missing arguments for ", " pragma, closing bracket `]` found"]),
@@ -491,12 +486,12 @@ impl fmt::Display for Evidence {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Evidence::Empty => Ok(()),
-            Evidence::Tok(t) => write!(f, "`{t}`"),
+            Evidence::Tok(t) => write!(f, "`{}`", &t.lexeme),
             Evidence::Lex(l) => write!(f, "`{l}`"),
             Evidence::LexKind(l) => write!(f, "{l}"),
             Evidence::LexErr(e) => write!(f, "{e}"),
             Evidence::Symbol(s) => write!(f, "`{s}`"),
-            Evidence::Chain(c) => write!(f, "`{c}`"),
+            Evidence::Chain(c) => write!(f, "`{}`", c.printable()),
             Evidence::Assoc(a) => write!(f, "{a}"),
             Evidence::Prec(p) => write!(f, "{}", p.0),
             Evidence::Str(s) => write!(f, "{s}"),
@@ -631,7 +626,7 @@ pub type Parsed<X> = Result<X, ParseError>;
 ///   [ROW] | <LINE_WITH_BAD_TOKEN> <BAD_TOKEN> ...
 ///         |                       ^^^^^^^^^^^
 /// ```
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ParseError<S = &'static str> {
     pub print_kind: bool,
     pub coord_span: CoordSpan,
@@ -660,6 +655,34 @@ where
 
     pub fn err<X>(self) -> Result<X, Self> {
         Err(self)
+    }
+
+    pub fn label(&self) -> String {
+        format!("{:?}", &self.syntax_err)
+    }
+
+    pub fn message(&self) -> Result<String, std::fmt::Error> {
+        use std::fmt::Write;
+        let mut buf = String::new();
+        let (cnt, txt) = self.syntax_err.text();
+        for (msg, (s, evidence)) in txt.into_iter().zip(self.text_slots.as_slice()) {
+            write!(buf, "{msg}{s}{evidence}")?;
+        }
+        if cnt > 0 && cnt == self.text_slots.len() + 1 {
+            write!(buf, "{}", &txt[cnt - 1])?;
+        }
+        if cnt < self.text_slots.len() {
+            for (s, ev) in &self.text_slots[cnt..] {
+                write!(buf, "{s}{ev}")?;
+            }
+        }
+        Ok(buf)
+    }
+}
+
+impl<S> ReSpan for ParseError<S> {
+    fn spans_mut(&mut self) -> Vec<&mut Span> {
+        vec![&mut self.coord_span.span]
     }
 }
 
@@ -698,7 +721,15 @@ where
                 write!(f, "{s}{ev}")?;
             }
         }
+        write!(f, " on line {}, column {}", self.get_row(), self.get_col())?;
+
         Ok(())
+    }
+}
+
+impl<S: std::fmt::Display> std::fmt::Debug for ParseError<S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", &self)
     }
 }
 
@@ -723,7 +754,64 @@ where
         self.0.as_slice()
     }
 
+    pub fn iter(&self) -> std::slice::Iter<'_, ParseError<S>> {
+        self.0.iter()
+    }
+
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, ParseError<S>> {
+        self.0.iter_mut()
+    }
+
     pub fn push(&mut self, error: ParseError<S>) {
         self.0.push(error)
     }
 }
+
+impl<S: fmt::Display> ReSpan for ParserErrors<S> {
+    fn spans_mut(&mut self) -> Vec<&mut Span> {
+        self.iter_mut()
+            .flat_map(|pe| pe.spans_mut())
+            .collect::<Vec<_>>()
+    }
+}
+
+#[derive(Clone, PartialEq)]
+pub struct ParseFailure<S: std::fmt::Display = &'static str> {
+    pub srcpath: SrcPath,
+    pub source: String,
+    pub errors: ParserErrors<S>,
+}
+
+impl<S: fmt::Display> ReSpan for ParseFailure<S> {
+    fn spans_mut(&mut self) -> Vec<&mut Span> {
+        self.errors.spans_mut()
+    }
+}
+
+impl<S: std::fmt::Display> std::fmt::Display for ParseFailure<S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let srcpath = &self.srcpath;
+        let srctext = &self.source;
+        for error in self.errors.as_slice() {
+            let label = error.label();
+            let message = error.message()?;
+            let coordspan = error.coord_span;
+            let span = coordspan.span();
+            let srcloc = SrcLoc {
+                coord: coordspan.coord(),
+                pathstr: srcpath.borrowed(),
+            };
+
+            Dialogue::new(label.as_str(), message, srctext, &srcloc, span).display(f)?;
+        }
+        Ok(())
+    }
+}
+
+impl<S: std::fmt::Display> std::fmt::Debug for ParseFailure<S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", &self)
+    }
+}
+
+pub type ParseResult<X, S = &'static str> = Result<X, ParseFailure<S>>;

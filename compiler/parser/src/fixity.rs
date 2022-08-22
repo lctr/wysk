@@ -2,6 +2,7 @@ use crate::error::*;
 use crate::stream::*;
 
 use wy_lexer::token::{Keyword, Lexeme};
+use wy_lexer::Token;
 // use wy_name::ident::Ident;
 use wy_span::Spanned;
 // use wy_span::WithSpan;
@@ -15,21 +16,33 @@ impl<'t> FixityParser<'t> {
         use Assoc as A;
         use Keyword::{Infix, InfixL, InfixR};
         use Lexeme as L;
-        let assoc = match self.peek().map(|t| t.lexeme) {
-            Some(L::Kw(Infix)) => Ok(A::None),
-            Some(L::Kw(InfixL)) => Ok(A::Left),
-            Some(L::Kw(InfixR)) => Ok(A::Right),
-            _ => Err(self.custom_error("expected fixity keyword `infix`, `infixl`, or `infixr`")),
+        let assoc = match self.peek().copied().ok_or_else(|| self.unexpected_eof())? {
+            Token {
+                lexeme: L::Kw(Infix),
+                ..
+            } => Ok(A::None),
+            Token {
+                lexeme: L::Kw(InfixL),
+                ..
+            } => Ok(A::Left),
+            Token {
+                lexeme: L::Kw(InfixR),
+                ..
+            } => Ok(A::Right),
+            t => {
+                Err(self.custom_error(t, " expected fixity keyword `infix`, `infixl`, or `infixr`"))
+            }
         }?;
         self.bump();
         Ok(assoc)
     }
 
     pub(crate) fn fixity_prec(&mut self) -> Parsed<Prec> {
-        if let Some(p) = self.peek().and_then(|tok| match tok.lexeme {
+        let tok = self.peek().copied().ok_or_else(|| self.unexpected_eof())?;
+        if let Some(p) = match tok.lexeme {
             Lexeme::Lit(lit) => lit.try_simple_digit_byte(),
             _ => None,
-        }) {
+        } {
             if p < 10 {
                 let prec = Prec(p as u8);
                 self.bump();
@@ -37,7 +50,7 @@ impl<'t> FixityParser<'t> {
             }
         }
 
-        self.invalid_fixity_prec().err()
+        self.invalid_fixity_prec(tok).err()
     }
 
     pub(crate) fn with_fixity(&mut self, fixity: Fixity) -> Parsed<Vec<SpannedIdent>> {

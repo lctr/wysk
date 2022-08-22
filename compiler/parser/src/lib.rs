@@ -17,6 +17,7 @@ mod expr;
 pub mod fixity;
 mod pat;
 mod program;
+mod stmt;
 pub mod stream;
 mod ty;
 
@@ -92,7 +93,7 @@ impl<'t> Parser<'t> {
     }
 }
 
-pub fn parse_program(src: &str) -> Parsed<program::RawProgram> {
+pub fn parse_program(src: &str) -> ParseResult<program::RawProgram> {
     Parser::from_str(src).parse_program()
 }
 
@@ -111,13 +112,13 @@ pub fn parse_expression(src: &str) -> Parsed<RawExpression> {
     Parser::from_str(src).expression()
 }
 
-pub fn parse_file(file: &File) -> Parsed<RawProgram> {
+pub fn parse_file(file: &File) -> ParseResult<RawProgram> {
     Parser::new(file.source(), file.src_path().path()).parse_program()
 }
 
 pub fn parse_standalone<P: AsRef<std::path::Path>>(
     filepath: P,
-) -> Result<program::RawProgram, Either<std::io::Error, ParseError>> {
+) -> Result<program::RawProgram, Either<std::io::Error, ParseFailure>> {
     let path = filepath.as_ref();
     std::fs::read_to_string(path)
         .map_err(Either::Left)

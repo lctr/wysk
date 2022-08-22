@@ -112,9 +112,15 @@ impl<'t> ExprParser<'t> {
             lexpat!(~[lam]) => self.lambda(),
             lexpat!(~[lit]) => self.literal(),
             lexpat!(~[var][Var]) => self.identifier(),
-            _ => self
-                .custom_error("does not correspond to a lexeme that begins an expression")
-                .err(),
+            Some(t) => {
+                let t = *t;
+                self.custom_error(
+                    t,
+                    " does not correspond to a lexeme that begins an expression",
+                )
+                .err()
+            }
+            None => self.unexpected_eof().err(),
         }
     }
 
@@ -124,10 +130,22 @@ impl<'t> ExprParser<'t> {
     }
 
     fn identifier(&mut self) -> Parsed<Expression> {
-        let ident = match self.peek() {
-            lexpat!(~[var]) => self.expect_lower(),
-            lexpat!(~[Var]) => self.expect_upper(),
-            _ => self.expected(LexKind::Identifier).err(),
+        let ident = match self.peek().copied().ok_or_else(|| self.unexpected_eof())? {
+            Token {
+                lexeme: Lexeme::Lower(s),
+                span,
+            } => {
+                self.bump();
+                Ok(Spanned(Ident::Lower(s), span))
+            }
+            Token {
+                lexeme: Lexeme::Upper(s),
+                span,
+            } => {
+                self.bump();
+                Ok(Spanned(Ident::Upper(s), span))
+            }
+            t => self.expected(LexKind::Identifier, t).err(),
         }?;
         match self.peek() {
             lexpat!(~[.]) => {
@@ -349,30 +367,39 @@ impl<'t> ExprParser<'t> {
     }
 
     pub(crate) fn binder_name(&mut self) -> Parsed<SpannedIdent> {
-        use Lexeme::{ParenL, ParenR};
-        if self.bump_on(ParenL) {
-            let infix = self.expect_infix()?;
-            self.eat(ParenR)?;
-            Ok(infix)
-        } else if lexpat!(self on [var]) {
-            self.expect_lower()
-        } else {
-            self.invalid_fn_ident().err()
+        use Lexeme::ParenR;
+        match self.peek() {
+            lexpat![~[parenL]] => {
+                self.bump();
+                let infix = self.expect_infix()?;
+                self.eat(ParenR)?;
+                Ok(infix)
+            }
+            lexpat![~[var]] => self.expect_lower(),
+            Some(t) => {
+                let t = *t;
+                self.invalid_fn_ident(t).err()
+            }
+            None => self.unexpected_eof().err(),
         }
     }
 
     pub(crate) fn binding_lhs(&mut self) -> Parsed<(Vec<RawPattern>, Option<Expression>)> {
         use Keyword::If;
-        use Lexeme::Pipe;
+        use Lexeme::{Equal, Kw, Pipe, Semi};
         self.ignore(Pipe);
         let args = self.many_while_on(Lexeme::begins_pat, Self::pattern)?;
-        if lexpat!(self on [|]|[;]|[=]) {
-            return Ok((args, None));
-        } else if self.bump_on(If) {
-            Ok((args, Some(self.expression()?)))
-        } else {
-            self.custom_error("").err()
-            // self.invalid_pattern().err()
+        match self.peek().copied().ok_or_else(|| self.unexpected_eof())? {
+            Token { lexeme: Pipe | Semi | Equal, .. } => {
+                Ok((args, None))
+            }
+            Token { lexeme: Kw(If), ..} => {
+                self.bump();
+                Ok((args, Some(self.expression()?)))
+            }
+            t => {
+                self.custom_error(t, " does not terminate the left-hand side of a binding; expected `|`, `;`, `=`, or `if`").err()
+            }
         }
     }
 
@@ -400,7 +427,11 @@ impl<'t> ExprParser<'t> {
                     .collect();
                 Ok(RawBinding { name, tsig, arms })
             }
-            _ => self.custom_error("after binder name").err(),
+            Some(t) => {
+                let t = *t;
+                self.custom_error(t, " after binder name").err()
+            }
+            None => self.unexpected_eof().err(),
         }
     }
 
@@ -429,7 +460,7 @@ impl<'t> ExprParser<'t> {
         })
     }
 
-    fn where_clause(&mut self) -> Parsed<Vec<RawBinding>> {
+    pub(crate) fn where_clause(&mut self) -> Parsed<Vec<RawBinding>> {
         use Keyword::Where;
         use Lexeme::Comma;
         let mut binds = vec![];
@@ -500,7 +531,9 @@ impl<'t> ExprParser<'t> {
         self.eat(Keyword::Do)?;
         self.eat(Lexeme::CurlyL)?;
 
+        let mut tok = self.current_token()?;
         let mut statements = self.many_while_on(Not(Lexeme::is_curly_r), |p| {
+            tok = p.current_token()?;
             p.trailing(Lexeme::Semi, Self::statement)
         })?;
 
@@ -509,76 +542,15 @@ impl<'t> ExprParser<'t> {
         let msg = "do expression must end in an expression";
         statements
             .pop()
-            .ok_or_else(|| self.custom_error(msg))
+            .ok_or_else(|| self.custom_error(tok, msg))
             .and_then(|s| {
                 if let RawStatement::Predicate(g) = s {
                     Ok(Box::new(g))
                 } else {
-                    Err(self.custom_error(msg))
+                    Err(self.custom_error(tok, msg))
                 }
             })
             .map(|tail| Expression::Do(statements, tail))
-    }
-
-    fn statement(&mut self) -> Parsed<RawStatement> {
-        fn bump_comma(parser: &mut Parser) -> bool {
-            parser.bump_on(Lexeme::Comma)
-        }
-        match self.peek() {
-            lexpat!(~[do]) => self.do_expr().map(RawStatement::Predicate),
-            lexpat!(~[let]) => {
-                self.eat(Keyword::Let)?;
-                let mut bindings = vec![self.binding()?];
-                self.many_while(bump_comma, Self::binding)
-                    .map(|binds| bindings.extend(binds))?;
-                if self.bump_on(Keyword::In) {
-                    Ok(RawStatement::Predicate(Expression::Let(
-                        bindings,
-                        Box::new(self.expression()?),
-                    )))
-                } else {
-                    Ok(RawStatement::JustLet(bindings))
-                }
-            }
-            lexpat!(~[var]) => {
-                let lower = self.expect_lower()?;
-                if self.bump_on(Lexeme::ArrowL) {
-                    self.expression()
-                        .map(|ex| RawStatement::Generator(RawPattern::Var(lower), ex))
-                } else {
-                    Ok(RawStatement::Predicate(
-                        self.many_while_on(Lexeme::begins_expr, Self::expression)?
-                            .into_iter()
-                            .fold(Expression::Ident(lower), Expression::mk_app),
-                    ))
-                }
-            }
-            lexpat!(~[Var]) => {
-                let pat = self.pattern()?;
-                self.eat(Lexeme::ArrowL)?;
-                Ok(RawStatement::Generator(pat, self.expression()?))
-            }
-            lexpat!(~[_]) => {
-                self.bump();
-                self.eat(Lexeme::ArrowL)?;
-                let expr = self.expression()?;
-                Ok(RawStatement::Generator(RawPattern::Wild, expr))
-            }
-            Some(t) if t.begins_pat() => {
-                let lexer = self.lexer.clone();
-                let queue = self.queue.clone();
-                let pat = self.pattern()?;
-                if self.bump_on(Lexeme::ArrowL) {
-                    Ok(RawStatement::Generator(pat, self.expression()?))
-                } else {
-                    self.lexer = lexer;
-                    self.queue = queue;
-                    Ok(RawStatement::Predicate(self.expression()?))
-                }
-            }
-            Some(t) if t.begins_expr() => self.expression().map(RawStatement::Predicate),
-            _ => Err(self.custom_error("is not supported in `do` expressions")),
-        }
     }
 }
 
@@ -588,6 +560,7 @@ mod test {
     use wy_failure::diff::diff_assert_eq;
     use wy_intern::Symbol;
     use wy_syntax::{
+        ast::spanless_eq::de_span2,
         expr::Expression,
         pattern::Pattern,
         stmt::{Alternative, Arm, Statement},
@@ -722,13 +695,7 @@ y -> y;
         in bar (foo 1) (foo 2)
     "#;
         let [foo, bar, x, y] = Symbol::intern_many_with(["foo", "bar", "x", "y"], Ident::Lower);
-        let actual = Parser::from_str(src)
-            .expression()
-            .map(|expr| {
-                expr.map_fst(&mut Func::New(Spanned::take_item))
-                    .map_snd(&mut Func::New(Spanned::take_item))
-            })
-            .unwrap();
+        let actual = Parser::from_str(src).expression().map(de_span2).unwrap();
         let expected = Expression::Let(
             vec![
                 Binding {
@@ -852,12 +819,7 @@ y -> y;
         ];
         for (src, expected) in pairs {
             diff_assert_eq!(
-                Parser::from_str(src)
-                    .expression()
-                    .map(|expr| expr
-                        .map_fst(&mut Func::New(Spanned::take_item))
-                        .map_snd(&mut Func::New(Spanned::take_item)))
-                    .unwrap(),
+                Parser::from_str(src).expression().map(de_span2).unwrap(),
                 expected
             );
         }
@@ -911,13 +873,7 @@ y -> y;
             ),
         ];
         for (src, expected) in pairs {
-            let actual = Parser::from_str(src)
-                .expression()
-                .map(|expr| {
-                    expr.map_fst(&mut Func::New(Spanned::take_item))
-                        .map_snd(&mut Func::New(Spanned::take_item))
-                })
-                .unwrap();
+            let actual = Parser::from_str(src).expression().map(de_span2).unwrap();
             diff_assert_eq!(actual, expected);
         }
     }
@@ -946,22 +902,35 @@ y -> y;
         );
 
         diff_assert_eq!(
-            Parser::from_str(src).expression().map(|expr| expr
-                .map_fst(&mut Func::New(Spanned::take_item))
-                .map_snd(&mut Func::New(Spanned::take_item))),
+            Parser::from_str(src).expression().map(de_span2),
             Ok(expected)
         )
     }
 
-    fn de_span(expr: Expression) -> Expression<Ident, Ident> {
-        expr.map_fst(&mut Func::New(Spanned::take_item))
-            .map_snd(&mut Func::New(Spanned::take_item))
+    #[test]
+    fn test_expr_assoc() {
+        for (x, y) in [("f x y", "(f x) y"), ("return x == y", "(return x) == y")] {
+            diff_assert_eq!(
+                Parser::from_str(x).expression().map(de_span2),
+                Parser::from_str(y).expression().map(de_span2)
+            );
+        }
+    }
+
+    fn show<X, E>(res: Result<X, E>)
+    where
+        X: std::fmt::Debug,
+        E: std::fmt::Display,
+    {
+        match &res {
+            Ok(x) => println!("{x:#?}"),
+            Err(e) => eprintln!("{e}"),
+        };
     }
 
     #[test]
-    fn test_expr_app_assoc() {
-        let without_parens = de_span(Parser::from_str("f x y").expression().unwrap());
-        let with_parens = de_span(Parser::from_str("(f x) y").expression().unwrap());
-        assert_eq!(without_parens, with_parens);
+    fn experiment() {
+        let src = "let foo | (Some a) b if a == 1 = (a, b) | a b if True = Blah in Blah";
+        show(Parser::from_str(src).expression())
     }
 }

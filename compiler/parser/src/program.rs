@@ -108,25 +108,51 @@ impl<'t> ModuleParser<'t> {
                     Ok(I::Abstract(first))
                 }
             }
-            _ => Err(self.custom_error("is not a valid import")),
+            _ => self
+                .current_token()
+                .and_then(|tok| self.custom_error(tok, " is not a valid import").err()),
         }
     }
 
-    pub fn parse_program(mut self) -> Parsed<RawProgram> {
+    pub fn parse_program(mut self) -> ParseResult<RawProgram> {
         use Keyword as K;
         use Module as M;
-        Ok(Program {
-            module: if self.peek_on(K::Module) {
-                self.module()?
-            } else {
-                let mut module = M::default();
-                module.imports = self.many_while_on(K::Import, Self::import_spec)?;
-                self.populate_module(&mut module)?;
-                module
-            },
-            fixities: self.fixities,
-            comments: self.lexer.comments,
+        let module = if self.peek_on(K::Module) {
+            self.module()
+        } else {
+            Ok(M::default())
+        }
+        .map_err(|e| self.errors.push(e))
+        .and_then(|mut module| {
+            self.many_while_on(K::Import, Self::import_spec)
+                .map_err(|e| self.errors.push(e))
+                .and_then(|imports| {
+                    module.imports = imports;
+                    self.populate_module(&mut module)
+                        .map(|_| module)
+                        .map_err(|e| self.errors.push(e))
+                })
         })
+        .map_err(|_| self.text());
+        let Parser {
+            fixities,
+            lexer,
+            path,
+            errors,
+            ..
+        } = self;
+        match module {
+            Ok(module) => Ok(Program {
+                module,
+                fixities,
+                comments: lexer.comments,
+            }),
+            Err(source) => Err(ParseFailure {
+                srcpath: path,
+                source,
+                errors,
+            }),
+        }
     }
 }
 

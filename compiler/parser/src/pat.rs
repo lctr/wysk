@@ -39,9 +39,6 @@ impl<'t> PatParser<'t> {
                         [("", Evidence::Tok(tok)), ("", Evidence::Empty)],
                     )
                     .err()
-                    // Err(self.snapshot()).map_err(|(srcloc, token, txt)| {
-                    //     ParseError::InvalidNegatedPattern(srcloc, token, txt)
-                    // })
                 }
             }
             lexpat!(~[parenL]) => self.grouped_pattern(),
@@ -66,7 +63,12 @@ impl<'t> PatParser<'t> {
 
             lexpat!(~[lit]) => self.lit_pattern(),
 
-            _ => Err(self.custom_error("does not begin a valid pattern")),
+            Some(t) => {
+                let t = *t;
+                self.custom_error(t, " does not begin a valid pattern")
+                    .err()
+            }
+            None => self.unexpected_eof().err(),
         }?;
 
         if let RawPattern::Var(name) = genpat {
@@ -294,7 +296,10 @@ impl<'t> PatParser<'t> {
             if let RawPattern::Var(name) = pat {
                 pat = RawPattern::At(name, Box::new(self.pattern()?))
             } else {
-                return Err(self.custom_error("can only follow simple variable patterns"));
+                return self.current_token().and_then(|tok| {
+                    self.custom_error(tok, " can only follow simple variable patterns")
+                        .err()
+                });
             }
         };
 
