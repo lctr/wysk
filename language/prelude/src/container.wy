@@ -78,7 +78,7 @@ class |Functor f| Applicative f {
       | a1 a2 = (identity /> a1) <*> a2;
 
    ~~> Sequence two actions, discarding the result from the second
-   (<*) :: f a -> f b -> f a => liftA2 const;
+   (<*) :: f a -> f b -> f a = liftA2 const;
 
    ~~> Embed a binary function into actions
    liftA2 :: (a -> b -> c) -> f a -> f b -> f c
