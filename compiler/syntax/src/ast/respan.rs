@@ -11,12 +11,12 @@ use crate::{
     expr::Expression,
     pattern::Pattern,
     record::{Field, Record},
-    stmt::{Alternative, Arm, Binding, Statement},
+    stmt::{Alternative, Arm, Binding, Branch, Guard, LocalDef, Statement},
     tipo::{
         Annotation, Con, Parameter, Predicate, Qualified, Quantified, Signature, SimpleType, Type,
         Var,
     },
-    Import, ImportSpec,
+    Import, ImportSpec, Module,
 };
 
 pub trait ReSpan {
@@ -67,6 +67,35 @@ where
 impl<X> ReSpan for Token<X> {
     fn spans_mut(&mut self) -> Vec<&mut Span> {
         vec![&mut self.span]
+    }
+}
+
+impl<Id, T, P> ReSpan for Module<Id, T, P> {
+    fn spans_mut(&mut self) -> Vec<&mut Span> {
+        let mut spans = vec![];
+        let Module {
+            srcpath: _,
+            modname: _,
+            imports,
+            infixes,
+            datatys,
+            classes,
+            implems,
+            fundefs,
+            aliases,
+            newtyps,
+            pragmas,
+        } = self;
+        spans.extend(imports.spans_mut());
+        spans.extend(infixes.spans_mut());
+        spans.extend(datatys.spans_mut());
+        spans.extend(classes.spans_mut());
+        spans.extend(implems.spans_mut());
+        spans.extend(fundefs.spans_mut());
+        spans.extend(aliases.spans_mut());
+        spans.extend(newtyps.spans_mut());
+        spans.extend(pragmas.spans_mut());
+        spans
     }
 }
 
