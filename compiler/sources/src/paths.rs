@@ -124,7 +124,7 @@ wy_common::variant_preds! {
 /// Additionally, a project generally contains all of the source files within
 /// the `src` subdirectory contained within the directory within which the
 /// compiler is run.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Atlas {
     filepaths: Vec<FilePath>,
     cfgpaths: Vec<CfgPath>,
@@ -415,7 +415,7 @@ impl<P: AsRef<Path>> Extend<P> for Atlas {
 /// helpers -- in `Atlas` and `Dir` -- are used to generate `FilePath`
 /// instances. This helps prevent non-wysk source files from
 /// inadvertently being included in the `Atlas` file tree, etc.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct FilePath {
     id: FileId,
     path: PathBuf,
@@ -666,7 +666,7 @@ impl PartialEq<FilePath> for PathBuf {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Directory {
     path: PathBuf,
 }

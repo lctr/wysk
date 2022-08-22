@@ -1,5 +1,6 @@
 use std::{path::Path, sync::Arc};
 
+use serde::{Deserialize, Serialize};
 use wy_failure::SrcPath;
 use wy_name::Ident;
 use wy_parser::error::ParseFailure;
@@ -11,7 +12,7 @@ use wy_syntax::{ast::respan::ReSpan, Program};
 /// same type returned by the `Parser`, and then work our way to a
 /// more refined AST, eventually aiming to reduce it to a simpler
 /// representation.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Tree {
     Raw(Program<Ident, Ident, SrcPath>),
 }
@@ -93,10 +94,41 @@ impl Session {
 
 #[cfg(test)]
 mod test {
-    #![allow(unused)]
+    use std::{io::Write, path::PathBuf};
+
     use super::*;
-    use wy_common::functor::{Func, MapFst, MapThrd};
-    use wy_syntax::tipo::Tv;
+    use bincode;
+    use serde_json;
+
+    // A NOTE RE: SERIALIZING AND DESERIALIZING: `Symbol`s will be
+    // serialized as newtypes around `u32`, losing string/identifier
+    // information, therefore any valid serialization of types
+    // containing `Symbol`s must also include a serialization of the
+    // global symbol table/interner...
+    fn serialize_bincode_to(trees: &[Tree], p: &str) {
+        let path = PathBuf::from(p);
+        match bincode::serialize(trees) {
+            Ok(bytes) => match std::fs::File::create(path) {
+                Ok(mut file) => match file.write(&bytes[..]) {
+                    Ok(n) => println!("{n} bytes written to `{p}`"),
+                    Err(e) => eprintln!("error writing serialized prelude ast: {e}"),
+                },
+                Err(e) => eprintln!("error creating file: {e}"),
+            },
+            Err(err) => eprintln!("error serializing prelude AST to binary: {err}"),
+        };
+    }
+
+    fn serialize_json_to(trees: &[Tree], p: &str) {
+        let path = PathBuf::from(p);
+        match std::fs::File::create(path) {
+            Ok(file) => match serde_json::to_writer_pretty(file, trees) {
+                Ok(_) => println!("AST serialized to JSON format and written to file `{p}`"),
+                Err(e) => eprintln!("error serializing prelude AST to json: {e}"),
+            },
+            Err(e) => eprintln!("error creating file: {e}"),
+        }
+    }
 
     #[test]
     fn load_and_parse_prelude() {
@@ -105,5 +137,7 @@ mod test {
         println!("`{succeeded}` prelude modules successfully parsed. `{failed}` prelude modules failed to parse.");
         assert!(failed == 0);
         assert!(sess.project.stored_files().count() == succeeded);
+        // serialize_bincode_to(&sess.trees[..], "../../tmp/prelude_ast_binser");
+        // serialize_json_to(&sess.trees[..], "../../tmp/prelude_ast.json")
     }
 }

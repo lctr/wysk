@@ -112,6 +112,7 @@ impl fmt::Display for FileName {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct File {
     pub span: Span,
     name: FileName,
