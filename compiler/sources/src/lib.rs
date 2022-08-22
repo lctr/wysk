@@ -20,7 +20,7 @@ pub struct ProjectBuilder {
 
 impl ProjectBuilder {
     pub fn new(root_dir: Directory) -> Self {
-        let atlas = Atlas::new();
+        let (atlas, _) = Atlas::walk_dir(&root_dir);
         let manifest = None;
         let submodules = vec![];
         ProjectBuilder {
@@ -147,6 +147,12 @@ impl Project {
 /// Alias for the associated method `Project::new_from_dir`
 pub fn new_project(path: impl AsRef<Path>) -> Option<Project> {
     Project::new_from_dir(Directory::new(path))
+}
+
+pub fn prelude_project() -> Project {
+    let proj = new_project(paths::PRELUDE_PATH);
+    assert!(proj.is_some(), "failed to initialize `prelude`!");
+    proj.unwrap()
 }
 
 #[cfg(test)]
