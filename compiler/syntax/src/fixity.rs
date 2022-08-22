@@ -1,8 +1,9 @@
 #![allow(unused)]
+use crate::visit::SpannedVisitor;
+
 use super::*;
 use serde::{Deserialize, Serialize};
 use visit::{Visit, VisitError, VisitMut};
-use wy_intern::symbol;
 
 use wy_lexer::{self, LexError};
 
@@ -134,7 +135,6 @@ pub enum FixityFail<Id = Ident> {
     NoLeftExpr,
     NoRightExpr,
     InfixesEmpty,
-    Visit(VisitError),
 }
 
 impl<Id: std::fmt::Display> std::fmt::Display for FixityFail<Id> {
@@ -146,12 +146,12 @@ impl<Id: std::fmt::Display> std::fmt::Display for FixityFail<Id> {
             FixityFail::NoLeftExpr => write!(f, "Expression stack empty, but needed expression for left-hand side of (reconstituted) infix expression"),
             FixityFail::NoRightExpr => write!(f, "Expression stack empty, but needed expression for right-hand side of (reconstituted) infix expression"),
             FixityFail::InfixesEmpty => write!(f, "Infix stack empty, but needed infix to complete (reconstituted) infix expression"),
-            FixityFail::Visit(err) => write!(f, "{}", err)
+            // FixityFail::Visit(err) => write!(f, "{}", err)
         }
     }
 }
 
-impl std::error::Error for FixityFail {}
+impl<Id> std::error::Error for FixityFail<Id> where Id: std::fmt::Debug + std::fmt::Display {}
 
 /// Non-hashmap container for declared fixities.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -163,6 +163,25 @@ impl Default for Fixities<Ident> {
 }
 
 impl<Id> Fixities<Id> {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+    pub fn as_slice(&self) -> &[(Id, Fixity)] {
+        &self.0[..]
+    }
+    pub fn prefix_with(self, prefix: Id) -> Fixities<Chain<Id>>
+    where
+        Id: Clone,
+    {
+        use wy_name::Chain;
+        let base = Chain::new(prefix, [].into());
+        self.into_iter()
+            .map(|(id, fixity)| (base.with_suffix(id), fixity))
+            .collect()
+    }
     #[inline]
     pub fn contains_infix(&self, id: &Id) -> bool
     where
@@ -388,16 +407,109 @@ where
         }
     }
 
-    fn visit_expression<T>(&mut self, expr: &mut Expression<Id, T>) -> Result<(), FixityFail<Id>>
+    /// For use when `Expression`s are parametrized not by `Id` but
+    /// rather by `Spanned<Id>`. Turns out it's fairly simple and not
+    /// that different, only differing in comparing infixes and the
+    /// `FixityFail` error type.
+    pub fn apply_spanned<T>(
+        &mut self,
+        mut expr: Box<Expression<Spanned<Id>, T>>,
+    ) -> Result<Expression<Spanned<Id>, T>, FixityFail<Spanned<Id>>>
     where
         Id: Clone,
     {
-        // walk_expr_mut(self, expr)
-        // use visit::*;
-        // Visitor(())
-        //     .visit_expr_mut(expr)
-        //     .map_err(FixityFail::Visit)?;
+        fn reduce<Op, B>(
+            exprs: &mut Vec<Box<Expression<Spanned<Op>, B>>>,
+            infixes: &mut Vec<Spanned<Op>>,
+        ) -> Result<(), FixityFail<Spanned<Op>>> {
+            assert!(exprs.len() >= 2);
+            let infix = infixes.pop().ok_or(FixityFail::InfixesEmpty)?;
+            let right = exprs.pop().ok_or(FixityFail::NoRightExpr)?;
+            let left = exprs.pop().ok_or(FixityFail::NoLeftExpr)?;
+            exprs.push(Box::new(Expression::Infix { infix, left, right }));
+            Ok(())
+        }
 
+        let mut exprs = vec![];
+        let mut ops: Vec<Spanned<Id>> = vec![];
+        loop {
+            match *expr {
+                Expression::Infix { infix, left, right } => {
+                    exprs.push(left);
+                    expr = right;
+                    loop {
+                        match ops.last().cloned() {
+                            Some(prev_op) => {
+                                let Fixity {
+                                    assoc: this_assoc,
+                                    prec: this_prec,
+                                } = self.get_fixity(infix.item());
+                                let Fixity {
+                                    assoc: prev_assoc,
+                                    prec: prev_prec,
+                                } = self.get_fixity(prev_op.item());
+                                if this_prec > prev_prec {
+                                    ops.push(infix);
+                                    break;
+                                } else if this_prec == prev_prec {
+                                    match (this_assoc, prev_assoc) {
+                                        (Assoc::Left, Assoc::Left) => {
+                                            reduce(&mut exprs, &mut ops)?;
+                                        }
+
+                                        (Assoc::Right, Assoc::Right) => {
+                                            // shift infix
+                                            ops.push(infix);
+                                            break;
+                                        }
+                                        (t_a, p_a) => {
+                                            // TODO: what about mismatched associativities?
+                                            // TODO: Error reporting!
+                                            return Err(FixityFail::AssocFail([
+                                                (infix, this_assoc),
+                                                (prev_op, prev_assoc),
+                                            ]));
+                                        }
+                                    }
+                                } else {
+                                    reduce(&mut exprs, &mut ops)?;
+                                }
+                            }
+                            None => {
+                                ops.push(infix);
+                                break;
+                            }
+                        }
+                    }
+                }
+                rhs => {
+                    let mut result = rhs;
+                    while ops.len() != 0 {
+                        assert!(exprs.len() >= 1);
+                        let lhs = exprs.pop().ok_or(FixityFail::NoLeftExpr)?;
+                        let op = ops.pop().ok_or(FixityFail::InfixesEmpty)?;
+                        result = Expression::Infix {
+                            infix: op,
+                            left: lhs,
+                            right: Box::new(result),
+                        };
+                    }
+                    return Ok(result);
+                }
+            }
+        }
+    }
+}
+
+impl<Id> VisitMut<Id, Id, FixityFail<Id>> for FixityTable<Id>
+where
+    Id: Clone + Eq + std::hash::Hash + std::fmt::Debug + std::fmt::Display,
+{
+    fn visit_ident_mut(&mut self, _: &mut Id) -> Result<(), FixityFail<Id>> {
+        Ok(())
+    }
+
+    fn visit_expr_mut(&mut self, expr: &mut Expression<Id, Id>) -> Result<(), FixityFail<Id>> {
         if let Expression::Infix { .. } = expr {
             let mut temp = Expression::Tuple(vec![]);
             std::mem::swap(&mut temp, expr);
@@ -407,7 +519,42 @@ where
 
         Ok(())
     }
-    fn visit_module(&mut self, module: &mut Module) {}
+    fn visit_module_mut<P>(
+        &mut self,
+        module: &mut Module<Id, Id, P>,
+    ) -> Result<(), FixityFail<Id>> {
+        module.infixes_iter().for_each(|fixity_decl| {
+            let fixity = fixity_decl.fixity;
+            for Spanned(infix, _) in &fixity_decl.infixes {
+                self.0.insert(infix.clone(), fixity);
+            }
+        });
+        for decl in module.implems_iter_mut() {
+            let mut sp_visitor = SpannedVisitor(self);
+            sp_visitor.visit_ident_mut(&mut decl.name)?;
+            for binding in decl.defs_iter_mut() {
+                sp_visitor.visit_binding_mut(binding)?;
+            }
+        }
+        for decl in module.fundefs_iter_mut() {
+            let mut sp_visitor = SpannedVisitor(self);
+            sp_visitor.visit_ident_mut(&mut decl.name)?;
+            for arm in decl.defs_iter_mut() {
+                sp_visitor.visit_arm_mut(arm)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn visit_program_mut<U>(
+        &mut self,
+        program: &mut Program<Id, Id, U>,
+    ) -> Result<(), FixityFail<Id>> {
+        for (id, fix) in program.fixities_iter() {
+            self.0.insert(id.clone(), *fix);
+        }
+        Ok(())
+    }
 }
 
 impl<Id> FromIterator<(Id, Fixity)> for FixityTable<Id>
@@ -445,32 +592,14 @@ mod tests {
     use wy_span::{Dummy, Span};
 
     use super::*;
-    /// let's take a stab at reordering expressions based on fixities we will be
-    /// using simple arithmetic operators, whose fixities are (to be) defined (and
-    /// implicitly imported) in the Prelude.
-    ///
-    /// Recall that an algebraic field *F* is equipped with the following four
-    /// arithmetic operations
-    /// - `(+) => (Assoc::Left, Prec(5))`
-    /// - `(-) => (Assoc::Left, Prec(5))`
-    /// - `(*) => (Assoc::Left, Prec(6))`
-    /// - `(/) => (Assoc::Left, Prec(6))`
-    ///
-    /// We will be testing the expression `a + b * (c - d)`
-    ///
-    ///
-    /// | LABEL           | PARSED AS              |
-    /// |-----------------|------------------------|
-    /// | INITIAL         | `a + (b * (c - d))`    |
-    /// | INITIAL AS SEXP | `(+ a (* b (- c d)))`  |
-    /// | CORRECT         | `(a + b) * (c - d)`    |
-    /// | CORRECT SEXP    | `(* (+ a b) (- c d))`  |
-    ///
+
     #[test]
     fn test_fixity_correction() {
-        let [a, b, c, d] = { map_array(symbol::intern_many(["a", "b", "c", "d"]), Ident::Lower) };
+        use wy_intern::Symbol;
+
+        let [a, b, c, d] = { Symbol::intern_many_with(["a", "b", "c", "d"], Ident::Lower) };
         let [plus, minus, times, div] =
-            { map_array(symbol::intern_many(["+", "-", "*", "/"]), Ident::Infix) };
+            { Symbol::intern_many_with(["+", "-", "*", "/"], Ident::Infix) };
         let var = Expression::<Ident, Ident>::Ident;
         // a + b * c - d
         // (a + (b * (c - d)))
@@ -521,21 +650,5 @@ mod tests {
             left: Box::new(left),
             right: Box::new(right),
         }
-    }
-
-    fn map_array<F, X, Y, const K: usize>(array: [X; K], mut f: F) -> [Y; K]
-    where
-        F: FnMut(X) -> Y,
-    {
-        // this is safe since `out` is the same size as `array`, and we will be
-        // replacing every element of `out` with `f` applied to each element of
-        // `array`.
-        let mut out: [Y; K] = unsafe { std::mem::zeroed() };
-        let mut i = 0;
-        for x in array {
-            out[i] = f(x);
-            i += 1;
-        }
-        out
     }
 }
