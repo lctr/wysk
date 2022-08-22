@@ -1,4 +1,5 @@
 use attr::Pragma;
+use serde::{Deserialize, Serialize};
 use wy_common::{
     deque,
     functor::{MapFst, MapSnd},
@@ -41,10 +42,10 @@ pub type SpannedIdent = Spanned<Ident>;
 pub type VecIter<'a, X> = std::slice::Iter<'a, X>;
 pub type VecIterMut<'a, X> = std::slice::IterMut<'a, X>;
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Program<Id, T, U> {
     pub module: Module<Id, T, U>,
-    pub fixities: FixityTable<Id>,
+    pub fixities: Fixities<Id>,
     pub comments: Vec<Comment>,
 }
 
@@ -57,10 +58,7 @@ impl<Id, T, U> Program<Id, T, U> {
         &self.module.srcpath
     }
 
-    pub fn fixities_iter(&self) -> std::collections::hash_map::Iter<'_, Id, fixity::Fixity>
-    where
-        Id: Eq + std::hash::Hash,
-    {
+    pub fn fixities_iter(&self) -> std::slice::Iter<'_, (Id, fixity::Fixity)> {
         self.fixities.iter()
     }
 
@@ -148,7 +146,7 @@ where
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Module<Id = Ident, T = Ident, P = SrcPath> {
     pub srcpath: P,
     pub modname: Chain<Id>,
@@ -336,7 +334,7 @@ impl<Id, T, P> Module<Id, T, P> {
 
 /// Same general structure as a `Module`, but without the identifier
 /// and type variable parameters being wrapped in a `Spanned` type.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpanlessModule<Id, T, P> {
     pub srcpath: P,
     pub modname: Chain<Id>,
@@ -365,7 +363,7 @@ pub struct SpanlessModule<Id, T, P> {
 /// accessible without prefixing the module name. When a module is *qualified*
 /// __and__ *renamed*, the module prefix necessary to access its imports is
 /// restricted to matching the new name only.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportSpec<Id = SpannedIdent> {
     pub name: Chain<Id>,
     pub qualified: bool,
@@ -501,7 +499,7 @@ where
 /// `Operator`, `Function`, `Abstract`, `Total`, and `Partial`
 /// * Type aliases are always `Abstract`
 ///
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Import<Id = SpannedIdent> {
     /// Infix imports
     Operator(Id),

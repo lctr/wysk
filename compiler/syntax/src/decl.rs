@@ -9,7 +9,7 @@ use wy_span::{Span, Spanned};
 
 use crate::{attr::*, fixity::*, stmt::*, tipo::*, SpannedIdent};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FixityDecl<Id = SpannedIdent> {
     pub span: Span,
     pub infixes: Vec<Id>,
@@ -36,6 +36,26 @@ impl<Id> FixityDecl<Id> {
             fixity: self.fixity,
             from_pragma: self.from_pragma,
         }
+    }
+}
+
+impl<Id: Clone> From<&[FixityDecl<Spanned<Id>>]> for Fixities<Id> {
+    fn from(fixs: &[FixityDecl<Spanned<Id>>]) -> Self {
+        fixs.into_iter()
+            .flat_map(|decl| {
+                decl.infixes_iter()
+                    .cloned()
+                    .map(|Spanned(id, _)| (id, decl.fixity))
+            })
+            .collect()
+    }
+}
+
+impl From<&[FixityDecl<wy_name::Ident>]> for Fixities<wy_name::Ident> {
+    fn from(fixs: &[FixityDecl<wy_name::Ident>]) -> Self {
+        fixs.into_iter()
+            .flat_map(|decl| decl.infixes_iter().copied().map(|id| (id, decl.fixity)))
+            .collect()
     }
 }
 

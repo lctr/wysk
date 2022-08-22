@@ -1,11 +1,9 @@
-#![allow(unused)]
+// #![allow(unused)]
 use crate::visit::SpannedVisitor;
 
 use super::*;
 use serde::{Deserialize, Serialize};
-use visit::{Visit, VisitError, VisitMut};
-
-use wy_lexer::{self, LexError};
+use visit::VisitMut;
 
 /// Precedence are internally represented with values greater than declared in
 /// source code, differing by 1. This not only implies that the minimum
@@ -128,7 +126,7 @@ impl From<(Assoc, Prec)> for Fixity {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FixityFail<Id = Ident> {
     AssocFail([(Id, Assoc); 2]),
     NoFixity(Id),
@@ -163,6 +161,9 @@ impl Default for Fixities<Ident> {
 }
 
 impl<Id> Fixities<Id> {
+    pub fn new(infixify: fn(Symbol) -> Id) -> Self {
+        Self(vec![(infixify(wy_intern::sym::COLON), Fixity::CONS)])
+    }
     pub fn len(&self) -> usize {
         self.0.len()
     }
@@ -176,7 +177,6 @@ impl<Id> Fixities<Id> {
     where
         Id: Clone,
     {
-        use wy_name::Chain;
         let base = Chain::new(prefix, [].into());
         self.into_iter()
             .map(|(id, fixity)| (base.with_suffix(id), fixity))
@@ -212,6 +212,30 @@ impl<Id> Fixities<Id> {
         Id: Eq + std::hash::Hash,
     {
         self.0.into_iter().collect()
+    }
+
+    pub fn clone_to_table(self) -> FixityTable<Id>
+    where
+        Id: Clone + Eq + std::hash::Hash,
+    {
+        self.clone().into_table()
+    }
+
+    pub fn get_fixity(&self, infix: &Id) -> Fixity
+    where
+        Id: PartialEq,
+    {
+        self.iter()
+            .find_map(
+                |(id, fixity)| {
+                    if id == infix {
+                        Some(*fixity)
+                    } else {
+                        None
+                    }
+                },
+            )
+            .unwrap_or_default()
     }
 
     #[inline]
@@ -369,7 +393,7 @@ where
                                             ops.push(infix);
                                             break;
                                         }
-                                        (t_a, p_a) => {
+                                        (this_assoc, prev_assoc) => {
                                             // TODO: what about mismatched associativities?
                                             // TODO: Error reporting!
                                             return Err(FixityFail::AssocFail([
@@ -462,7 +486,7 @@ where
                                             ops.push(infix);
                                             break;
                                         }
-                                        (t_a, p_a) => {
+                                        (this_assoc, prev_assoc) => {
                                             // TODO: what about mismatched associativities?
                                             // TODO: Error reporting!
                                             return Err(FixityFail::AssocFail([

@@ -144,7 +144,7 @@ impl<'t> ModuleParser<'t> {
         match module {
             Ok(module) => Ok(Program {
                 module,
-                fixities,
+                fixities: fixities.as_fixities(),
                 comments: lexer.comments,
             }),
             Err(source) => Err(ParseFailure {
