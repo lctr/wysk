@@ -171,7 +171,11 @@ impl<'t> TypeParser<'t> {
                 .map(|con| Type::Con(Con::Named(con), vec![])),
             Some(t) if t.is_brack_l() => self.brack_ty(),
             Some(t) if t.is_paren_l() => self.paren_ty(),
-            _ => self.invalid_type_start().err(),
+            Some(t) => {
+                let t = *t;
+                self.invalid_type_start(t).err()
+            }
+            None => self.unexpected_eof().err(),
         }
     }
 
@@ -224,10 +228,12 @@ impl<'t> TypeParser<'t> {
                 if self.peek_on(Lexeme::begins_ty) =>
             {
                 while !(self.is_done() || lexpat!(self on [parenR]|[,]|[->])) {
-                    if !self.peek_on(Lexeme::begins_ty) {
-                        return self.invalid_type_start().err();
-                    };
-                    args.push(self.ty_atom()?);
+                    let tok = self.peek().copied().ok_or_else(|| self.unexpected_eof())?;
+                    if tok.begins_ty() {
+                        args.push(self.ty_atom()?);
+                    } else {
+                        return self.invalid_type_start(tok).err();
+                    }
                 }
                 ty = Type::Con(Con::Named(n), args)
             }
@@ -262,7 +268,8 @@ impl<'t> TypeParser<'t> {
             if self.peek_on(Lexeme::begins_ty) {
                 let of = self.ty_atom()?;
                 if self.peek_on(Lexeme::begins_ty) {
-                    Err(self.custom_error("invalid type application of `[]`! The type constructor `[]` expects only one type argument, but a second argument was found"))
+                    let tok = self.peek().copied().ok_or_else(|| self.unexpected_eof())?;
+                    Err(self.custom_error(tok, "invalid type application of `[]`! The type constructor `[]` expects only one type argument, but a second argument was found"))
                 } else {
                     Ok(Type::Con(Con::List, vec![of]))
                 }
