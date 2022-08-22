@@ -37,16 +37,6 @@ impl Symbol {
         self.0
     }
 
-    /// Equivalent to simply calling a closure with this as that closure's
-    /// argument.
-    #[inline]
-    pub fn pure<X, F>(self, mut f: F) -> X
-    where
-        F: FnMut(Self) -> X,
-    {
-        f(self)
-    }
-
     pub fn from_char(c: char) -> Symbol {
         if c == ':' {
             sym::COLON
