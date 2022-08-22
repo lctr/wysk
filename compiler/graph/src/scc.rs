@@ -5,11 +5,23 @@ use std::collections::HashMap;
 /// typechecking) to identify mutually recursive functions.
 ///
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct NodeId(usize);
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+impl std::fmt::Debug for NodeId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "NodeId({})", &self.0)
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct EdgeId(usize);
+
+impl std::fmt::Debug for EdgeId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "EdgeId({})", &self.0)
+    }
+}
 
 impl From<NodeId> for usize {
     fn from(NodeId(idx): NodeId) -> Self {
@@ -352,6 +364,28 @@ pub struct EdgeVisitor<'a, Id, T> {
     pub graph: &'a mut Graph<T>,
     pub map: &'a HashMap<Id, NodeId>,
     pub node_id: NodeId,
+}
+
+impl<'a, Id, T> EdgeVisitor<'a, Id, T> {
+    pub fn id_from_node(&self, node_id: &NodeId) -> Option<&Id> {
+        self.map
+            .iter()
+            .find_map(|(id, nodeid)| if nodeid == node_id { Some(id) } else { None })
+    }
+}
+
+impl<Id, T> std::fmt::Debug for EdgeVisitor<'_, Id, T>
+where
+    Id: std::fmt::Debug,
+    T: std::fmt::Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EdgeVisitor")
+            .field("graph", &self.graph)
+            .field("map", &self.map)
+            .field("node_id", &self.node_id)
+            .finish()
+    }
 }
 
 #[cfg(test)]
