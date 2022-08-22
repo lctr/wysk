@@ -1,7 +1,10 @@
-use std::path::{Path, PathBuf};
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+};
 
 use wy_pretty::color::{AsciiColor, StyleBuilder};
-use wy_span::{Col, Coord, Row, Span};
+use wy_span::{Col, Coord, Row, Span, WithCoordSpan};
 
 const PAD_SPACE: usize = 4;
 
@@ -15,8 +18,8 @@ const CARET: char = '^';
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Glyphs(&'static [char]);
 
-impl std::fmt::Display for Glyphs {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for Glyphs {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for c in self.0 {
             write!(f, "{c}")?;
         }
@@ -28,11 +31,11 @@ const TOP_LEFT: Glyphs = Glyphs(&[CORNER, DASH]);
 
 struct Repeat<S>(usize, S);
 
-impl<S> std::fmt::Display for Repeat<S>
+impl<S> fmt::Display for Repeat<S>
 where
-    S: std::fmt::Display,
+    S: fmt::Display,
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut count = self.0;
         let it = &self.1;
         while count > 0 {
@@ -43,11 +46,11 @@ where
     }
 }
 
-impl<S> std::fmt::Debug for Repeat<S>
+impl<S> fmt::Debug for Repeat<S>
 where
-    S: std::fmt::Display,
+    S: fmt::Display,
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut count = self.0;
         let it = &self.1;
         while count > 0 {
@@ -68,20 +71,21 @@ where
 ///         [PATH/TO/FILE]:[ROW][COL]
 /// ```
 /// in error messages.
-pub struct Dialogue<'s, S: AsRef<str> = String> {
+// TODO: GENERALIZE TO SHOW MULTIPLE ERRORS
+pub struct Dialogue<'s, S: AsRef<str> = String, P: AsRef<Path> = PathBuf> {
     label: &'s str,
     message: String,
     srctext: &'s S,
-    srcloc: &'s SrcLoc,
+    srcloc: &'s SrcLoc<P>,
     span: Span,
 }
 
-impl<'s, S: AsRef<str>> Dialogue<'s, S> {
+impl<'s, S: AsRef<str>, P: AsRef<Path>> Dialogue<'s, S, P> {
     pub fn new(
         label: &'s str,
         message: String,
         srctext: &'s S,
-        srcloc: &'s SrcLoc,
+        srcloc: &'s SrcLoc<P>,
         span: Span,
     ) -> Self {
         Dialogue {
@@ -93,8 +97,8 @@ impl<'s, S: AsRef<str>> Dialogue<'s, S> {
         }
     }
 
-    pub fn display(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(self, f)
+    pub fn display(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
     }
 
     pub fn row_col(&self) -> (Row, Col) {
@@ -108,10 +112,7 @@ impl<'s, S: AsRef<str>> Dialogue<'s, S> {
 }
 
 impl Dialogue<'_> {
-    pub fn write_bold_red(
-        msg: impl std::fmt::Display,
-        f: &mut std::fmt::Formatter<'_>,
-    ) -> std::fmt::Result {
+    pub fn write_bold_red(msg: impl fmt::Display, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         StyleBuilder::new()
             .set_fg_color(AsciiColor::Red)
             .set_bold(true)
@@ -120,8 +121,8 @@ impl Dialogue<'_> {
     }
 }
 
-impl<'s, S: AsRef<str>> std::fmt::Display for Dialogue<'s, S> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<'s, S: AsRef<str>, P: AsRef<Path>> fmt::Display for Dialogue<'s, S, P> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // error label
         let label = StyleBuilder::new()
             .set_bold(true)
@@ -159,8 +160,8 @@ impl<'s, S: AsRef<str>> std::fmt::Display for Dialogue<'s, S> {
     }
 }
 
-impl<'s, S: AsRef<str>> std::fmt::Debug for Dialogue<'s, S> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<'s, S: AsRef<str>, P: AsRef<Path>> fmt::Debug for Dialogue<'s, S, P> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", &self)
     }
 }
@@ -171,14 +172,36 @@ pub enum SrcPath<P: AsRef<Path> = PathBuf> {
     File(P),
 }
 
+impl<P: AsRef<Path>> SrcPath<P> {
+    pub fn is_from_file(&self) -> bool {
+        matches!(self, Self::File(_))
+    }
+
+    pub fn as_path(&self) -> Option<&Path> {
+        match self {
+            SrcPath::Direct => todo!(),
+            SrcPath::File(_) => todo!(),
+        }
+    }
+
+    pub fn borrowed(&self) -> SrcPath<&P> {
+        match self {
+            SrcPath::Direct => SrcPath::Direct,
+            SrcPath::File(p) => SrcPath::File(p),
+        }
+    }
+}
+
+impl<P: Copy + AsRef<Path>> Copy for SrcPath<P> {}
+
 impl<P: AsRef<Path>> Default for SrcPath<P> {
     fn default() -> Self {
         Self::Direct
     }
 }
 
-impl<P: AsRef<Path>> std::fmt::Display for SrcPath<P> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<P: AsRef<Path>> fmt::Display for SrcPath<P> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SrcPath::Direct => write!(f, "<{}>", wy_pretty::color!(fg Red "STDIN")),
             SrcPath::File(p) => write!(f, "{}", p.as_ref().display()),
@@ -186,26 +209,44 @@ impl<P: AsRef<Path>> std::fmt::Display for SrcPath<P> {
     }
 }
 
-#[derive(Clone, PartialEq)]
-pub struct SrcLoc {
-    pub coord: Coord,
-    pub pathstr: SrcPath<PathBuf>,
+impl<P: AsRef<Path>> PartialEq<&Path> for SrcPath<P> {
+    fn eq(&self, other: &&Path) -> bool {
+        match (self, other) {
+            (Self::File(l0), p) => l0.as_ref() == *p,
+            _ => false,
+        }
+    }
 }
 
-impl std::fmt::Display for SrcLoc {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<P: AsRef<Path>> PartialEq<PathBuf> for SrcPath<P> {
+    fn eq(&self, other: &PathBuf) -> bool {
+        match (self, other) {
+            (Self::File(l0), p) => l0.as_ref() == p.as_path(),
+            _ => false,
+        }
+    }
+}
+
+#[derive(Clone, PartialEq)]
+pub struct SrcLoc<P: AsRef<Path> = PathBuf> {
+    pub coord: Coord,
+    pub pathstr: SrcPath<P>,
+}
+
+impl<P: AsRef<Path>> fmt::Display for SrcLoc<P> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // include only starting coordinates?
         write!(f, "{}:{}", &self.pathstr, &self.coord)
     }
 }
 
-impl std::fmt::Debug for SrcLoc {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<P: AsRef<Path>> fmt::Debug for SrcLoc<P> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:?}", self)
     }
 }
 
-impl SrcLoc {
+impl<P: AsRef<Path>> SrcLoc<P> {
     pub fn gutter(&self) -> RowGutter {
         RowGutter(self.coord.row)
     }
@@ -214,8 +255,8 @@ impl SrcLoc {
 /// Error printing utility
 #[derive(Copy, Clone, PartialEq, PartialOrd)]
 pub struct RowGutter(Row);
-impl std::fmt::Display for RowGutter {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for RowGutter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for _ in 0..(PAD_SPACE + self.0.strlen() as usize) {
             char::fmt(&' ', f)?;
         }

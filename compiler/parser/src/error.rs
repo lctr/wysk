@@ -1,7 +1,6 @@
 use std::fmt;
 
 pub use wy_failure;
-pub use wy_failure::show::DialogueList;
 use wy_failure::Dialogue;
 pub use wy_failure::Failure;
 pub use wy_failure::SrcLoc;
