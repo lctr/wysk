@@ -1,9 +1,11 @@
+use serde::{Deserialize, Serialize};
+
 use crate::{
     ranges::{Position, Region, Span},
     BytePos, Col, Row,
 };
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 pub struct Spanned<T>(pub T, pub Span);
 
 impl<T> Spanned<T> {
