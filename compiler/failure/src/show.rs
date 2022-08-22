@@ -3,6 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use serde::{Deserialize, Serialize};
 use wy_pretty::color::{AsciiColor, StyleBuilder};
 use wy_span::{Col, Coord, Row, Span};
 
@@ -166,7 +167,7 @@ impl<'s, S: AsRef<str>, P: AsRef<Path>> fmt::Debug for Dialogue<'s, S, P> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum SrcPath<P: AsRef<Path> = PathBuf> {
     Direct,
     File(P),

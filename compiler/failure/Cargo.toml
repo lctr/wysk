@@ -10,5 +10,8 @@ wy_span = { path = "../span" }
 wy_intern = { path = "../intern" }
 wy_pretty = { path = "../pretty" }
 
+serde = { version = "1.0", features = ["derive"] }
+
+
 # [dev-dependencies]
 pretty_assertions = "1.2.1"
