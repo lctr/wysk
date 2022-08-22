@@ -6,6 +6,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use wy_common::Set;
 
 use crate::manifest::Manifest;
 
@@ -434,6 +435,47 @@ impl FilePath {
         // safe to unwrap since *all* `Src` instances **must** end in the
         // file-extension `.wy`.
         self.path().file_name().and_then(|s| s.to_str()).unwrap()
+    }
+
+    /// Given a root path, returns the sequence of directory names
+    /// that are descendants of the root path within the `self` path,
+    /// with the filename added as the last component.
+    ///
+    /// For example, if `self` is `foo/bar/baz.wy`, and the root path
+    /// given is `bar/`, then the components `[bar, baz]` are returned.
+    ///
+    /// If `self` is `bar/baz.wy`, and the given root path is
+    /// `bar/quz/biz.wy`, then since the only shared directory between
+    /// the two is `bar`, the components `[bar, baz]` are returned,
+    /// since the filepath's *file name* is always included.
+    pub fn shared_components(&self, root_path: &Self) -> Vec<String> {
+        use std::path::Component;
+        use wy_common::text;
+        let parts = |fp: &FilePath| {
+            fp.canonicalize()
+                .into_iter()
+                .flat_map(|me| {
+                    me.components()
+                        .filter_map(|cmpn| {
+                            if matches!(cmpn, Component::Normal(_)) {
+                                cmpn.as_os_str().to_str()
+                            } else {
+                                None
+                            }
+                        })
+                        .map(String::from)
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Set<_>>()
+        };
+        let mine = parts(self);
+        let theirs = parts(root_path);
+        let my_name = self.file_name().trim_end_matches(".wy").to_string();
+        mine.intersection(&theirs)
+            .into_iter()
+            .chain(std::iter::once(&my_name))
+            .map(|s| text::capitalize_first(s))
+            .collect()
     }
 
     /// Checks whether the first character of the file's name begins with an
