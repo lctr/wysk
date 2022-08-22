@@ -105,6 +105,7 @@ mod test {
     // information, therefore any valid serialization of types
     // containing `Symbol`s must also include a serialization of the
     // global symbol table/interner...
+    #[allow(unused)]
     fn serialize_bincode_to(trees: &[Tree], p: &str) {
         let path = PathBuf::from(p);
         match bincode::serialize(trees) {
@@ -119,6 +120,7 @@ mod test {
         };
     }
 
+    #[allow(unused)]
     fn serialize_json_to(trees: &[Tree], p: &str) {
         let path = PathBuf::from(p);
         match std::fs::File::create(path) {
