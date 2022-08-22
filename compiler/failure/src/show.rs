@@ -4,7 +4,7 @@ use std::{
 };
 
 use wy_pretty::color::{AsciiColor, StyleBuilder};
-use wy_span::{Col, Coord, Row, Span, WithCoordSpan};
+use wy_span::{Col, Coord, Row, Span};
 
 const PAD_SPACE: usize = 4;
 
