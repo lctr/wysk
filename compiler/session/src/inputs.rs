@@ -103,19 +103,8 @@ mod test {
         let mut sess = Session::new(wy_sources::prelude_project());
         let (succeeded, failed) = sess.parse_unread();
         println!("`{succeeded}` prelude modules successfully parsed. `{failed}` prelude modules failed to parse.");
+        assert!(failed == 0);
+        assert!(sess.project.stored_files().count() == succeeded);
         println!("{:?}", &sess)
-    }
-
-    #[test]
-    fn qualify_prelude_ast_ids() {
-        let qualified =
-            wy_parser::parse_standalone("../../language/prelude/src/container.wy").map(|program| {
-                let modname = program.modname().clone();
-                todo!()
-            });
-        match qualified {
-            Ok(res) => println!("{res:#?}"),
-            Err(e) => eprintln!("{e}"),
-        }
     }
 }
