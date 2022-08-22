@@ -305,6 +305,13 @@ impl<Id> Chain<Id> {
         let tail = parts.collect::<Deque<_>>();
         Chain(head, tail)
     }
+
+    pub fn printable(&self) -> ChainPrinter<'_, Id>
+    where
+        Id: Identifier,
+    {
+        ChainPrinter(self)
+    }
 }
 
 impl<Id> Chain<Spanned<Id>> {
