@@ -105,6 +105,5 @@ mod test {
         println!("`{succeeded}` prelude modules successfully parsed. `{failed}` prelude modules failed to parse.");
         assert!(failed == 0);
         assert!(sess.project.stored_files().count() == succeeded);
-        println!("{:?}", &sess)
     }
 }
