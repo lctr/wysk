@@ -3,7 +3,7 @@ use crate::{
     BytePos, Col, Row,
 };
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct Spanned<T>(pub T, pub Span);
 
 impl<T> Spanned<T> {
@@ -28,6 +28,16 @@ impl<T> Spanned<T> {
 
     pub fn span_mut(&mut self) -> &mut Span {
         &mut self.1
+    }
+
+    #[inline]
+    pub fn start(&self) -> BytePos {
+        self.1.start()
+    }
+
+    #[inline]
+    pub fn end(&self) -> BytePos {
+        self.1.end()
     }
 
     pub fn shift_right(&mut self, offset: BytePos) {
@@ -68,6 +78,17 @@ impl<T> Spanned<T> {
         T: PartialEq,
     {
         self.item() == other.item()
+    }
+
+    pub fn span_eq(&self, other: &Self) -> bool {
+        self.span() == other.span()
+    }
+
+    pub fn total_eq(&self, other: &Self) -> bool
+    where
+        T: PartialEq,
+    {
+        self.item_eq(other) && self.span_eq(other)
     }
 }
 
@@ -146,8 +167,10 @@ impl<T> std::cmp::PartialEq for Spanned<T>
 where
     T: PartialEq,
 {
+    /// Only the item data is compared; to compare spans, either
+    /// `span_eq` or `total_eq` must be used.
     fn eq(&self, other: &Self) -> bool {
-        self.span() == other.span() && self.item() == other.item()
+        self.item() == other.item()
     }
 }
 
@@ -165,7 +188,7 @@ where
     T: PartialEq,
 {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.1.partial_cmp(&other.1)
+        self.span().partial_cmp(&other.span())
     }
 }
 
@@ -182,9 +205,28 @@ impl<T> std::hash::Hash for Spanned<T>
 where
     T: std::hash::Hash,
 {
+    /// Note: only the carried items are hashed, spans themselves are ignored
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.0.hash(state);
-        self.1.hash(state);
+        // self.1.hash(state);
+    }
+}
+
+impl<T> std::fmt::Debug for Spanned<T>
+where
+    T: std::fmt::Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?} @ {}:{}", self.item(), self.start(), self.end())
+    }
+}
+
+impl<T> std::fmt::Display for Spanned<T>
+where
+    T: std::fmt::Display,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} @ {}:{}", self.item(), self.start(), self.end())
     }
 }
 
