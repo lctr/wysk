@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use wy_common::functor::{Func, MapFst, MapSnd, Wrap1, Wrap2};
 use wy_failure::{diff::diff_assert_eq, SrcPath};
 use wy_lexer::{Lexeme, Token};
 use wy_name::Chain;
@@ -21,6 +22,18 @@ use crate::{
     },
     Import, ImportSpec, Module,
 };
+
+/// Generic function over any type with two type parameters wrapped in
+/// `Span`s that implement `MapFst` and `MapSnd`, mapping the
+/// parameters `Spanned<A>` to `A` and `Spanned<B>` to `B`.
+pub fn de_span2<A, B, X>(x: X) -> Wrap2<Wrap1<X, Spanned<A>, A>, Spanned<B>, B>
+where
+    X: MapFst<Spanned<A>, A> + MapSnd<Spanned<B>, B>,
+    Wrap1<X, Spanned<A>, A>: MapSnd<Spanned<B>, B>,
+{
+    x.map_fst(&mut Func::New(Spanned::take_item))
+        .map_snd(&mut Func::New(Spanned::take_item))
+}
 
 ///! This module provides functionality for comparing AST nodes
 ///! without regards to their spans. This is necessary for checking

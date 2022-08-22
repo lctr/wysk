@@ -11,7 +11,7 @@ use crate::{
     expr::Expression,
     pattern::Pattern,
     record::{Field, Record},
-    stmt::{Alternative, Arm, Binding, Branch, Guard, LocalDef, Statement},
+    stmt::{Alternative, Arm, Binding, Statement},
     tipo::{
         Annotation, Con, Parameter, Predicate, Qualified, Quantified, Signature, SimpleType, Type,
         Var,
