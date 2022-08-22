@@ -1,6 +1,5 @@
 use std::{
     env,
-    error::Error,
     ffi::OsStr,
     fs,
     path::{Path, PathBuf},
@@ -10,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::manifest::Manifest;
 
-pub const PRELUDE_PATH: &'static str = "../../language";
+pub const PRELUDE_PATH: &'static str = "../../language/prelude";
 
 pub const WY_FILE_EXT: &'static str = "wy";
 
@@ -288,11 +287,49 @@ impl Atlas {
             .chain(self.filepaths_iter().map(|fp| AtlasItem::FilePath(fp)))
     }
 
-    pub fn walk_dir(dir: &Directory) -> Self {
-        Self::walk_path(dir.path())
+    /// Creates a new `Atlas` instance from a given `Directory`
+    /// instance, discarding any IO-related errors. This will
+    /// additionally add files in a disjoint manner -- rather than
+    /// identifying what kind of file each path refers to as the path
+    /// gets added, it will separate paths into file sourcepaths and
+    /// manifest paths. Additionally, it will prioritize adding
+    /// manifest files, `main` and `lib` files before `mod` and other
+    /// files within the same directory.
+    ///
+    /// Finally, it will return a pair consisting of the new `Atlas`
+    /// instnce and a vector of all the `AtlasItemId`s corresponding
+    /// to the newly added paths.
+    pub fn walk_dir(dir: &Directory) -> (Self, Vec<AtlasItemId>) {
+        let (srcpaths, cfgpaths) = Self::walk_path(dir.path()).into_iter().flatten().fold(
+            (vec![], vec![]),
+            |(mut srcs, mut cfgs), path| {
+                if is_target_file(path.as_path()) {
+                    srcs.push(path)
+                } else if is_manifest_file(path.as_path()) {
+                    cfgs.push(path)
+                };
+                (srcs, cfgs)
+            },
+        );
+        let mut atlas = Self::new();
+        let (mains, nonmains): (Vec<_>, Vec<_>) = srcpaths
             .into_iter()
-            .flatten()
-            .fold(Self::new(), |mut this, path| todo!())
+            .partition(|path| path.ends_with(FilePath::MAIN_PATH));
+        let (libs, nonlibs): (Vec<_>, Vec<_>) = nonmains
+            .into_iter()
+            .partition(|path| path.ends_with(FilePath::LIB_PATH));
+        let (mods, nonmods): (Vec<_>, Vec<_>) = nonlibs
+            .into_iter()
+            .partition(|path| path.ends_with(FilePath::MOD_PATH));
+        let ids = atlas.add_paths(
+            cfgpaths
+                .into_iter()
+                .chain(mains)
+                .chain(libs)
+                .chain(mods)
+                .chain(nonmods),
+        );
+        (atlas, ids)
     }
 
     /// Returns a vector containing the paths of **all** manifest
@@ -560,6 +597,30 @@ impl AsRef<Path> for FilePath {
 impl std::fmt::Display for FilePath {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.path().display())
+    }
+}
+
+impl PartialEq<&Path> for FilePath {
+    fn eq(&self, other: &&Path) -> bool {
+        self.path() == *other
+    }
+}
+
+impl PartialEq<FilePath> for &Path {
+    fn eq(&self, other: &FilePath) -> bool {
+        *self == other.as_ref()
+    }
+}
+
+impl PartialEq<PathBuf> for FilePath {
+    fn eq(&self, other: &PathBuf) -> bool {
+        self.path() == other.as_path()
+    }
+}
+
+impl PartialEq<FilePath> for PathBuf {
+    fn eq(&self, other: &FilePath) -> bool {
+        self.as_path() == other.path()
     }
 }
 
