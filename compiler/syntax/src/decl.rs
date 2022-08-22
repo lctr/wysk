@@ -18,6 +18,14 @@ pub struct FixityDecl<Id = SpannedIdent> {
 }
 
 impl<Id> FixityDecl<Id> {
+    pub fn infixes_iter(&self) -> std::slice::Iter<'_, Id> {
+        self.infixes.iter()
+    }
+
+    pub fn infixes_iter_mut(&mut self) -> std::slice::IterMut<'_, Id> {
+        self.infixes.iter_mut()
+    }
+
     pub fn mapf<F, X>(self, f: &mut wy_common::functor::Func<'_, F>) -> FixityDecl<X>
     where
         F: FnMut(Id) -> X,
@@ -161,6 +169,16 @@ wy_common::struct_field_iters! {
     |Id, V| DataDecl<Id, V>
     | pred => context_iter :: Predicate<Id, V>
     | vnts => variants_iter :: Variant<Id, V>
+}
+
+impl<Id, V> DataDecl<Id, V> {
+    pub fn preds_iter_mut(&mut self) -> std::slice::IterMut<'_, Predicate<Id, V>> {
+        self.pred.iter_mut()
+    }
+
+    pub fn variants_iter_mut(&mut self) -> std::slice::IterMut<'_, Variant<Id, V>> {
+        self.vnts.iter_mut()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -338,6 +356,10 @@ impl<Id, V> ClassDecl<Id, V> {
     pub fn item_names(&self) -> impl Iterator<Item = &Id> + '_ {
         self.defs.iter().map(|MethodDef { name, .. }| name)
     }
+
+    pub fn defs_iter_mut(&mut self) -> std::slice::IterMut<'_, MethodDef<Id, V>> {
+        self.defs.iter_mut()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -374,6 +396,10 @@ impl<Id, V> InstDecl<Id, V> {
     {
         self.defs_iter().find(|b| b.name == *id)
     }
+
+    pub fn defs_iter_mut(&mut self) -> std::slice::IterMut<'_, Binding<Id, V>> {
+        self.defs.iter_mut()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -394,6 +420,10 @@ wy_common::struct_field_iters! {
 impl<Id, V> FnDecl<Id, V> {
     pub fn has_tysig(&self) -> bool {
         !self.sign.is_implicit()
+    }
+
+    pub fn defs_iter_mut(&mut self) -> std::slice::IterMut<'_, Arm<Id, V>> {
+        self.defs.iter_mut()
     }
 }
 
