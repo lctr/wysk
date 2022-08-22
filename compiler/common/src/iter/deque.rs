@@ -112,6 +112,11 @@ impl<T> Deque<T> {
         self.0.into_iter()
     }
 
+    #[inline]
+    pub fn clear(&mut self) {
+        self.0.clear()
+    }
+
     pub fn reverse(&mut self) {
         let mut temp = Self::new();
         while let Some(t) = self.pop_back() {
