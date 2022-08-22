@@ -69,6 +69,6 @@ impl fmt::Debug for Tv {
 
 impl fmt::Display for Tv {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.display())
+        wy_common::text::fmt_display_var(self.as_usize(), f)
     }
 }
