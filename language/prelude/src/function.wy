@@ -21,8 +21,8 @@ fn curry :: ((a, b) -> c) -> a -> b -> c
 fn uncurry :: (a -> b -> c) -> (a, b) -> c
     | f = \(x, y) -> f x y
 
-fn image :: (a -> b) -> a -> (a, b)
-    | f x = (x, f x)
+fn swap :: (a, b) -> (b, a)
+    | (a, b) = (b, a) 
 
 ~~ same as (.) in Haskell
 infixr 9 \>
@@ -38,9 +38,9 @@ fn (<|) :: (a -> b) -> a -> b
     | f x = f x
 
 ~~> Reverse application operator, equivalent to (&) in Haskell. Note
-~~ that it has a precedence value that is one higher than that of
-~~ the forward application operator `<|`, thus allowing `|>` to be
-~~ nested in `|>`
+~~| that it has a precedence value that is one higher than that of
+~~| the forward application operator `<|`, thus allowing `|>` to be
+~~| nested in `|>`
 infixl 1 |>
 fn (|>) :: a -> (a -> b) -> b
     | x f = f x
@@ -48,3 +48,24 @@ fn (|>) :: a -> (a -> b) -> b
 infixl 9 </
 fn (</) :: (a -> b) -> (b -> c) -> a -> c
     | f g x = g (f x)
+
+~~> The least fixed point operator is the least defined value `x` for
+~~| a function `f` such that `f x = x`.
+~~| 
+~~| A prototypical example of the usage of this function is in the 
+~~| factorial function in a lambda calculus without (implicitly)
+~~| recursive `let` expressions: the expression below, which uses
+~~| implicit recursive `let`
+~~| ```
+~~| >> let fac n = if n <= 1 then 1 else n * fac (n - 1) in fac 5` 
+~~| => 120
+~~| ```
+~~| is equivalent to the following formulation using `fix`, where
+~~| we introduce a dummy parameter `rec` 
+~~| ```
+~~| >> fix (\rec n -> if n <= 1 then 1 else n * rec (n - 1)) 5
+~~| => 120
+~~| ``` 
+fn fix :: (a -> a) -> a
+    | f = let x = f x in x 
+
