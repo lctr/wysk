@@ -1,4 +1,4 @@
-module Predicate where
+module Boolean where
 
 data Bool = False | True 
    with Show

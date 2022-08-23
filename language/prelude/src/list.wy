@@ -1,6 +1,6 @@
 module List where
 
-import Predicate 
+import Boolean 
 import Numeric
 import Function
 import Container

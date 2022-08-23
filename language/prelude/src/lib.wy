@@ -3,7 +3,7 @@
 ~~| [INSERT_NO_IMPLICIT_PRELUDE_FUNCTIONALITY].
 module Prelude where
 
-import Predicate
+import Boolean
 import Container
 import Numeric
 import List
