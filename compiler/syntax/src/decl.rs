@@ -389,19 +389,19 @@ pub struct InstDecl<Id = SpannedIdent, V = SpannedIdent> {
     pub name: Id,
     pub tipo: Type<Id, V>,
     pub pred: Vec<Predicate<Id, V>>,
-    pub defs: Vec<Binding<Id, V>>,
+    pub defs: Vec<MethodImpl<Id, V>>,
 }
 
 wy_common::struct_field_iters! {
     |Id, V| InstDecl<Id, V>
     | pred => pred_iter :: Predicate<Id, V>
-    | defs => defs_iter :: Binding<Id, V>
+    | defs => defs_iter :: MethodImpl<Id, V>
     | prag => prag_iter :: Pragma<Id, V>
 }
 
 impl<Id, V> InstDecl<Id, V> {
     pub fn item_names(&self) -> impl Iterator<Item = &Id> + '_ {
-        self.defs_iter().map(|Binding { name, .. }| name)
+        self.defs_iter().map(|MethodImpl { name, .. }| name)
     }
     pub fn get_pred(&self, id: &Id) -> Option<&Predicate<Id, V>>
     where
@@ -410,14 +410,14 @@ impl<Id, V> InstDecl<Id, V> {
         self.pred_iter().find(|ctx| &ctx.class == id)
     }
 
-    pub fn get_def(&self, id: &Id) -> Option<&Binding<Id, V>>
+    pub fn get_def(&self, id: &Id) -> Option<&MethodImpl<Id, V>>
     where
         Id: PartialEq,
     {
         self.defs_iter().find(|b| b.name == *id)
     }
 
-    pub fn defs_iter_mut(&mut self) -> std::slice::IterMut<'_, Binding<Id, V>> {
+    pub fn defs_iter_mut(&mut self) -> std::slice::IterMut<'_, MethodImpl<Id, V>> {
         self.defs.iter_mut()
     }
 }
@@ -470,25 +470,34 @@ pub struct MethodDef<Id = SpannedIdent, V = SpannedIdent> {
 /// TODO: update `MethodImpl` to be suitable for use in `InstDecl`s
 /// for implemented methods
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MethodImpl<Id = SpannedIdent, V = SpannedIdent>(pub Binding<Id, V>);
+pub struct MethodImpl<Id = SpannedIdent, V = SpannedIdent> {
+    pub span: Span,
+    pub prag: Vec<Pragma<Id, V>>,
+    pub name: Id,
+    pub tsig: Signature<Id, V>,
+    pub arms: Vec<Arm<Id, V>>,
+}
 impl<Id, V> MethodImpl<Id, V> {
-    pub fn new(binding: Binding<Id, V>) -> Self {
-        Self(binding)
-    }
     pub fn name(&self) -> &Id {
-        &self.0.name
+        &self.name
+    }
+    pub fn prag_iter(&self) -> std::slice::Iter<'_, Pragma<Id, V>> {
+        self.prag.iter()
+    }
+    pub fn prag_iter_mut(&mut self) -> std::slice::IterMut<'_, Pragma<Id, V>> {
+        self.prag.iter_mut()
     }
     pub fn arms(&self) -> &[Arm<Id, V>] {
-        &self.0.arms[..]
+        &self.arms[..]
     }
     pub fn arms_iter(&self) -> std::slice::Iter<'_, Arm<Id, V>> {
-        self.0.arms.iter()
+        self.arms.iter()
     }
     pub fn arms_iter_mut(&mut self) -> std::slice::IterMut<'_, Arm<Id, V>> {
-        self.0.arms.iter_mut()
+        self.arms.iter_mut()
     }
     pub fn signature(&self) -> &Signature<Id, V> {
-        &self.0.tsig
+        &self.tsig
     }
 }
 

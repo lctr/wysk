@@ -5,6 +5,7 @@ use wy_lexer::lexpat;
 use wy_lexer::token::*;
 
 use wy_syntax::decl::MethodBody;
+use wy_syntax::decl::MethodImpl;
 use wy_syntax::decl::Selector;
 use wy_syntax::decl::TypeArgs;
 use wy_syntax::decl::WithClause;
@@ -14,6 +15,7 @@ use wy_syntax::decl::{
 };
 use wy_syntax::fixity::Fixity;
 use wy_syntax::stmt::Arm;
+use wy_syntax::stmt::Binding;
 use wy_syntax::SpannedIdent;
 
 type DeclParser<'t> = Parser<'t>;
@@ -234,7 +236,18 @@ impl<'t> DeclParser<'t> {
         self.eat(Lexeme::CurlyL)?;
         let mut defs = vec![];
         while !self.peek_on(Lexeme::CurlyR) {
-            defs.push(self.binding()?);
+            let mut prag = self.attr_before()?;
+            let start = self.get_pos();
+            let Binding { name, arms, tsig } = self.binding()?;
+            let span = Span(start, self.get_pos());
+            prag.extend(self.attr_after()?);
+            defs.push(MethodImpl {
+                span,
+                prag,
+                name,
+                tsig,
+                arms,
+            });
             self.ignore(Lexeme::Semi);
         }
         self.eat(Lexeme::CurlyR)?;
@@ -336,10 +349,11 @@ mod test {
     use wy_lexer::Literal;
     use wy_name::Ident;
     use wy_syntax::{
+        decl::MethodImpl,
         expr::Expression,
         pattern::Pattern,
         record::{Field, Record},
-        stmt::{Arm, Binding},
+        stmt::Arm,
         tipo::{Con, Parameter, Predicate, Signature, SimpleType, Type},
     };
 
@@ -466,8 +480,26 @@ impl |Eq a| Eq [a] {
                     class: cl_eq,
                     head: Parameter(a, vec![]),
                 }],
-                defs: vec![Binding {
+                defs: vec![MethodImpl {
+                    span: Span(
+                        BytePos::strlen(
+                            "
+                    impl |Eq a| Eq [a] {
+                        ",
+                        ),
+                        BytePos::strlen(
+                            "
+                        impl |Eq a| Eq [a] {
+                            (==)
+                            | [] [] = True
+                            | (x:xs) (y:ys) = (x == y) && (xs == ys)
+                            | _ _ = False
+                        }
+                        ",
+                        ),
+                    ),
                     name: eq2,
+                    prag: vec![],
                     tsig: Signature::Implicit,
                     arms: vec![
                         Arm {

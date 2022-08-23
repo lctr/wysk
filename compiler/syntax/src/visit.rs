@@ -2,6 +2,7 @@ use wy_lexer::Literal;
 use wy_span::{Dummy, Span, Spanned};
 
 use crate::{
+    decl::MethodImpl,
     expr::{Expression, Range, Section},
     pattern::Pattern,
     record::{Field, Record},
@@ -289,6 +290,20 @@ pub trait Visit<Id, T = Id, E = VisitError> {
             .fold(self.visit_ident(head), |a, c| a.and(self.visit_tyvar(c)))
     }
 
+    fn visit_method_impl(&mut self, method_impl: &MethodImpl<Id, T>) -> Result<(), E> {
+        let MethodImpl {
+            span: _,
+            prag: _,
+            name,
+            tsig,
+            arms,
+        } = method_impl;
+        self.visit_ident(name)?;
+        self.visit_signature(tsig)?;
+        arms.into_iter()
+            .fold(Ok(()), |a, c| a.and(self.visit_arm(c)))
+    }
+
     fn visit_module<P>(&mut self, module: &Module<Id, T, P>) -> Result<(), E>;
 
     fn visit_program<U>(&mut self, program: &Program<Id, T, U>) -> Result<(), E> {
@@ -563,6 +578,20 @@ pub trait VisitMut<Id, T = Id, E = VisitError> {
         tail.into_iter().fold(self.visit_ident_mut(head), |a, c| {
             a.and(self.visit_tyvar_mut(c))
         })
+    }
+
+    fn visit_method_impl_mut(&mut self, method_impl: &mut MethodImpl<Id, T>) -> Result<(), E> {
+        let MethodImpl {
+            span: _,
+            prag: _,
+            name,
+            tsig,
+            arms,
+        } = method_impl;
+        self.visit_ident_mut(name)?;
+        self.visit_signature_mut(tsig)?;
+        arms.into_iter()
+            .fold(Ok(()), |a, c| a.and(self.visit_arm_mut(c)))
     }
 
     fn visit_module_mut<P>(&mut self, module: &mut Module<Id, T, P>) -> Result<(), E>;

@@ -6,7 +6,7 @@ use crate::{
     attr::{Attribute, DocLine, Pragma},
     decl::{
         AliasDecl, ClassDecl, DataDecl, FixityDecl, FnDecl, InstDecl, MethodBody, MethodDef,
-        NewtypeDecl, Selector, TypeArg, TypeArgs, Variant, WithClause,
+        MethodImpl, NewtypeDecl, Selector, TypeArg, TypeArgs, Variant, WithClause,
     },
     expr::Expression,
     pattern::Pattern,
@@ -379,6 +379,18 @@ impl<Id, T> ReSpan for InstDecl<Spanned<Id>, Spanned<T>> {
         spans.extend(self.tipo.spans_mut());
         spans.extend(self.pred.spans_mut());
         spans.extend(self.defs.spans_mut());
+        spans
+    }
+}
+
+impl<Id, T> ReSpan for MethodImpl<Spanned<Id>, Spanned<T>> {
+    fn spans_mut(&mut self) -> Vec<&mut Span> {
+        let mut spans = vec![];
+        spans.push(&mut self.span);
+        spans.extend(self.prag.spans_mut());
+        spans.push(self.name.span_mut());
+        spans.extend(self.tsig.spans_mut());
+        spans.extend(self.arms.spans_mut());
         spans
     }
 }

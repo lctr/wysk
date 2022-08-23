@@ -2,7 +2,7 @@ use crate::{
     attr::{Attribute, Pragma},
     decl::{
         AliasDecl, ClassDecl, DataDecl, Declaration, FnDecl, InstDecl, MethodBody, MethodDef,
-        NewtypeDecl, Selector, TypeArg, TypeArgs, Variant, WithClause,
+        MethodImpl, NewtypeDecl, Selector, TypeArg, TypeArgs, Variant, WithClause,
     },
     expr::{Expression, Range, Section},
     pattern::Pattern,
@@ -704,6 +704,61 @@ impl<Id, V, X> MapSnd<V, X> for InstDecl<Id, V> {
             tipo,
             pred,
             defs,
+        }
+    }
+}
+
+impl<Id, V, X> MapFst<Id, X> for MethodImpl<Id, V> {
+    type WrapFst = MethodImpl<X, V>;
+
+    fn map_fst<F>(self, f: &mut Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(Id) -> X,
+    {
+        let MethodImpl {
+            span,
+            prag,
+            name,
+            tsig,
+            arms,
+        } = self;
+        let prag = prag.map_fst(f);
+        let name = f.apply(name);
+        let tsig = tsig.map_fst(f);
+        let arms = arms.map_fst(f);
+        MethodImpl {
+            span,
+            prag,
+            name,
+            tsig,
+            arms,
+        }
+    }
+}
+
+impl<Id, V, X> MapSnd<V, X> for MethodImpl<Id, V> {
+    type WrapSnd = MethodImpl<Id, X>;
+
+    fn map_snd<F>(self, f: &mut Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(V) -> X,
+    {
+        let MethodImpl {
+            span,
+            prag,
+            name,
+            tsig,
+            arms,
+        } = self;
+        let prag = prag.map_snd(f);
+        let tsig = tsig.map_snd(f);
+        let arms = arms.map_snd(f);
+        MethodImpl {
+            span,
+            prag,
+            name,
+            tsig,
+            arms,
         }
     }
 }

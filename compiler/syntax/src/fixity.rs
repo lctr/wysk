@@ -557,7 +557,7 @@ where
             let mut sp_visitor = SpannedVisitor(self);
             sp_visitor.visit_ident_mut(&mut decl.name)?;
             for binding in decl.defs_iter_mut() {
-                sp_visitor.visit_binding_mut(binding)?;
+                sp_visitor.visit_method_impl_mut(binding)?;
             }
         }
         for decl in module.fundefs_iter_mut() {

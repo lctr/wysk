@@ -10,7 +10,7 @@ use crate::{
     attr::{Attribute, DocLine, Pragma},
     decl::{
         AliasDecl, ClassDecl, DataDecl, FixityDecl, FnDecl, InstDecl, MethodBody, MethodDef,
-        NewtypeDecl, Selector, TypeArg, TypeArgs, Variant, WithClause,
+        MethodImpl, NewtypeDecl, Selector, TypeArg, TypeArgs, Variant, WithClause,
     },
     expr::{Expression, Range, Section},
     pattern::Pattern,
@@ -570,6 +570,19 @@ where
             && self.pred.spanless_eq(&other.pred)
             && self.tipo.spanless_eq(&other.tipo)
             && self.defs.spanless_eq(&other.defs)
+    }
+}
+
+impl<Id, T> SpanlessEq for MethodImpl<Id, T>
+where
+    Id: SpanlessEq,
+    T: SpanlessEq,
+{
+    fn spanless_eq(&self, other: &Self) -> bool {
+        self.name.spanless_eq(&other.name)
+            && self.prag.spanless_eq(&other.prag)
+            && self.tsig.spanless_eq(&other.tsig)
+            && self.arms.spanless_eq(&other.arms)
     }
 }
 
