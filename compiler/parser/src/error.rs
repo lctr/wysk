@@ -123,28 +123,27 @@ pub trait Expects: TakeEvidence {
         self.report_error(ExpectedTypeStart, token, [("", tok)])
     }
 
-    fn unbalanced_delim(&mut self, delim: Lexeme) -> ParseError {
-        let token = self.next_token();
+    fn unbalanced_delim(&mut self, delim: Lexeme, found: Token) -> ParseError {
         let coord = self.get_coord();
         ParseError::new(
             true,
             coord,
-            token.span,
+            found.span,
             UnbalancedDelimiter,
-            [("", delim.into()), ("", token.into())],
+            [("", delim.into()), ("", found.into())],
         )
     }
 
-    fn unbalanced_paren(&mut self) -> ParseError {
-        self.unbalanced_delim(Lexeme::ParenR)
+    fn unbalanced_paren(&mut self, token: Token) -> ParseError {
+        self.unbalanced_delim(Lexeme::ParenR, token)
     }
 
-    fn unbalanced_brack(&mut self) -> ParseError {
-        self.unbalanced_delim(Lexeme::BrackR)
+    fn unbalanced_brack(&mut self, token: Token) -> ParseError {
+        self.unbalanced_delim(Lexeme::BrackR, token)
     }
 
-    fn unbalanced_curly(&mut self) -> ParseError {
-        self.unbalanced_delim(Lexeme::CurlyR)
+    fn unbalanced_curly(&mut self, token: Token) -> ParseError {
+        self.unbalanced_delim(Lexeme::CurlyR, token)
     }
 
     fn invalid_fixity_prec(&mut self, token: Token) -> ParseError {

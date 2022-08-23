@@ -132,7 +132,8 @@ impl<'t> PatParser<'t> {
                 } else if self.peek_on(Comma) {
                     self.tuple_pattern_tail(negpat)
                 } else {
-                    self.unbalanced_paren().err()
+                    self.current_token()
+                        .and_then(|token| self.unbalanced_paren(token).err())
                 }
             }
 
@@ -192,7 +193,9 @@ impl<'t> PatParser<'t> {
                         self.eat(ParenR)?;
                         Ok(pat)
                     }
-                    _ => self.unbalanced_paren().err(),
+                    _ => self
+                        .current_token()
+                        .and_then(|token| self.unbalanced_paren(token).err()),
                 }
             }
 
@@ -214,11 +217,15 @@ impl<'t> PatParser<'t> {
                         self.eat(ParenR)?;
                         Ok(pat)
                     }
-                    _ => self.unbalanced_paren().err(),
+                    _ => self
+                        .current_token()
+                        .and_then(|token| self.unbalanced_paren(token).err()),
                 }
             }
 
-            _ => self.unbalanced_paren().err(),
+            _ => self
+                .current_token()
+                .and_then(|token| self.unbalanced_paren(token).err()),
         }
     }
 

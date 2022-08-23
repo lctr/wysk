@@ -675,14 +675,24 @@ fn some_record_function
     }
 
     #[test]
-    fn this_shouldnt_fail() {
-        let src = r#"
-class Functor f {
-    map :: (a -> b) -> f a -> f b;
-    (/>) :: b -> f a -> f b
-        = map \> const
+    fn test_inline_attr_in_class_method() {
+        let src = "
+class |Semigroup a| Monoid a {
+    ~~> The identity element of the associative monoidal append operation `<>`
+    ~~| inherited from the `Semigroup` superclass. 
+    ~~| 
+    ~~| The equality `x <> mempty == mempty <> x == x` should hold. 
+    mempty :: a;
+    
+    ~~ inline attribute/pragma in hopes of fusing with mconcat's argument
+    #[inline] 
+    ~~> Fold a list using the monoid.
+    mconcat :: [a] -> a 
+        = foldr mappend mempty;
     }
-"#;
-        println!("{:?}", Parser::from_str(src).declaration())
+";
+        let mut parser = Parser::from_str(src);
+        println!("{:?}", parser.class_decl());
+        println!("{:?}", &parser)
     }
 }

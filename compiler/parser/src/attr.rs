@@ -74,6 +74,7 @@ impl<'t> Parser<'t> {
             self.eat(Lexeme::BrackL)?;
             let prag = self.pragma(start, Placement::Before)?;
             prags.push(prag);
+            self.eat(Lexeme::BrackR)?;
         }
         Ok(prags)
     }
@@ -87,6 +88,7 @@ impl<'t> Parser<'t> {
             self.eat(Lexeme::BrackL)?;
             let prag = self.pragma(start, Placement::After)?;
             prags.push(prag);
+            self.eat(Lexeme::BrackR)?;
         }
         Ok(prags)
     }
@@ -117,7 +119,6 @@ impl<'t> Parser<'t> {
             }
             _ => self.unexpected_eof().err(),
         }?;
-        self.eat(Lexeme::BrackR)?;
         self.lexer.reset_mode();
         let span = Span(start, self.get_pos());
         Ok(Pragma { span, plmt, attr })
@@ -126,8 +127,14 @@ impl<'t> Parser<'t> {
     pub fn meta_head(&mut self, meta: Meta) -> Parsed<Attribute<SpannedIdent, SpannedIdent>> {
         match meta {
             Meta::BuiltIn(attr) => match attr {
-                Attr::Inline => Ok(Attribute::Inline),
-                Attr::NoInline => Ok(Attribute::NoInline),
+                Attr::Inline => {
+                    self.bump();
+                    Ok(Attribute::Inline)
+                }
+                Attr::NoInline => {
+                    self.bump();
+                    Ok(Attribute::NoInline)
+                }
                 Attr::Fixity => {
                     self.bump();
                     self.fixity_attr()
@@ -283,7 +290,8 @@ mod test {
     #[test]
     fn test_fixity_attr() {
         let src = "\
-        #[fixity 3 L]";
+        #[fixity 3 L]
+        fn foo = bar";
         let mut parser = Parser::from_str(src);
         println!("lexer mode: {:?}", parser.lexer.get_mode());
         parser.peek();

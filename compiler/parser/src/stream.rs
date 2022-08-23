@@ -128,12 +128,15 @@ impl<'t> Parser<'t> {
                 ..
             }) => Err(self.unexpected_eof()),
 
-            t if t.cmp_lex(lexeme) => Ok(self.bump()),
-
-            Some(_t) => match *lexeme {
-                delim if delim.is_right_delim() => self.unbalanced_delim(delim).err(),
-                expected => self.expected_token(expected).err(),
-            },
+            Some(t) if t.cmp_lex(lexeme) => Ok(self.bump()),
+            Some(t) if lexeme.is_right_delim() => {
+                let t = *t;
+                self.unbalanced_delim(*lexeme, t).err()
+            }
+            Some(t) => {
+                let t = *t;
+                self.expected(*lexeme, t).err()
+            }
         }
     }
 

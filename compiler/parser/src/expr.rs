@@ -299,7 +299,11 @@ impl<'t> ExprParser<'t> {
                 }
             }
 
-            _ => self.unbalanced_brack().err(),
+            Some(t) => {
+                let t = *t;
+                self.unbalanced_brack(t).err()
+            }
+            None => self.unexpected_eof().err(),
         }
     }
 
@@ -349,7 +353,7 @@ impl<'t> ExprParser<'t> {
             stmts.push(self.statement()?);
             self.ignore(Comma);
             if self.is_done() {
-                break self.unbalanced_brack().err();
+                break self.unbalanced_brack(self.lexer.eof_token()).err();
             }
         }
     }

@@ -246,7 +246,11 @@ impl<'t> TypeParser<'t> {
                     ty = self.arrow_ty(ty)?;
                     break;
                 }
-                _ => return self.unbalanced_paren().err(),
+                _ => {
+                    return self
+                        .current_token()
+                        .and_then(|token| self.unbalanced_paren(token).err())
+                }
             }
         }
 
