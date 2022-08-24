@@ -11,7 +11,8 @@ const PAD_SPACE: usize = 4;
 
 // Glyphs used in printing
 const PIPE: char = '│';
-const FORK: char = '├';
+// const FORK: char = '├';
+const FOOT: char = '└';
 const DASH: char = '─';
 const CORNER: char = '┌';
 const CARET: char = '^';
@@ -155,8 +156,8 @@ impl<'s, S: AsRef<str>, P: AsRef<Path>> fmt::Display for Dialogue<'s, S, P> {
              {gutter}{TOP_LEFT}{srcloc}\n\
              {gutter}{PIPE}\n \
             [{row}]  {PIPE}    `{trimmed}`\n\
-             {gutter}{FORK}{midline}{carets}\n\
-             {gutter}{PIPE}\n"
+             {gutter}{FOOT}{midline}{carets}\n\
+            "
         )
     }
 }
@@ -171,6 +172,7 @@ impl<'s, S: AsRef<str>, P: AsRef<Path>> fmt::Debug for Dialogue<'s, S, P> {
 pub enum SrcPath<P: AsRef<Path> = PathBuf> {
     Direct,
     File(P),
+    Short { root: P, file: P },
 }
 
 impl<P: AsRef<Path>> SrcPath<P> {
@@ -180,8 +182,9 @@ impl<P: AsRef<Path>> SrcPath<P> {
 
     pub fn as_path(&self) -> Option<&Path> {
         match self {
-            SrcPath::Direct => todo!(),
-            SrcPath::File(_) => todo!(),
+            SrcPath::Direct => None,
+            SrcPath::File(p) => Some(p.as_ref()),
+            SrcPath::Short { root: _, file } => Some(file.as_ref()),
         }
     }
 
@@ -189,6 +192,7 @@ impl<P: AsRef<Path>> SrcPath<P> {
         match self {
             SrcPath::Direct => SrcPath::Direct,
             SrcPath::File(p) => SrcPath::File(p),
+            SrcPath::Short { root, file } => SrcPath::Short { root, file },
         }
     }
 }
@@ -206,6 +210,16 @@ impl<P: AsRef<Path>> fmt::Display for SrcPath<P> {
         match self {
             SrcPath::Direct => write!(f, "<{}>", wy_pretty::color!(fg Red "STDIN")),
             SrcPath::File(p) => write!(f, "{}", p.as_ref().display()),
+            SrcPath::Short { root, file } => {
+                let root = root.as_ref();
+                let file = file.as_ref();
+                let root_len = root.components().count().saturating_sub(1);
+                let mut fp = file.iter();
+                for _ in 0..root_len {
+                    fp.next();
+                }
+                write!(f, "{}", fp.as_path().display())
+            }
         }
     }
 }
