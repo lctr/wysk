@@ -46,7 +46,7 @@ impl<'t> Parser<'t> {
         doc_comments
     }
 
-    pub fn attributes(&mut self) -> Parsed<Vec<Pragma<SpannedIdent, SpannedIdent>>> {
+    pub(crate) fn attributes(&mut self) -> Parsed<Vec<Pragma<SpannedIdent, SpannedIdent>>> {
         let (is_before, is_after) = {
             let mode = self.lexer.get_mode();
             (mode.is_meta_before(), mode.is_meta_after())
@@ -62,6 +62,19 @@ impl<'t> Parser<'t> {
             }) if is_after => self.attr_after(),
             _ => Ok(vec![]),
         }
+    }
+
+    pub(crate) fn with_pragmas<F, X>(
+        &mut self,
+        mut f: F,
+    ) -> Parsed<(X, Vec<Pragma<SpannedIdent, SpannedIdent>>)>
+    where
+        F: FnMut(&mut Self) -> Parsed<X>,
+    {
+        let mut prags = self.attr_before()?;
+        let node = f(self)?;
+        prags.extend(self.attr_after()?);
+        Ok((node, prags))
     }
 
     /// Continuously parses attribute pragmas that precede the
@@ -124,7 +137,7 @@ impl<'t> Parser<'t> {
         Ok(Pragma { span, plmt, attr })
     }
 
-    pub fn meta_head(&mut self, meta: Meta) -> Parsed<Attribute<SpannedIdent, SpannedIdent>> {
+    fn meta_head(&mut self, meta: Meta) -> Parsed<Attribute<SpannedIdent, SpannedIdent>> {
         match meta {
             Meta::BuiltIn(attr) => match attr {
                 Attr::Inline => {
@@ -146,7 +159,10 @@ impl<'t> Parser<'t> {
                 Attr::Allow => todo!("lint attributes not yet implemented"),
                 Attr::Test => Ok(Attribute::Test),
                 Attr::Todo => Ok(Attribute::Todo),
-                Attr::Specialize => todo!(),
+                Attr::Specialize => {
+                    self.bump();
+                    self.specialize_attr()
+                }
                 Attr::Feature => todo!("feature attributes not yet implemented"),
                 Attr::Cfg => todo!("config attributes not yet implemented"),
                 Attr::Macro => todo!("macro attributes not yet implemented"),
@@ -165,7 +181,7 @@ impl<'t> Parser<'t> {
     /// Updates the parser's internal fixity table upon seeing a
     /// fixity attribute; Note that fixity attributes are only allowed
     /// for top-level function declarations!
-    pub fn fixity_attr(&mut self) -> Parsed<Attribute<SpannedIdent, SpannedIdent>> {
+    fn fixity_attr(&mut self) -> Parsed<Attribute<SpannedIdent, SpannedIdent>> {
         fn valid_assoc(parser: &mut Parser, first: bool) -> Parsed<Assoc> {
             match parser.peek() {
                 Some(Token {
@@ -274,12 +290,20 @@ impl<'t> Parser<'t> {
         }
     }
 
-    pub fn derive_attr(&mut self) -> Parsed<Attribute<SpannedIdent, SpannedIdent>> {
+    fn derive_attr(&mut self) -> Parsed<Attribute<SpannedIdent, SpannedIdent>> {
         self.delimited(
             [Lexeme::ParenL, Lexeme::Comma, Lexeme::ParenR],
             Self::expect_upper,
         )
         .map(Attribute::Derive)
+    }
+
+    fn specialize_attr(&mut self) -> Parsed<Attribute<SpannedIdent, SpannedIdent>> {
+        self.many_while(
+            |this| this.bump_or_peek_on(Lexeme::Pipe, Lexeme::begins_ty),
+            Self::ty_node,
+        )
+        .map(Attribute::Specialize)
     }
 }
 
