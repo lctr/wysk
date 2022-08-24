@@ -9,6 +9,7 @@ use crate::{
         MethodImpl, NewtypeDecl, Selector, TypeArg, TypeArgs, Variant, WithClause,
     },
     expr::Expression,
+    module::{Import, ImportSpec, Module},
     pattern::Pattern,
     record::{Field, Record},
     stmt::{Alternative, Arm, Binding, Statement},
@@ -16,7 +17,6 @@ use crate::{
         Annotation, Con, Parameter, Predicate, Qualified, Quantified, Signature, SimpleType, Type,
         Var,
     },
-    Import, ImportSpec, Module,
 };
 
 pub trait ReSpan {
@@ -120,8 +120,7 @@ impl<Id, T> ReSpan for Attribute<Spanned<Id>, Spanned<T>> {
             | Attribute::Fixity(_) => (),
             Attribute::Doc(docline) => spans.extend(docline.spans_mut()),
             Attribute::Derive(spnds) => spans.extend(spnds.into_iter().map(Spanned::span_mut)),
-            Attribute::Specialize(spnd, tys) => {
-                spans.push(spnd.span_mut());
+            Attribute::Specialize(tys) => {
                 spans.extend(tys.spans_mut());
             }
             Attribute::Custom(spnd, tokens) => {
@@ -179,6 +178,10 @@ impl<Id> ReSpan for Import<Spanned<Id>> {
             Import::Partial(head, tail) => {
                 spans.push(head.span_mut());
                 spans.extend(tail.into_iter().map(Spanned::span_mut));
+            }
+            Import::Module(id, imps) => {
+                spans.push(id.span_mut());
+                spans.extend(imps.into_iter().flat_map(|imp| imp.spans_mut()))
             }
         };
         spans
@@ -258,7 +261,7 @@ impl<Id> ReSpan for WithClause<Spanned<Id>> {
         // let WithClause { span, names, from_pragma } = self;
         let mut spans = vec![];
         spans.push(&mut self.span);
-        spans.extend(self.names.iter_mut().map(|name| name.span_mut()));
+        spans.extend(self.names.iter_mut().map(|(name, _)| name.span_mut()));
         spans
     }
 }
@@ -480,6 +483,7 @@ impl<Id, T> ReSpan for Expression<Spanned<Id>, Spanned<T>> {
                 spans.extend(scrut.spans_mut());
                 spans.extend(alts.spans_mut())
             }
+            Expression::Match(alts) => spans.extend(alts.spans_mut()),
             Expression::Cast(x, ty) => {
                 spans.extend(x.spans_mut());
                 spans.extend(ty.spans_mut());

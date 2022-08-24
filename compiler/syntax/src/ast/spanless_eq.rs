@@ -13,6 +13,7 @@ use crate::{
         MethodImpl, NewtypeDecl, Selector, TypeArg, TypeArgs, Variant, WithClause,
     },
     expr::{Expression, Range, Section},
+    module::{Import, ImportSpec, Module},
     pattern::Pattern,
     record::{Field, Record},
     stmt::{Alternative, Arm, Binding, Statement},
@@ -20,7 +21,6 @@ use crate::{
         Annotation, Con, Parameter, Predicate, Qualified, Quantified, Signature, SimpleType, Type,
         Var,
     },
-    Import, ImportSpec, Module,
 };
 
 /// Generic function over any type with two type parameters wrapped in
@@ -336,8 +336,8 @@ where
             (Attribute::Doc(this), Attribute::Doc(that)) => this.spanless_eq(that),
             (Attribute::Fixity(this), Attribute::Fixity(that)) => this == that,
             (Attribute::Derive(this), Attribute::Derive(that)) => this.spanless_eq(that),
-            (Attribute::Specialize(this, these), Attribute::Specialize(that, those)) => {
-                this.spanless_eq(that) && these.spanless_eq(those)
+            (Attribute::Specialize(these), Attribute::Specialize(those)) => {
+                these.spanless_eq(those)
             }
             (Attribute::Custom(this, these), Attribute::Custom(that, those)) => {
                 this.spanless_eq(that) && these.spanless_eq(those)
@@ -460,7 +460,11 @@ where
     Id: SpanlessEq,
 {
     fn spanless_eq(&self, other: &Self) -> bool {
-        self.names.spanless_eq(&other.names)
+        self.names.len() == other.names.len()
+            && self
+                .names_iter()
+                .zip(other.names_iter())
+                .all(|(mine, theirs)| mine == theirs)
     }
 }
 
@@ -649,6 +653,7 @@ where
             (Expression::Case(this, these), Expression::Case(that, those)) => {
                 this.spanless_eq(that) && these.spanless_eq(those)
             }
+            (Expression::Match(these), Expression::Match(those)) => these.spanless_eq(those),
             (Expression::Cast(this, these), Expression::Cast(that, those)) => {
                 this.spanless_eq(that) && these.spanless_eq(those)
             }

@@ -259,7 +259,7 @@ impl<Id, V, X> MapFst<Id, X> for Attribute<Id, V> {
             Attribute::Derive(ids) => {
                 Attribute::Derive(ids.into_iter().map(|id| f.apply(id)).collect())
             }
-            Attribute::Specialize(id, tys) => Attribute::Specialize(f.apply(id), tys.map_fst(f)),
+            Attribute::Specialize(tys) => Attribute::Specialize(tys.map_fst(f)),
             Attribute::Custom(id, tokens) => Attribute::Custom(f.apply(id), tokens),
         }
     }
@@ -280,7 +280,7 @@ impl<Id, V, X> MapSnd<V, X> for Attribute<Id, V> {
             Attribute::Doc(doc) => Attribute::Doc(doc),
             Attribute::Fixity(fixity) => Attribute::Fixity(fixity),
             Attribute::Derive(ids) => Attribute::Derive(ids),
-            Attribute::Specialize(id, tys) => Attribute::Specialize(id, tys.map_snd(f)),
+            Attribute::Specialize(tys) => Attribute::Specialize(tys.map_snd(f)),
             Attribute::Custom(id, tokens) => Attribute::Custom(id, tokens),
         }
     }
@@ -358,8 +358,7 @@ impl<Id, X> Functor<Id, X> for WithClause<Id> {
     {
         WithClause {
             span: self.span,
-            names: self.names.fmap(f),
-            from_pragma: self.from_pragma,
+            names: self.names.map_fst(f),
         }
     }
 }
@@ -909,6 +908,7 @@ impl<Id, V, X> MapFst<Id, X> for Declaration<Id, V> {
         F: FnMut(Id) -> X,
     {
         match self {
+            Declaration::Import(d) => Declaration::Import(d.mapf(f)),
             Declaration::Data(d) => Declaration::Data(d.map_fst(f)),
             Declaration::Alias(d) => Declaration::Alias(d.map_fst(f)),
             Declaration::Fixity(d) => Declaration::Fixity(d.mapf(f)),
@@ -928,6 +928,7 @@ impl<Id, V, X> MapSnd<V, X> for Declaration<Id, V> {
         F: FnMut(V) -> X,
     {
         match self {
+            Declaration::Import(d) => Declaration::Import(d),
             Declaration::Data(d) => Declaration::Data(d.map_snd(f)),
             Declaration::Alias(d) => Declaration::Alias(d.map_snd(f)),
             Declaration::Fixity(d) => Declaration::Fixity(d),
@@ -1470,6 +1471,7 @@ impl<Id, V, X> MapFst<Id, X> for Expression<Id, V> {
                 Expression::Cond(Box::new([x, y, z]))
             }
             Expression::Case(e, a) => Expression::Case(Box::new(e.map_fst(f)), a.map_fst(f)),
+            Expression::Match(a) => Expression::Match(a.map_fst(f)),
             Expression::Cast(e, ty) => Expression::Cast(Box::new(e.map_fst(f)), ty.map_fst(f)),
             Expression::Do(stmts, e) => Expression::Do(stmts.map_fst(f), Box::new(e.map_fst(f))),
             Expression::Range(rng) => Expression::Range(Box::new(rng.map_fst(f))),
@@ -1517,6 +1519,7 @@ impl<Id, V, X> MapSnd<V, X> for Expression<Id, V> {
                 Expression::Cond(Box::new([x, y, z]))
             }
             Expression::Case(e, a) => Expression::Case(Box::new(e.map_snd(f)), a.map_snd(f)),
+            Expression::Match(a) => Expression::Match(a.map_snd(f)),
             Expression::Cast(e, ty) => Expression::Cast(Box::new(e.map_snd(f)), ty.map_snd(f)),
             Expression::Do(stmts, e) => Expression::Do(stmts.map_snd(f), Box::new(e.map_snd(f))),
             Expression::Range(rng) => Expression::Range(Box::new(rng.map_snd(f))),
