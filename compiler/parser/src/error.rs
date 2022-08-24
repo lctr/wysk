@@ -656,7 +656,7 @@ where
     }
 
     pub fn label(&self) -> String {
-        format!("{:?}", &self.syntax_err)
+        format!("{:?}:", &self.syntax_err)
     }
 
     pub fn message(&self) -> Result<String, std::fmt::Error> {
@@ -748,6 +748,22 @@ impl<S> ParserErrors<S>
 where
     S: fmt::Display,
 {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn first_span(&self) -> Option<Span> {
+        self.0.first().map(WithCoordSpan::get_span)
+    }
+
+    pub fn last_span(&self) -> Option<Span> {
+        self.0.last().map(WithCoordSpan::get_span)
+    }
+
     pub fn as_slice(&self) -> &[ParseError<S>] {
         self.0.as_slice()
     }
@@ -778,6 +794,28 @@ pub struct ParseFailure<S: std::fmt::Display = &'static str> {
     pub srcpath: SrcPath,
     pub source: String,
     pub errors: ParserErrors<S>,
+}
+
+impl<S: std::fmt::Display> ParseFailure<S> {
+    pub fn with_srcpath_root<P: AsRef<std::path::Path>>(self, root: P) -> Self {
+        let ParseFailure {
+            srcpath,
+            source,
+            errors,
+        } = self;
+        let srcpath = match srcpath {
+            SrcPath::File(file) => SrcPath::Short {
+                root: root.as_ref().to_path_buf(),
+                file,
+            },
+            p => p,
+        };
+        ParseFailure {
+            srcpath,
+            source,
+            errors,
+        }
+    }
 }
 
 impl<S: fmt::Display> ReSpan for ParseFailure<S> {
