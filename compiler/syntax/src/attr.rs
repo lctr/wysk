@@ -35,6 +35,6 @@ pub enum Attribute<Id, V> {
     Doc(DocLine),
     Fixity(Fixity),
     Derive(Vec<Id>),
-    Specialize(Id, Vec<Type<Id, V>>),
+    Specialize(Vec<Type<Id, V>>),
     Custom(Id, Vec<Token>),
 }
