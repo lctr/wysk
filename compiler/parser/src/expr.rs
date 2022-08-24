@@ -107,6 +107,7 @@ impl<'t> ExprParser<'t> {
             lexpat!(~[brackL]) => self.brack_expr(),
             lexpat!(~[let]) => self.let_expr(),
             lexpat!(~[case]) => self.case_expr(),
+            lexpat!(~[match]) => self.match_expr(),
             lexpat!(~[if]) => self.cond_expr(),
             lexpat!(~[do]) => self.do_expr(),
             lexpat!(~[lam]) => self.lambda(),
@@ -114,11 +115,7 @@ impl<'t> ExprParser<'t> {
             lexpat!(~[var][Var]) => self.identifier(),
             Some(t) => {
                 let t = *t;
-                self.custom_error(
-                    t,
-                    " does not correspond to a lexeme that begins an expression",
-                )
-                .err()
+                self.custom_error(t, " does not begin an expression").err()
             }
             None => self.unexpected_eof().err(),
         }
@@ -130,7 +127,7 @@ impl<'t> ExprParser<'t> {
     }
 
     fn identifier(&mut self) -> Parsed<Expression> {
-        let ident = match self.peek().copied().ok_or_else(|| self.unexpected_eof())? {
+        let ident = match self.current_token()? {
             Token {
                 lexeme: Lexeme::Lower(s),
                 span,
@@ -407,7 +404,7 @@ impl<'t> ExprParser<'t> {
         }
     }
 
-    fn binding_rhs(&mut self) -> Parsed<(Expression, Vec<RawBinding>)> {
+    pub(crate) fn binding_rhs(&mut self) -> Parsed<(Expression, Vec<RawBinding>)> {
         let body = self.expression()?;
         let wher = self.where_clause()?;
         Ok((body, wher))
@@ -502,6 +499,21 @@ impl<'t> ExprParser<'t> {
         };
 
         Ok(Expression::Case(Box::new(scrut), alts))
+    }
+
+    fn match_expr(&mut self) -> Parsed<Expression> {
+        use Keyword::Match;
+        use Lexeme::{CurlyL, CurlyR, Pipe, Semi};
+        self.eat(Match)?;
+        Ok(Expression::Match(if self.peek_on(CurlyL) {
+            self.delimited([CurlyL, Semi, CurlyR], Self::case_alt)?
+        } else {
+            let col = self.get_col();
+            self.many_while(
+                |p| (p.get_col() == col) && p.bump_or_peek_on(Pipe, Lexeme::begins_pat),
+                Self::case_alt,
+            )?
+        }))
     }
 
     fn case_alt(&mut self) -> Parsed<RawAlternative> {
@@ -693,7 +705,7 @@ y -> y;
     #[test]
     fn let_expr() {
         let src = r#"
-        let foo | 1 = 2 
+        let foo | 1 = 2
                 | 3 = 4
         , bar | x y = (x, y) where y = x + 2
         in bar (foo 1) (foo 2)

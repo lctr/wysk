@@ -18,6 +18,7 @@ ref_lifting_strenum! { Keyword is_keyword => Lexeme Kw ::
     Case "case"
     Of "of"
     Do "do"
+    Match "match"
 
     Where "where"
     With "with"
@@ -1164,7 +1165,9 @@ macro_rules! lexpat {
     ([else]) => {
         Lexeme::Kw(Keyword::Else)
     };
-    // ([match]) => {Lexeme::Kw(Keyword::Match)};
+    ([match]) => {
+        Lexeme::Kw(Keyword::Match)
+    };
     ([case]) => {
         Lexeme::Kw(Keyword::Case)
     };
@@ -1206,6 +1209,9 @@ macro_rules! lexpat {
     };
     ([module]) => {
         Lexeme::Kw(Keyword::Module)
+    };
+    ([import]) => {
+        Lexeme::Kw(Keyword::Import)
     };
     ([qualified]) => {
         Lexeme::Kw(Keyword::Qualified)
