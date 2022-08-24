@@ -7,7 +7,7 @@ pub use wy_lexer::{
 };
 use wy_span::{Span, Spanned};
 
-use crate::{attr::*, fixity::*, stmt::*, tipo::*, SpannedIdent};
+use crate::{attr::*, fixity::*, module::ImportSpec, stmt::*, tipo::*, SpannedIdent};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FixityDecl<Id = SpannedIdent> {
@@ -204,13 +204,12 @@ impl<Id, V> DataDecl<Id, V> {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WithClause<Id = SpannedIdent> {
     pub span: Span,
-    pub names: Vec<Id>,
-    pub from_pragma: bool,
+    pub names: Vec<(Id, bool)>,
 }
 
 wy_common::struct_field_iters! {
     |Id| WithClause<Id>
-    | names => names_iter :: Id
+    | names => names_iter :: (Id, bool)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -503,6 +502,7 @@ impl<Id, V> MethodImpl<Id, V> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Declaration<Id = SpannedIdent, V = SpannedIdent> {
+    Import(ImportSpec<Id>),
     Data(DataDecl<Id, V>),
     Alias(AliasDecl<Id, V>),
     Fixity(FixityDecl<Id>),
@@ -514,6 +514,7 @@ pub enum Declaration<Id = SpannedIdent, V = SpannedIdent> {
 
 wy_common::variant_preds! {
     Declaration
+    | is_import => Import(_)
     | is_data => Data(_)
     | is_alias => Alias(_)
     | is_fixity => Fixity(_)
@@ -526,6 +527,7 @@ wy_common::variant_preds! {
 impl<Id, V> Declaration<Id, V> {
     pub fn name(&self) -> &Id {
         match self {
+            Declaration::Import(d) => d.name.root(),
             Declaration::Data(d) => &d.tdef.con(),
             Declaration::Alias(a) => &a.ldef.con(),
             Declaration::Fixity(f) => &f.infixes[0],
@@ -538,6 +540,7 @@ impl<Id, V> Declaration<Id, V> {
 
     pub fn extend_pragmas(&mut self, pragmas: Vec<Pragma<Id, V>>) {
         match self {
+            Declaration::Import(_) => (),
             Declaration::Data(d) => d.prag.extend(pragmas),
             Declaration::Alias(a) => a.prag.extend(pragmas),
             Declaration::Fixity(_f) => (), // f.prag.extend(pragmas),
