@@ -1,8 +1,5 @@
 use serde::{Deserialize, Serialize};
-use wy_common::{
-    deque,
-    variant_preds, Deque, Set,
-};
+use wy_common::{deque, variant_preds, Deque, Set};
 pub use wy_lexer::Literal;
 pub use wy_name::ident::{Ident, Identifier};
 
@@ -17,7 +14,7 @@ pub enum Section<Id = Ident, V = Id> {
     /// parentheses, i.e., `(prefix right)`, where `prefix` is the
     /// identifier with a defined fixity and `right` is an expression;
     /// it is equivalent to the lambda expression `\a' -> a' prefix
-    /// right` where `a'` is a fresh variable not free in `right`. 
+    /// right` where `a'` is a fresh variable not free in `right`.
     Prefix {
         prefix: Id,
         right: Box<Expression<Id, V>>,
@@ -27,7 +24,7 @@ pub enum Section<Id = Ident, V = Id> {
     /// parentheses, i.e., `(left suffix)`, where `suffix` is the
     /// identifier with a defined fixity and `left` is an expression;
     /// it is equivalent to the lambda expression `\a' -> left suffix
-    /// a'` where `a'` is a fresh variable not free in `left`. 
+    /// a'` where `a'` is a fresh variable not free in `left`.
     Suffix {
         left: Box<Expression<Id, V>>,
         suffix: Id,
@@ -174,13 +171,13 @@ impl<Id, V> Range<Id, V> {
     /// Deconstructs the internal components of the range and returns
     /// a pair with these parts. Since every `Range` expression
     /// requires at least one (initial) component, the first component
-    /// of the returned pair will always be the initial component. 
-    /// 
+    /// of the returned pair will always be the initial component.
+    ///
     /// The second component of the pair is an array containing 2
     /// optional type elements, whose values may contain the relevant
     /// component behind a `Some` variant -- if they exist -- or
-    /// otherwise `None`. 
-    /// 
+    /// otherwise `None`.
+    ///
     /// Note that the order of the subexpression components in the
     /// returned array *always* follows the order of
     /// ```text
@@ -190,11 +187,11 @@ impl<Id, V> Range<Id, V> {
     /// ```text
     ///     (<Start>, [<Increment>, <End>])
     /// ```
-    /// 
+    ///
     /// For example, the `From` variant only has an initial component,
     /// so the pair returned would be `(<Initial>, [None, None])`
-    /// (where `<Initial>` is the contained subexpression). 
-    /// 
+    /// (where `<Initial>` is the contained subexpression).
+    ///
     /// On the otherhand, the `FromTo` variant returns `(<Initial>,
     /// [None, <End>])`.
     pub fn parts(self) -> (Expression<Id, V>, [Option<Expression<Id, V>>; 2]) {
@@ -299,6 +296,7 @@ pub enum Expression<Id = SpannedIdent, V = SpannedIdent> {
     App(Box<Expression<Id, V>>, Box<Expression<Id, V>>),
     Cond(Box<[Expression<Id, V>; 3]>),
     Case(Box<Expression<Id, V>>, Vec<Alternative<Id, V>>),
+    Match(Vec<Alternative<Id, V>>),
     Cast(Box<Expression<Id, V>>, Type<Id, V>),
     Do(Vec<Statement<Id, V>>, Box<Expression<Id, V>>),
     Range(Box<Range<Id, V>>),
@@ -325,6 +323,7 @@ variant_preds! {
     | is_app => App (..)
     | is_let => Let (..)
     | is_case => Case (..)
+    | is_match => Match (..)
     | is_cond => Cond (..)
     | is_lambda => Lambda (..)
     | is_lambda_wild => Lambda (Pattern::Wild, ..)
@@ -381,12 +380,12 @@ impl<Id, V> Expression<Id, V> {
             }
             Expression::Let(_, x) => x.maybe_callable(),
             Expression::Cond(xyz) => xyz.as_ref()[1..].into_iter().all(Self::maybe_callable),
-            Expression::Case(_, alts) => alts.into_iter().all(|alt| alt.body.maybe_callable()),
+            Expression::Case(_, alts) | Expression::Match(alts) => alts.into_iter().all(|alt| alt.body.maybe_callable()),
             Expression::Cast(x, _)
             | Expression::Do(_, x)
             | Expression::Group(x)
             => x.maybe_callable(),
-            
+
         }
     }
 
@@ -538,6 +537,7 @@ impl<Id, V> Expression<Id, V> {
             | Expression::Cond(_)
             | Expression::Do(_, _)
             | Expression::Case(_, _)
+            | Expression::Match(_)
             | Expression::List(_, _)
             | Expression::Infix { .. } => false,
             Expression::Tuple(ts) | Expression::Array(ts) => ts.into_iter().all(|x| x.valid_pat()),
@@ -646,6 +646,7 @@ impl<Id, V> Expression<Id, V> {
                 idents.extend(x.idents());
                 alts.into_iter().for_each(|alt| idents.extend(alt.idents()))
             }
+            Expression::Match(alts) => alts.into_iter().for_each(|alt| idents.extend(alt.idents())),
             Expression::Do(stmts, x) => {
                 idents.extend(stmts.into_iter().flat_map(|s| s.idents()).chain(x.idents()))
             }
@@ -745,6 +746,10 @@ impl<Id, V> Expression<Id, V> {
                 arms.into_iter()
                     .for_each(|alt| vars.extend(alt.free_vars()));
             }
+            Expression::Match(arms) => {
+                arms.into_iter()
+                    .for_each(|alt| vars.extend(alt.free_vars()));
+            }
             Expression::Do(stmts, x) => {
                 stmts.into_iter().for_each(|s| vars.extend(s.free_vars()));
                 vars.extend(x.free_vars());
@@ -757,10 +762,6 @@ impl<Id, V> Expression<Id, V> {
                     }
                     Range::FromThenTo(xs) => vars.extend(xs.into_iter().flat_map(Self::free_vars)),
                 };
-                // vars.extend(x.free_vars());
-                // if let Some(y) = y {
-                //     vars.extend(y.free_vars())
-                // }
             }
             Expression::Cast(x, _) | Expression::Neg(x) | Expression::Group(x) => {
                 vars.extend(x.free_vars())
