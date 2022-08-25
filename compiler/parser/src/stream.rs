@@ -1,13 +1,15 @@
 use std::path::Path;
 
-use wy_common::Deque;
+use wy_common::{either::Either, Deque};
 use wy_lexer::{token::Lexlike, Lexeme, Lexer, Token};
 use wy_name::ident::Ident;
 
-use wy_span::{ranges::CoordSpan, BytePos, Coord, Dummy, Span, WithLoc, WithSpan};
+use wy_span::{ranges::CoordSpan, BytePos, Coord, Dummy, Span, Spanned, WithLoc, WithSpan};
 use wy_syntax::fixity::FixityTable;
 
-use crate::error::{Expects, ParseError, Parsed, ParserErrors, Report, SrcLoc, SrcPath};
+use crate::error::{
+    Expects, ParseError, Parsed, ParserErrors, Report, SrcLoc, SrcPath, SyntaxError,
+};
 
 #[derive(Debug)]
 pub struct Parser<'t> {
@@ -74,16 +76,40 @@ impl<'t> Parser<'t> {
         }
     }
 
-    pub fn catch_err<F, X>(&mut self, mut f: F, mut recover: impl FnMut(&mut Self)) -> Parsed<X>
+    pub fn catch_err<F, X>(&mut self, mut f: F) -> Either<X, (Spanned<bool>, Spanned<SyntaxError>)>
     where
         F: FnMut(&mut Self) -> Parsed<X>,
     {
+        let start = self.get_pos();
         match f(self) {
-            Ok(x) => Ok(x),
+            Ok(x) => Either::Left(x),
             Err(e) => {
-                self.errors.push(e.clone());
-                recover(self);
-                Err(e)
+                let end = self.get_pos();
+                let read_span = Span(start, end);
+                let kind = e.syntax_err;
+                self.errors.push(e);
+                let eof;
+                loop {
+                    match self.peek() {
+                        Some(t) if t.is_semi() | t.info_kw() | t.decl_kw() => {
+                            eof = false;
+                            break;
+                        }
+                        None
+                        | Some(Token {
+                            lexeme: Lexeme::Eof,
+                            ..
+                        }) => {
+                            eof = true;
+                            break;
+                        }
+                        _ => {
+                            self.bump();
+                        }
+                    }
+                }
+                let skipped_span = Span(end, self.get_pos());
+                Either::Right((Spanned(eof, read_span), Spanned(kind, skipped_span)))
             }
         }
     }
