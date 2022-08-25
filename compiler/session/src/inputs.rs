@@ -82,6 +82,12 @@ impl Session {
                     successful += 1;
                 }
                 Err(mut fail) => {
+                    // shorten the path displayed by providing the project root
+                    // the `SrcPath` variant will change if it is a file, to a
+                    // variant that shows only the portion of the path beginning
+                    // in the directory of the root
+                    fail = fail.with_srcpath_root(self.project.root_dir());
+                    eprintln!("{fail}");
                     fail.respan(byte_offset);
                     self.failed_parses.push((file.src_path().clone(), fail));
                     failures += 1;
@@ -136,7 +142,7 @@ mod test {
     fn load_and_parse_prelude() {
         let mut sess = Session::new(wy_sources::prelude_project());
         let (succeeded, failed) = sess.parse_unread();
-        println!("`{succeeded}` prelude modules successfully parsed. `{failed}` prelude modules failed to parse.");
+        println!("`{succeeded}` prelude modules successfully parsed.\n`{failed}` prelude modules failed to parse.");
         assert!(failed == 0);
         assert!(sess.project.stored_files().count() == succeeded);
         // serialize_bincode_to(&sess.trees[..], "../../tmp/prelude_ast_binser");
