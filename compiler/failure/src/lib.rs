@@ -46,12 +46,3 @@ impl<E> From<Failure<Failure<E>>> for Failure<E> {
 }
 
 impl<E> std::error::Error for Failure<E> where E: std::error::Error {}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        let result = 2 + 2;
-        assert_eq!(result, 4);
-    }
-}
