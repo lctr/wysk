@@ -3,7 +3,10 @@ use wy_name::{Chain, Ident};
 
 use wy_span::Spanned;
 
-use wy_syntax::{Import, ImportSpec, Module, Program, SpannedIdent};
+use wy_syntax::{
+    module::{Import, ImportSpec, Module},
+    Program, SpannedIdent,
+};
 
 use crate::error::*;
 use crate::stream::*;
@@ -57,7 +60,7 @@ impl<'t> ModuleParser<'t> {
         self.many_while(|p| p.bump_on([Kw(Import), Pipe]), Self::import_spec)
     }
 
-    fn import_spec(&mut self) -> Parsed<ImportSpec> {
+    pub(crate) fn import_spec(&mut self) -> Parsed<ImportSpec> {
         use Keyword::{Hiding, Qualified};
         use Lexeme::{At, Comma, CurlyL, CurlyR};
 
