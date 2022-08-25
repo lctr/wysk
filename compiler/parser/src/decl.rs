@@ -24,6 +24,7 @@ impl<'t> DeclParser<'t> {
     pub fn declaration(&mut self) -> Parsed<Declaration> {
         use Declaration as D;
         match self.peek() {
+            lexpat!(~[import]) => self.import_spec().map(D::Import),
             lexpat!(maybe[infixl][infixr][infix]) => self.fixity_decl().map(D::Fixity),
             lexpat!(~[data]) => self.data_decl().map(D::Data),
             lexpat!(~[fn]) => self.function_decl().map(D::Function),
@@ -58,6 +59,7 @@ impl<'t> DeclParser<'t> {
     fn data_decl(&mut self) -> Parsed<DataDecl> {
         use Keyword::Data;
         use Lexeme::{Equal, Semi};
+        let mut prag = self.attr_before()?;
         let start = self.get_pos();
         self.eat(Data)?;
         // (<pipe> <upper> <lower> (<comma> <upper> <lower>)* <pipe>)?
@@ -72,7 +74,7 @@ impl<'t> DeclParser<'t> {
         };
         let end = self.get_pos();
         let span = Span(start, end);
-        let prag = vec![];
+        prag.extend(self.attr_after()?);
         Ok(DataDecl {
             span,
             prag,
@@ -86,20 +88,19 @@ impl<'t> DeclParser<'t> {
     fn with_clause(&mut self) -> Parsed<Option<WithClause<SpannedIdent>>> {
         use Keyword::With;
         use Lexeme::{Comma, ParenL, ParenR};
+        fn derives(p: &mut Parser) -> Parsed<(SpannedIdent, bool)> {
+            p.expect_upper().map(|id| (id, false))
+        }
         let start = self.get_pos();
         if self.bump_on(With) {
-            let mut with = vec![];
+            let mut names = vec![];
             if self.peek_on(ParenL) {
-                with = self.delimited([ParenL, Comma, ParenR], Self::expect_upper)?
+                names = self.delimited([ParenL, Comma, ParenR], derives)?
             } else {
-                with.push(self.expect_upper()?);
+                names.push(derives(self)?);
             }
             let span = Span(start, self.get_pos());
-            Ok(Some(WithClause {
-                span,
-                names: with,
-                from_pragma: false,
-            }))
+            Ok(Some(WithClause { span, names }))
         } else {
             Ok(None)
         }
@@ -107,29 +108,19 @@ impl<'t> DeclParser<'t> {
 
     fn function_decl(&mut self) -> Parsed<FnDecl> {
         use Keyword::Fn;
-        use Lexeme::{ParenL, ParenR, Pipe};
+        use Lexeme::Pipe;
+        let mut prag = self.attr_before()?;
         let start = self.get_pos();
-
         self.eat(Fn)?;
-
-        let name = if self.bump_on(ParenL) {
-            let name = self.expect_infix()?;
-            self.eat(ParenR)?;
-            name
-        } else {
-            self.expect_lower()?
-        };
-
+        let name = self.binder_name()?;
         let sign = self.ty_signature()?;
         self.ignore(Pipe);
         let mut defs = vec![self.match_arm()?];
-
         while self.bump_on(Pipe) {
             defs.push(self.match_arm()?);
         }
-        let end = self.get_pos();
-        let span = Span(start, end);
-        let prag = vec![];
+        let span = Span(start, self.get_pos());
+        prag.extend(self.attr_after()?);
         Ok(FnDecl {
             span,
             prag,
@@ -142,81 +133,37 @@ impl<'t> DeclParser<'t> {
     fn alias_decl(&mut self) -> Parsed<AliasDecl> {
         use Keyword::Type;
         use Lexeme::Equal;
+        let mut prag = self.attr_before()?;
         let start = self.get_pos();
         self.eat(Type)?;
         let ldef = self.ty_simple()?;
         self.eat(Equal)?;
-        let sign = self.ty_node()?;
-        let end = self.get_pos();
-        let span = Span(start, end);
-        let prag = vec![];
+        let tipo = self.ty_node()?;
+        let span = Span(start, self.get_pos());
+        prag.extend(self.attr_after()?);
         Ok(AliasDecl {
             span,
             prag,
             ldef,
-            tipo: sign,
+            tipo,
         })
     }
 
     fn class_decl(&mut self) -> Parsed<ClassDecl> {
+        let mut prag = self.attr_before()?;
         let start = self.get_pos();
         self.eat(Keyword::Class)?;
         let pred = self.ty_predicates()?;
         let cdef = self.ty_simple()?;
         self.eat(Lexeme::CurlyL)?;
+        prag.extend(self.attr_after()?);
         let mut defs = vec![];
         while !self.peek_on(Lexeme::CurlyR) {
-            let mut prag = self.attr_before()?;
-            let start = self.get_pos();
-            self.ignore(Keyword::Def);
-            let name = self.binder_name()?;
-            self.eat(Lexeme::Colon2)?;
-            let annt = self.ty_annotation()?;
-            let body = match self.peek().copied().ok_or_else(|| self.unexpected_eof())? {
-                Token {
-                    lexeme: Lexeme::Semi | Lexeme::Comma | Lexeme::CurlyR | Lexeme::Kw(Keyword::Def),
-                    ..
-                } => MethodBody::Unimplemented,
-                Token {
-                    lexeme: Lexeme::Equal,
-                    ..
-                } => {
-                    self.bump();
-                    let body = self.expression()?;
-                    let wher = self.where_clause()?;
-                    MethodBody::Default(vec![Arm {
-                        args: vec![],
-                        cond: None,
-                        body,
-                        wher,
-                    }])
-                }
-                Token {
-                    lexeme: Lexeme::Pipe,
-                    ..
-                } => MethodBody::Default(self.match_arms()?),
-                t => {
-                    return self
-                        .custom_error(t, " invalid token for class method")
-                        .err()
-                }
-            };
-            let span = Span(start, self.get_pos());
-            prag.extend(self.attr_after()?);
-
-            defs.push(MethodDef {
-                span,
-                prag,
-                name,
-                annt,
-                body,
-            });
-            self.ignore([Lexeme::Semi, Lexeme::Comma]);
+            defs.push(self.method_def()?);
+            self.ignore(Lexeme::Semi);
         }
         self.eat(Lexeme::CurlyR)?;
-        let end = self.get_pos();
-        let span = Span(start, end);
-        let prag = vec![];
+        let span = Span(start, self.get_pos());
         Ok(ClassDecl {
             span,
             prag,
@@ -226,34 +173,75 @@ impl<'t> DeclParser<'t> {
         })
     }
 
+    fn method_def(&mut self) -> Parsed<MethodDef> {
+        let mut prag = self.attr_before()?;
+        let start = self.get_pos();
+        self.ignore(Keyword::Fn);
+        prag.extend(self.attr_before()?);
+        let name = self.binder_name()?;
+        self.eat(Lexeme::Colon2)?;
+        let annt = self.ty_annotation()?;
+        let body = self.method_body()?;
+        let span = Span(start, self.get_pos());
+        prag.extend(self.attr_after()?);
+        Ok(MethodDef {
+            span,
+            prag,
+            name,
+            annt,
+            body,
+        })
+    }
+
+    fn method_body(&mut self) -> Parsed<MethodBody> {
+        match self.current_token()? {
+            Token {
+                lexeme:
+                    Lexeme::Semi
+                    | Lexeme::Comma
+                    | Lexeme::CurlyR
+                    | Lexeme::Pound
+                    | Lexeme::Hashbang
+                    | Lexeme::Kw(Keyword::Fn),
+                ..
+            } => Ok(MethodBody::Unimplemented),
+            Token {
+                lexeme: Lexeme::Equal,
+                ..
+            } => {
+                self.bump();
+                let (body, wher) = self.binding_rhs()?;
+                Ok(MethodBody::Default(vec![Arm {
+                    args: vec![],
+                    cond: None,
+                    body,
+                    wher,
+                }]))
+            }
+            Token {
+                lexeme: Lexeme::Pipe,
+                ..
+            } => Ok(MethodBody::Default(self.match_arms()?)),
+            t => return self.invalid_fn_ident(t).err(),
+        }
+    }
+
     fn inst_decl(&mut self) -> Parsed<InstDecl> {
+        let mut prag = self.attr_before()?;
         let start = self.get_pos();
         self.eat(Keyword::Impl)?;
         let pred = self.ty_predicates()?;
         let name = self.expect_upper()?;
         let tipo = self.ty_atom()?;
-        self.ignore([Keyword::With, Keyword::Where]);
         self.eat(Lexeme::CurlyL)?;
+        prag.extend(self.attr_after()?);
         let mut defs = vec![];
         while !self.peek_on(Lexeme::CurlyR) {
-            let mut prag = self.attr_before()?;
-            let start = self.get_pos();
-            let Binding { name, arms, tsig } = self.binding()?;
-            let span = Span(start, self.get_pos());
-            prag.extend(self.attr_after()?);
-            defs.push(MethodImpl {
-                span,
-                prag,
-                name,
-                tsig,
-                arms,
-            });
+            defs.push(self.method_impl()?);
             self.ignore(Lexeme::Semi);
         }
         self.eat(Lexeme::CurlyR)?;
-        let end = self.get_pos();
-        let span = Span(start, end);
-        let prag = vec![];
+        let span = Span(start, self.get_pos());
         Ok(InstDecl {
             span,
             prag,
@@ -264,9 +252,27 @@ impl<'t> DeclParser<'t> {
         })
     }
 
+    fn method_impl(&mut self) -> Parsed<MethodImpl> {
+        let mut prag = self.attr_before()?;
+        let start = self.get_pos();
+        self.ignore(Keyword::Fn);
+        prag.extend(self.attr_before()?);
+        let Binding { name, arms, tsig } = self.binding()?;
+        let span = Span(start, self.get_pos());
+        prag.extend(self.attr_after()?);
+        Ok(MethodImpl {
+            span,
+            prag,
+            name,
+            tsig,
+            arms,
+        })
+    }
+
     fn newtype_decl(&mut self) -> Parsed<NewtypeDecl<SpannedIdent, SpannedIdent>> {
         use Keyword::Newtype;
         use Lexeme::{CurlyL, CurlyR, Equal};
+        let mut prag = self.attr_before()?;
         let start = self.get_pos();
         self.eat(Newtype)?;
         let tdef = self.ty_simple()?;
@@ -290,7 +296,7 @@ impl<'t> DeclParser<'t> {
         let with = self.with_clause()?;
         let end = self.get_pos();
         let span = Span(start, end);
-        let prag = vec![];
+        prag.extend(self.attr_after()?);
         Ok(NewtypeDecl {
             span,
             prag,
@@ -310,6 +316,7 @@ impl<'t> DeclParser<'t> {
 
     fn data_variant(&mut self) -> Parsed<Variant> {
         self.ignore(Lexeme::Pipe);
+        let mut prag = self.attr_before()?;
         let start = self.get_pos();
         let name = self.expect_upper()?;
         // let start = name.span().start();
@@ -324,7 +331,7 @@ impl<'t> DeclParser<'t> {
                 .map(TypeArgs::Curried)?
         };
         let span = Span(start, self.get_pos());
-        let prag = vec![];
+        prag.extend(self.attr_after()?);
         Ok(Variant {
             name,
             span,
@@ -440,8 +447,7 @@ mod test {
                     let pos_diff = BytePos::strlen("with Eq");
                     Some(WithClause {
                         span: Span(start_pos, start_pos + pos_diff),
-                        names: vec![eq],
-                        from_pragma: false,
+                        names: vec![(eq, false)],
                     })
                 },
             }
@@ -603,14 +609,14 @@ impl |Eq a| Eq [a] {
     #[test]
     fn test_record_fn() {
         let src = "
-fn some_record_function 
-    | a @ A { b, c } = a { 
+fn some_record_function
+    | a @ A { b, c } = a {
         b = b + 2,
-        c = c a 3 
+        c = c a 3
     }
-    | a @ A { b = (1 | 2), c } = a { 
-        b, 
-        c = c a 3 
+    | a @ A { b = (1 | 2), c } = a {
+        b,
+        c = c a 3
     }
 ";
         let [a, b, c, some_record_function] =
@@ -711,15 +717,15 @@ fn some_record_function
         let src = "
 class |Semigroup a| Monoid a {
     ~~> The identity element of the associative monoidal append operation `<>`
-    ~~| inherited from the `Semigroup` superclass. 
-    ~~| 
-    ~~| The equality `x <> mempty == mempty <> x == x` should hold. 
+    ~~| inherited from the `Semigroup` superclass.
+    ~~|
+    ~~| The equality `x <> mempty == mempty <> x == x` should hold.
     mempty :: a;
-    
+
     ~~ inline attribute/pragma in hopes of fusing with mconcat's argument
-    #[inline] 
+    #[inline]
     ~~> Fold a list using the monoid.
-    mconcat :: [a] -> a 
+    mconcat :: [a] -> a
         = foldr mappend mempty;
     }
 ";
