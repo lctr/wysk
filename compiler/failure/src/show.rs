@@ -143,8 +143,9 @@ impl<'s, S: AsRef<str>, P: AsRef<Path>> fmt::Display for Dialogue<'s, S, P> {
         // string with whitespace trimmed is *never* longer than the original
         let diff = line.len() - trimmed.len();
         let caretlen = self.span.len();
-        let caret_offset = if caretlen == 1 { 1 } else { (diff + 2) / 2 };
-        let dash_len = PAD_SPACE + caret_offset + col.as_usize().abs_diff(diff.abs_diff(caretlen));
+        let caret_offset = 0; //if caretlen == 1 { 1 } else { (diff + 2) / 2 };
+        let dash_len =
+            PAD_SPACE - 1 + caret_offset + col.as_usize().saturating_sub(diff.abs_diff(caretlen));
         let midline = Repeat(dash_len, DASH);
         let carets = StyleBuilder::new()
             .set_fg_color(AsciiColor::Red)
@@ -257,7 +258,7 @@ impl<P: AsRef<Path>> fmt::Display for SrcLoc<P> {
 
 impl<P: AsRef<Path>> fmt::Debug for SrcLoc<P> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{}", self)
     }
 }
 
