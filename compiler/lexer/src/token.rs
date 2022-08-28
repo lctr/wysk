@@ -41,6 +41,7 @@ ref_lifting_strenum! { Keyword is_keyword => Lexeme Kw ::
     Import "import"
     Qualified "qualified"
     Hiding "hiding"
+    Pub "pub"
 
     Extern "extern"
 }
