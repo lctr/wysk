@@ -20,7 +20,7 @@ impl<'t> ModuleParser<'t> {
     pub fn id_chain(&mut self) -> Parsed<Chain<SpannedIdent>> {
         self.expect_upper().and_then(|root| {
             self.many_while(|p| p.bump_on(Lexeme::Dot), Self::expect_ident)
-                .map(|tail| Chain::new(root, tail.into()))
+                .map(|tail| Chain::new(root, tail))
         })
     }
 
@@ -121,41 +121,40 @@ impl<'t> ModuleParser<'t> {
         use Keyword as K;
         use Module as M;
         let module = if self.peek_on(K::Module) {
-            self.module()
+            match self.module() {
+                Ok(m) => Ok(m),
+                Err(e) => {
+                    self.store_error(e);
+                    Err(self.text())
+                }
+            }
         } else {
-            Ok(M::default())
-        }
-        .map_err(|e| self.errors.push(e))
-        .and_then(|mut module| {
-            self.many_while_on(K::Import, Self::import_spec)
-                .map_err(|e| self.errors.push(e))
-                .and_then(|imports| {
-                    module.imports = imports;
-                    self.populate_module(&mut module)
-                        .map(|_| module)
-                        .map_err(|e| self.errors.push(e))
-                })
-        })
-        .map_err(|_| self.text());
+            let mut module = M::default();
+            if let Err(e) = self.populate_module(&mut module) {
+                self.store_error(e);
+                Err(self.text())
+            } else {
+                Ok(module)
+            }
+        };
         let Parser {
-            fixities,
             lexer,
+            queue: _,
+            fixities,
             path,
             errors,
-            ..
         } = self;
-        match module {
-            Ok(module) => Ok(Program {
+        module
+            .map(|module| Program {
                 module,
                 fixities: fixities.as_fixities(),
                 comments: lexer.comments,
-            }),
-            Err(source) => Err(ParseFailure {
+            })
+            .map_err(|source| ParseFailure {
                 srcpath: path,
                 source,
                 errors,
-            }),
-        }
+            })
     }
 }
 
@@ -195,9 +194,7 @@ import A.thing.from.Somewhere @ A { foo, bar }
                         Ident::Lower(thing),
                         Ident::Lower(from),
                         Ident::Upper(somewhere_con),
-                    ]
-                    .into_iter()
-                    .collect(),
+                    ],
                 ),
                 qualified: false,
                 rename: Some(Ident::Upper(a_con)),
@@ -210,9 +207,7 @@ import A.thing.from.Somewhere @ A { foo, bar }
             ImportSpec {
                 name: Chain::new(
                     Ident::Upper(b_con),
-                    vec![Ident::Lower(things), Ident::Lower(elsewhere)]
-                        .into_iter()
-                        .collect(),
+                    vec![Ident::Lower(things), Ident::Lower(elsewhere)],
                 ),
                 qualified: false,
                 rename: Some(Ident::Upper(b_con)),
