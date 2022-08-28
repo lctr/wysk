@@ -3,8 +3,9 @@ use wy_common::{iter::Hashable, HashMap, Set};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Record<Id, V> {
-    /// Anonymous records don't have a *constructor* and are hence *extensible*,
-    /// but less type-safe
+    /// Anonymous records don't have a *constructor* and are hence
+    /// *extensible*, but less type-safe. They are currently not
+    /// supported!
     Anon(Vec<Field<Id, V>>),
     /// Records associated with a given *constructor* and hence are statially
     /// associated with that constructor's type.
