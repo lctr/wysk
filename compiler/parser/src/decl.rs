@@ -514,7 +514,7 @@ impl |Eq a| Eq [a] {
             .unwrap();
         let expected = {
             InstDecl {
-                span: Span::of_str(src.trim_end()),
+                span: Span(BytePos(1), BytePos::strlen(src.trim_end())),
                 prag: vec![],
                 name: cl_eq,
                 tipo: Type::Vec(Box::new(Type::Var(a))),
@@ -525,19 +525,17 @@ impl |Eq a| Eq [a] {
                 defs: vec![MethodImpl {
                     span: Span(
                         BytePos::strlen(
-                            "
-                    impl |Eq a| Eq [a] {
-                        ",
+                            r#"
+impl |Eq a| Eq [a] {
+    "#,
                         ),
                         BytePos::strlen(
-                            "
-                        impl |Eq a| Eq [a] {
-                            (==)
-                            | [] [] = True
-                            | (x:xs) (y:ys) = (x == y) && (xs == ys)
-                            | _ _ = False
-                        }
-                        ",
+                            r#"impl |Eq a| Eq [a] {
+    (==)
+    | [] [] = True
+    | (x:xs) (y:ys) = (x == y) && (xs == ys)
+    | _ _ = False
+}"#,
                         ),
                     ),
                     name: eq2,
@@ -649,7 +647,7 @@ impl |Eq a| Eq [a] {
 
     #[test]
     fn test_record_fn() {
-        let src = "
+        let src = r#"
 fn some_record_function
     | a @ A { b, c } = a {
         b = b + 2,
@@ -659,7 +657,7 @@ fn some_record_function
         b,
         c = c a 3
     }
-";
+"#;
         let [a, b, c, some_record_function] =
             Symbol::intern_many_with(["a", "b", "c", "some_record_function"], Ident::Lower);
         let [con_a] = Symbol::intern_many_with(["A"], Ident::Upper);
@@ -674,7 +672,7 @@ fn some_record_function
             .unwrap();
         let expected = FnDecl {
             visi: Default::default(),
-            span: Span::of_str(src),
+            span: Span(BytePos(1), BytePos::strlen(src)),
             prag: vec![],
             name: some_record_function,
             sign: Signature::Implicit,
@@ -751,7 +749,7 @@ fn some_record_function
                 },
             ],
         };
-        assert_eq!(actual, expected)
+        diff_assert_eq!(actual, expected)
     }
 
     #[test]
