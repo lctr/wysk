@@ -108,8 +108,8 @@ impl<T> Deque<T> {
     }
 
     #[inline]
-    pub fn into_iter(self) -> std::collections::vec_deque::IntoIter<T> {
-        self.0.into_iter()
+    pub fn into_iter(self) -> IntoIter<T> {
+        IntoIter(self.0.into_iter())
     }
 
     #[inline]
@@ -219,10 +219,46 @@ impl<T> FromIterator<T> for Deque<T> {
     }
 }
 
+pub struct IntoIter<T>(std::collections::vec_deque::IntoIter<T>);
+
+impl<T> Iterator for IntoIter<T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next()
+    }
+}
+
+impl<T> ExactSizeIterator for IntoIter<T> {
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+
+impl<T> DoubleEndedIterator for IntoIter<T> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.0.next_back()
+    }
+}
+
+impl<T> std::ops::Deref for IntoIter<T> {
+    type Target = std::collections::vec_deque::IntoIter<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> std::ops::DerefMut for IntoIter<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 impl<T> IntoIterator for Deque<T> {
     type Item = T;
 
-    type IntoIter = std::collections::vec_deque::IntoIter<T>;
+    type IntoIter = IntoIter<T>;
 
     fn into_iter(self) -> Self::IntoIter {
         Deque::into_iter(self)
