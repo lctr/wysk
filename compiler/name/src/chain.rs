@@ -34,6 +34,12 @@ impl<Id> From<Chain<Spanned<Id>>> for Chain<Id> {
     }
 }
 
+impl<'id, Id> From<&'id Chain<Spanned<Id>>> for Chain<&'id Id> {
+    fn from(Chain(root, tail): &'id Chain<Spanned<Id>>) -> Self {
+        Chain(root.item(), tail.iter().map(|sp| sp.item()).collect())
+    }
+}
+
 impl From<Chain<Spanned<Ident>>> for Ident {
     fn from(ch: Chain<Spanned<Ident>>) -> Self {
         ch.map(Spanned::take_item).into()
@@ -41,8 +47,8 @@ impl From<Chain<Spanned<Ident>>> for Ident {
 }
 
 impl<Id> Chain<Id> {
-    pub fn new(root: Id, tail: Deque<Id>) -> Self {
-        Self(root, tail)
+    pub fn new(root: Id, tail: impl IntoIterator<Item = Id>) -> Self {
+        Self(root, tail.into_iter().collect())
     }
 
     pub fn root(&self) -> &Id {
@@ -108,12 +114,22 @@ impl<Id> Chain<Id> {
 
     /// Returns an iterator over references to all identifiers in the `Chain`,
     /// with the `&Id` yielded in order.
-    pub fn iter(&self) -> impl Iterator<Item = &Id> {
-        std::iter::once(&self.0).chain(self.tail())
+    pub fn iter(&self) -> Iter<'_, Id> {
+        Iter {
+            head: Some(&self.0),
+            tail: self.1.iter(),
+        }
     }
 
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Id> {
         std::iter::once(&mut self.0).chain(self.1.iter_mut())
+    }
+
+    pub fn into_iter(self) -> IntoIter<Id> {
+        IntoIter {
+            head: Some(self.0),
+            tail: self.1.into_iter(),
+        }
     }
 
     #[inline]
@@ -324,13 +340,118 @@ impl<Id> Chain<Spanned<Id>> {
     }
 }
 
+pub struct Iter<'t, T> {
+    head: Option<&'t T>,
+    tail: std::collections::vec_deque::Iter<'t, T>,
+}
+
+impl<'t, T> Iterator for Iter<'t, T> {
+    type Item = &'t T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.head.take() {
+            t @ Some(_) => t,
+            None => self.tail.next(),
+        }
+    }
+}
+
+impl<'t, T> ExactSizeIterator for Iter<'t, T> {
+    fn len(&self) -> usize {
+        self.tail.len() + 1
+    }
+}
+
+impl<'t, T> DoubleEndedIterator for Iter<'t, T> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        match self.tail.next_back() {
+            t @ Some(_) => t,
+            None => self.head.take(),
+        }
+    }
+}
+
+pub struct IntoIter<T> {
+    head: Option<T>,
+    tail: wy_common::iter::deque::IntoIter<T>,
+}
+
+impl<T> Iterator for IntoIter<T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.head.take() {
+            t @ Some(_) => t,
+            None => self.tail.next(),
+        }
+    }
+}
+
+impl<T> ExactSizeIterator for IntoIter<T> {
+    fn len(&self) -> usize {
+        self.tail.len() + (if self.head.is_some() { 1 } else { 0 })
+    }
+}
+
+impl<T> DoubleEndedIterator for IntoIter<T> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        match self.tail.next_back() {
+            t @ Some(_) => t,
+            None => self.head.take(),
+        }
+    }
+}
+
+impl<Id> Chain<Id>
+where
+    Id: AsRef<str>,
+{
+    pub fn as_file_in(&self, dir_path: impl AsRef<std::path::Path>) -> Option<std::path::PathBuf> {
+        let p = dir_path.as_ref();
+        let mut iter = self.iter();
+        let lower_first = |end: bool| {
+            move |id: &Id| {
+                let mut cs = id.as_ref().char_indices();
+                let mut s = cs
+                    .next()
+                    .map(|(_, c)| c.to_lowercase().to_string())
+                    .into_iter()
+                    .collect::<String>();
+                s.push_str(cs.as_str());
+                if end {
+                    s.push_str(".wy")
+                };
+                s
+            }
+        };
+        let last = iter
+            .next_back()
+            .into_iter()
+            .map(lower_first(true))
+            .collect::<String>();
+        let mut pth = p.to_path_buf();
+        for s in iter.map(lower_first(false)) {
+            let p = pth.join(s);
+            if p.exists() {
+                pth = p;
+            } else {
+                return None;
+            }
+        }
+        match pth.join(last) {
+            path if path.exists() => Some(path),
+            _ => None,
+        }
+    }
+}
+
 impl<Id> IntoIterator for Chain<Id> {
     type Item = Id;
 
-    type IntoIter = std::iter::Chain<std::iter::Once<Id>, <Deque<Id> as IntoIterator>::IntoIter>;
+    type IntoIter = IntoIter<Id>;
 
     fn into_iter(self) -> Self::IntoIter {
-        std::iter::once(self.0).chain(self.1)
+        Chain::into_iter(self)
     }
 }
 
@@ -462,5 +583,32 @@ impl<Id: Identifier + Symbolic> Identifier for Chain<Id> {
 
     fn get_ident(&self) -> Ident {
         self.as_ident()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_chain_rev() {
+        let chain = Chain::new('a', ['b', 'c', 'd']);
+        assert_eq!(
+            chain.iter().rev().copied().collect::<Vec<_>>(),
+            vec!['d', 'c', 'b', 'a']
+        )
+    }
+
+    #[test]
+    fn test_as_file_in() {
+        let name = Chain::new("Prelude", ["Src", "Boolean"]);
+        let dir_path = "../../language";
+        println!(
+            "{}",
+            AsRef::<std::path::Path>::as_ref(dir_path)
+                .join("src/")
+                .exists()
+        );
+        println!("{:?}", name.as_file_in(dir_path))
     }
 }
