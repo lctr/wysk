@@ -17,7 +17,7 @@ type MaybeList<S = String> = Option<List<S>>;
 
 /// The entire `manifest.toml` file. Parametrized over a `stringy`
 /// type in order to allow for flexibility with interned symbols.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Manifest<S = String, P = S>
 where
     S: Ord,
@@ -81,7 +81,7 @@ impl Manifest {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Package<S = String, P = S> {
     /// Name of the package
     pub name: S,
@@ -118,27 +118,27 @@ impl<S, P> Package<S, P> {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Documentation<S = String, P = S> {
     pub webpage: Option<S>,
     pub index: Option<P>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Lib<S = String> {
     pub name: S,
     pub test: Option<bool>,
     pub submodules: MaybeList<S>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Bin<S = String> {
     pub name: S,
     pub test: Option<bool>,
     pub submodules: MaybeList<S>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Workspace<S = String> {
     pub members: Option<Vec<S>>,
 }
@@ -152,7 +152,7 @@ impl<S> Workspace<S> {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Dependencies<K = String, V = String, P = V>(pub Map<K, Dependency<V, P>>)
 where
     K: Ord;
@@ -197,10 +197,10 @@ impl<S, P> Dependency<S, P> {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct DevDependencies<K: Ord = String, S = String, P = S>(pub Map<K, Dependency<S, P>>);
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct Artifacts<S = String, P = S>(Map<S, P>)
 where
     S: Ord;
@@ -224,17 +224,17 @@ mod test {
         description = "A simple description"
         authors = ["Lictor Guzman"]
         keywords = ["wysk lang", "config"]
-    
-    
+
+
         [workspace]
         members = [ "subdir1", "womp"]
-    
+
         [dependencies]
         a_thing = "1"
         c_thing = { url = "https://website.com" }
         b_thing = { path = "../thingy" }
         d_thing = { version = "1.2", repo = "https://github.com/a/b.git", branch = "main" }
-    
+
         [dev-dependencies]
 
         [lib]
