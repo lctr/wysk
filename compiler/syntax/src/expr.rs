@@ -3,7 +3,13 @@ use wy_common::{deque, variant_preds, Deque, Set};
 pub use wy_lexer::Literal;
 pub use wy_name::ident::{Ident, Identifier};
 
-use crate::{decl::Arity, record::Record, stmt::Alternative, tipo::Type, Binding, SpannedIdent};
+use crate::{
+    decl::Arity,
+    record::Record,
+    stmt::{Alternative, LocalDef},
+    tipo::Type,
+    SpannedIdent,
+};
 
 use super::{Pattern, Statement};
 
@@ -292,7 +298,7 @@ pub enum Expression<Id = SpannedIdent, V = SpannedIdent> {
     List(Box<Expression<Id, V>>, Vec<Statement<Id, V>>),
     Dict(Record<Id, Expression<Id, V>>),
     Lambda(Pattern<Id, V>, Box<Expression<Id, V>>),
-    Let(Vec<Binding<Id, V>>, Box<Expression<Id, V>>),
+    Let(Vec<LocalDef<Id, V>>, Box<Expression<Id, V>>),
     App(Box<Expression<Id, V>>, Box<Expression<Id, V>>),
     Cond(Box<[Expression<Id, V>; 3]>),
     Case(Box<Expression<Id, V>>, Vec<Alternative<Id, V>>),
