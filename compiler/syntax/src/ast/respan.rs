@@ -12,7 +12,7 @@ use crate::{
     module::{Import, ImportSpec, Module},
     pattern::Pattern,
     record::{Field, Record},
-    stmt::{Alternative, Arm, Binding, Statement},
+    stmt::{Alternative, Arm, Binding, LocalDef, Statement},
     tipo::{
         Annotation, Con, Parameter, Predicate, Qualified, Quantified, Signature, SimpleType, Type,
         Var,
@@ -577,6 +577,15 @@ impl<Id, T> ReSpan for Statement<Spanned<Id>, Spanned<T>> {
             Statement::JustLet(binds) => spans.extend(binds.spans_mut()),
         };
         spans
+    }
+}
+
+impl<Id, T> ReSpan for LocalDef<Spanned<Id>, Spanned<T>> {
+    fn spans_mut(&mut self) -> Vec<&mut Span> {
+        match self {
+            LocalDef::Binder(b) => b.spans_mut(),
+            LocalDef::Match(a) => a.spans_mut(),
+        }
     }
 }
 

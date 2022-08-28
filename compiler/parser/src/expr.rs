@@ -7,8 +7,9 @@ use wy_span::{Span, Spanned, WithLoc, WithSpan};
 use wy_syntax::expr::{Expression, Range, Section};
 use wy_syntax::pattern::RawPattern;
 use wy_syntax::record::{Field, Record};
-use wy_syntax::stmt::{Binding, RawAlternative, RawArm, RawBinding, RawStatement};
+use wy_syntax::stmt::{Binding, RawAlternative, RawArm, RawBinding, RawLocalDef, RawStatement};
 
+use wy_syntax::tipo::Signature;
 use wy_syntax::SpannedIdent;
 
 use crate::error::*;
@@ -47,11 +48,12 @@ impl<'t> ExprParser<'t> {
         F: FnMut(&mut Self) -> Parsed<Expression>,
     {
         let head = f(self)?;
+        let col = self.get_col();
         // TODO: maybe simplify this to checking that `head` isn't a
         // literal, list, tuple, range, or record
         if head.maybe_callable() {
             Ok(self
-                .many_while_on(Lexeme::begins_expr, f)?
+                .many_while(|p| p.get_col() >= col && p.peek_on(Lexeme::begins_expr), f)?
                 .into_iter()
                 .fold(head, Expression::mk_app))
         } else {
@@ -115,7 +117,7 @@ impl<'t> ExprParser<'t> {
             lexpat!(~[var][Var]) => self.identifier(),
             Some(t) => {
                 let t = *t;
-                self.custom_error(t, " does not begin an expression").err()
+                self.invalid_expr_start(t).err()
             }
             None => self.unexpected_eof().err(),
         }
@@ -227,7 +229,7 @@ impl<'t> ExprParser<'t> {
         if self.peek_on(Comma) {
             use std::iter::once;
             return self
-                .delimited([Comma, Comma, ParenR], &mut Self::subexpression)
+                .delimited([Comma, Comma, ParenR], &mut Self::expression)
                 .map(|rest| once(first).chain(rest).collect())
                 .map(Expression::Tuple);
         }
@@ -390,7 +392,7 @@ impl<'t> ExprParser<'t> {
         use Lexeme::{Equal, Kw, Pipe, Semi};
         self.ignore(Pipe);
         let args = self.many_while_on(Lexeme::begins_pat, Self::pattern)?;
-        match self.peek().copied().ok_or_else(|| self.unexpected_eof())? {
+        match self.current_token()? {
             Token { lexeme: Pipe | Semi | Equal, .. } => {
                 Ok((args, None))
             }
@@ -404,7 +406,7 @@ impl<'t> ExprParser<'t> {
         }
     }
 
-    pub(crate) fn binding_rhs(&mut self) -> Parsed<(Expression, Vec<RawBinding>)> {
+    pub(crate) fn binding_rhs(&mut self) -> Parsed<(Expression, Vec<RawLocalDef>)> {
         let body = self.expression()?;
         let wher = self.where_clause()?;
         Ok((body, wher))
@@ -438,10 +440,13 @@ impl<'t> ExprParser<'t> {
 
     pub(crate) fn match_arms(&mut self) -> Parsed<Vec<RawArm>> {
         use Lexeme::Pipe;
+        let col = self.get_col();
         self.many_while(
             |this| {
-                this.ignore(Pipe);
-                this.peek_on(Lexeme::begins_pat)
+                this.get_col() >= col && {
+                    this.ignore(Pipe);
+                    this.peek_on(Lexeme::begins_pat)
+                }
             },
             Self::match_arm,
         )
@@ -461,59 +466,108 @@ impl<'t> ExprParser<'t> {
         })
     }
 
-    pub(crate) fn where_clause(&mut self) -> Parsed<Vec<RawBinding>> {
+    pub(crate) fn where_clause(&mut self) -> Parsed<Vec<RawLocalDef>> {
         use Keyword::Where;
         use Lexeme::Comma;
         let mut binds = vec![];
         if self.bump_on(Where) {
-            binds.push(self.binding()?);
-            binds.extend(self.many_while(|p| p.bump_on(Comma), Self::binding)?);
+            binds.extend(if self.peek_on(Lexeme::CurlyL) {
+                self.delimited(
+                    [Lexeme::CurlyL, Lexeme::Semi, Lexeme::CurlyR],
+                    Self::local_def,
+                )
+            } else {
+                let col = self.get_col();
+                self.many_while(
+                    |p| p.get_col() == col || p.bump_or_peek_on(Comma, Lexeme::begins_pat),
+                    Self::local_def,
+                )
+            }?);
+            // binds.push(self.binding()?);
+            // binds.extend(self.many_while(|p| p.bump_on(Comma), Self::binding)?);
         };
         Ok(binds)
+    }
+
+    pub(crate) fn local_def(&mut self) -> Parsed<RawLocalDef> {
+        let first = self.current_token()?;
+        match first.lexeme {
+            lexpat!([var]) => {
+                let first = self.bump().spanned().map(|lx| lx.lower_symbol().unwrap());
+                let name = first.map(Ident::Lower);
+                let next = self.current_token()?;
+                match next.lexeme {
+                    lexpat!([|]) => {
+                        let tsig = Signature::Implicit;
+                        let arms = self.match_arms()?;
+                        Ok(RawLocalDef::Binder(Binding { name, tsig, arms }))
+                    }
+                    lexpat!([=]) => {
+                        let tsig = Signature::Implicit;
+                        self.eat(Lexeme::Equal)?;
+                        let (body, wher) = self.binding_rhs()?;
+                        Ok(RawLocalDef::Binder(Binding {
+                            name,
+                            tsig,
+                            arms: vec![RawArm {
+                                args: vec![],
+                                cond: None,
+                                body,
+                                wher,
+                            }],
+                        }))
+                    }
+                    lexpat!([::]) => {
+                        let tsig = self.ty_signature()?;
+                        let arms = self.match_arms()?;
+                        Ok(RawLocalDef::Binder(Binding { name, tsig, arms }))
+                    }
+                    t if t.begins_pat() => {
+                        let tsig = Signature::Implicit;
+                        let mut arms = vec![self.match_arm()?];
+                        arms.extend(self.match_arms()?);
+                        Ok(RawLocalDef::Binder(Binding { name, tsig, arms }))
+                    }
+                    _t => self
+                        .custom_error(
+                            next,
+                            " after local def binder, expected pattern, `::`, `|` or `=`",
+                        )
+                        .err(),
+                }
+            }
+            t if t.begins_pat() => Ok(RawLocalDef::Match(self.match_arm()?)),
+            _t => self.invalid_local_def_start(first).err(),
+        }
     }
 
     fn let_expr(&mut self) -> Parsed<Expression> {
         use Keyword::{In, Let};
         use Lexeme::{Comma, Kw};
         Ok(Expression::Let(
-            self.delimited([Kw(Let), Comma, Kw(In)], Self::binding)?,
+            self.delimited([Kw(Let), Comma, Kw(In)], Self::local_def)?,
             Box::new(self.expression()?),
         ))
     }
 
     fn case_expr(&mut self) -> Parsed<Expression> {
         use Keyword::{Case, Of};
-        use Lexeme::{CurlyL, CurlyR, Pipe, Semi};
+        use Lexeme::{Pipe, Semi};
 
         self.eat(Case)?;
         let scrut = self.expression()?;
         self.eat(Of)?;
-        let alts = if self.peek_on(CurlyL) {
-            self.delimited([CurlyL, Semi, CurlyR], Self::case_alt)?
-        } else {
-            let col = self.get_col();
-            self.many_while(
-                |p| (p.get_col() == col) && p.bump_or_peek_on(Pipe, Lexeme::begins_pat),
-                Self::case_alt,
-            )?
-        };
+        let alts = self.delimited_or_layout(Semi, Pipe, Lexeme::begins_pat, Self::case_alt)?;
 
         Ok(Expression::Case(Box::new(scrut), alts))
     }
 
     fn match_expr(&mut self) -> Parsed<Expression> {
         use Keyword::Match;
-        use Lexeme::{CurlyL, CurlyR, Pipe, Semi};
+        use Lexeme::{Pipe, Semi};
         self.eat(Match)?;
-        Ok(Expression::Match(if self.peek_on(CurlyL) {
-            self.delimited([CurlyL, Semi, CurlyR], Self::case_alt)?
-        } else {
-            let col = self.get_col();
-            self.many_while(
-                |p| (p.get_col() == col) && p.bump_or_peek_on(Pipe, Lexeme::begins_pat),
-                Self::case_alt,
-            )?
-        }))
+        self.delimited_or_layout(Semi, Pipe, Lexeme::begins_pat, Self::case_alt)
+            .map(Expression::Match)
     }
 
     fn case_alt(&mut self) -> Parsed<RawAlternative> {
@@ -579,7 +633,7 @@ mod test {
         ast::spanless_eq::de_span2,
         expr::Expression,
         pattern::Pattern,
-        stmt::{Alternative, Arm, Statement},
+        stmt::{Alternative, Arm, LocalDef, Statement},
         tipo::Signature,
     };
 
@@ -714,7 +768,7 @@ y -> y;
         let actual = Parser::from_str(src).expression().map(de_span2).unwrap();
         let expected = Expression::Let(
             vec![
-                Binding {
+                LocalDef::Binder(Binding {
                     name: foo,
                     tsig: Signature::Implicit,
                     arms: vec![
@@ -731,15 +785,15 @@ y -> y;
                             wher: vec![],
                         },
                     ],
-                },
-                Binding {
+                }),
+                LocalDef::Binder(Binding {
                     name: bar,
                     tsig: Signature::Implicit,
                     arms: vec![Arm {
                         args: vec![Pattern::Var(x), Pattern::Var(y)],
                         cond: None,
                         body: Expression::Tuple(vec![Expression::Ident(x), Expression::Ident(y)]),
-                        wher: vec![Binding {
+                        wher: vec![LocalDef::Binder(Binding {
                             name: y,
                             tsig: Signature::Implicit,
                             arms: vec![Arm {
@@ -752,9 +806,9 @@ y -> y;
                                 },
                                 wher: vec![],
                             }],
-                        }],
+                        })],
                     }],
-                },
+                }),
             ],
             Box::new(Expression::App(
                 Box::new(Expression::App(
@@ -946,7 +1000,37 @@ y -> y;
 
     #[test]
     fn experiment() {
-        let src = "let foo | (Some a) b if a == 1 = (a, b) | a b if True = Blah in Blah";
-        show(Parser::from_str(src).expression())
+        //         let src = r#"
+        // case a of
+        //    | b -> c
+        //    | d -> case e of
+        //       | f -> g
+        //       | h -> i
+        //    | j -> k
+        // "#;
+        let src = r#"
+let foo | a b = c
+          where c | d = e
+                  | f = g,
+            h i = j,
+            k l = m
+        | n o = p
+, bar
+    | q r = s
+    | t u = v
+in foo bar
+"#;
+        let mut parser = Parser::from_str(src);
+        show(parser.expression().map_err(|e| {
+            parser.store_error(e);
+            let errors = std::mem::take(&mut parser.errors);
+            let source = parser.text();
+            let srcpath = parser.path.clone();
+            ParseFailure {
+                srcpath,
+                source,
+                errors,
+            }
+        }))
     }
 }

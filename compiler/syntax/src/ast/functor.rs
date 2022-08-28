@@ -7,7 +7,7 @@ use crate::{
     expr::{Expression, Range, Section},
     pattern::Pattern,
     record::{Field, Record},
-    stmt::{Alternative, Arm, Binding, Statement},
+    stmt::{Alternative, Arm, Binding, LocalDef, Statement},
     tipo::{Annotation, Con, Predicate, Qualified, Quantified, Signature, SimpleType, Type, Var},
     Module, Program,
 };
@@ -296,6 +296,7 @@ impl<Id, V, X> MapFst<Id, X> for DataDecl<Id, V> {
         F: FnMut(Id) -> X,
     {
         let DataDecl {
+            visi,
             span,
             prag,
             tdef,
@@ -309,6 +310,7 @@ impl<Id, V, X> MapFst<Id, X> for DataDecl<Id, V> {
         let vnts = vnts.map_fst(f);
         let with = with.map(|w| w.fmap(f));
         DataDecl {
+            visi,
             span,
             prag,
             tdef,
@@ -327,6 +329,7 @@ impl<Id, V, X> MapSnd<V, X> for DataDecl<Id, V> {
         F: FnMut(V) -> X,
     {
         let DataDecl {
+            visi,
             span,
             prag,
             tdef,
@@ -339,6 +342,7 @@ impl<Id, V, X> MapSnd<V, X> for DataDecl<Id, V> {
         let pred = pred.map_snd(f);
         let vnts = vnts.map_snd(f);
         DataDecl {
+            visi,
             span,
             prag,
             tdef,
@@ -506,6 +510,7 @@ impl<Id, V, X> MapFst<Id, X> for AliasDecl<Id, V> {
         F: FnMut(Id) -> X,
     {
         AliasDecl {
+            visi: self.visi,
             span: self.span,
             prag: self.prag.into_iter().map(|prag| prag.map_fst(f)).collect(),
             ldef: self.ldef.map_fst(f),
@@ -522,6 +527,7 @@ impl<Id, V, X> MapSnd<V, X> for AliasDecl<Id, V> {
         F: FnMut(V) -> X,
     {
         AliasDecl {
+            visi: self.visi,
             span: self.span,
             prag: self.prag.into_iter().map(|prag| prag.map_snd(f)).collect(),
             ldef: self.ldef.map_snd(f),
@@ -538,6 +544,7 @@ impl<Id, V, X> MapFst<Id, X> for NewtypeDecl<Id, V> {
         F: FnMut(Id) -> X,
     {
         let NewtypeDecl {
+            visi,
             span,
             prag,
             tdef,
@@ -551,6 +558,7 @@ impl<Id, V, X> MapFst<Id, X> for NewtypeDecl<Id, V> {
         let narg = narg.map_fst(f);
         let with = with.map(|w| w.fmap(f));
         NewtypeDecl {
+            visi,
             span,
             prag,
             tdef,
@@ -569,6 +577,7 @@ impl<Id, V, X> MapSnd<V, X> for NewtypeDecl<Id, V> {
         F: FnMut(V) -> X,
     {
         let NewtypeDecl {
+            visi,
             span,
             prag,
             tdef,
@@ -580,6 +589,7 @@ impl<Id, V, X> MapSnd<V, X> for NewtypeDecl<Id, V> {
         let tdef = tdef.map_snd(f);
         let narg = narg.map_snd(f);
         NewtypeDecl {
+            visi,
             span,
             prag,
             tdef,
@@ -598,6 +608,7 @@ impl<Id, V, X> MapFst<Id, X> for ClassDecl<Id, V> {
         F: FnMut(Id) -> X,
     {
         let ClassDecl {
+            visi,
             span,
             prag,
             cdef,
@@ -609,6 +620,7 @@ impl<Id, V, X> MapFst<Id, X> for ClassDecl<Id, V> {
         let pred = pred.map_fst(f);
         let defs = defs.map_fst(f);
         ClassDecl {
+            visi,
             span,
             prag,
             cdef,
@@ -626,6 +638,7 @@ impl<Id, V, X> MapSnd<V, X> for ClassDecl<Id, V> {
         F: FnMut(V) -> X,
     {
         let ClassDecl {
+            visi,
             span,
             prag,
             cdef,
@@ -637,6 +650,7 @@ impl<Id, V, X> MapSnd<V, X> for ClassDecl<Id, V> {
         let pred = pred.map_snd(f);
         let defs = defs.map_snd(f);
         ClassDecl {
+            visi,
             span,
             prag,
             cdef,
@@ -770,6 +784,7 @@ impl<Id, V, X> MapFst<Id, X> for FnDecl<Id, V> {
         F: FnMut(Id) -> X,
     {
         let FnDecl {
+            visi,
             span,
             prag,
             name,
@@ -781,6 +796,7 @@ impl<Id, V, X> MapFst<Id, X> for FnDecl<Id, V> {
         let sign = sign.map_fst(f);
         let defs = defs.map_fst(f);
         FnDecl {
+            visi,
             span,
             prag,
             name,
@@ -798,6 +814,7 @@ impl<Id, V, X> MapSnd<V, X> for FnDecl<Id, V> {
         F: FnMut(V) -> X,
     {
         let FnDecl {
+            visi,
             span,
             prag,
             name,
@@ -808,6 +825,7 @@ impl<Id, V, X> MapSnd<V, X> for FnDecl<Id, V> {
         let sign = sign.map_snd(f);
         let defs = defs.map_snd(f);
         FnDecl {
+            visi,
             span,
             prag,
             name,
@@ -1351,6 +1369,34 @@ impl<Id, V, X> MapSnd<V, X> for Statement<Id, V> {
             Statement::Generator(pat, ex) => Statement::Generator(pat.map_snd(f), ex.map_snd(f)),
             Statement::Predicate(ex) => Statement::Predicate(ex.map_snd(f)),
             Statement::JustLet(binds) => Statement::JustLet(binds.map_snd(f)),
+        }
+    }
+}
+
+impl<Id, V, X> MapFst<Id, X> for LocalDef<Id, V> {
+    type WrapFst = LocalDef<X, V>;
+
+    fn map_fst<F>(self, f: &mut Func<'_, F>) -> Self::WrapFst
+    where
+        F: FnMut(Id) -> X,
+    {
+        match self {
+            LocalDef::Binder(b) => LocalDef::Binder(b.map_fst(f)),
+            LocalDef::Match(a) => LocalDef::Match(a.map_fst(f)),
+        }
+    }
+}
+
+impl<Id, V, X> MapSnd<V, X> for LocalDef<Id, V> {
+    type WrapSnd = LocalDef<Id, X>;
+
+    fn map_snd<F>(self, f: &mut Func<'_, F>) -> Self::WrapSnd
+    where
+        F: FnMut(V) -> X,
+    {
+        match self {
+            LocalDef::Binder(b) => LocalDef::Binder(b.map_snd(f)),
+            LocalDef::Match(a) => LocalDef::Match(a.map_snd(f)),
         }
     }
 }

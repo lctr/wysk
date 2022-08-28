@@ -63,8 +63,8 @@ impl<'t> StmtParser<'t> {
             lexpat!(~[do]) => self.do_expr().map(RawStatement::Predicate),
             lexpat!(~[let]) => {
                 self.eat(Keyword::Let)?;
-                let mut bindings = vec![self.binding()?];
-                self.many_while(bump_comma, Self::binding)
+                let mut bindings = vec![self.local_def()?];
+                self.many_while(bump_comma, Self::local_def)
                     .map(|binds| bindings.extend(binds))?;
                 if self.bump_on(Keyword::In) {
                     Ok(RawStatement::Predicate(Expression::Let(

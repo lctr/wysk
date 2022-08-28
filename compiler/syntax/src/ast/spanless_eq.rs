@@ -16,7 +16,7 @@ use crate::{
     module::{Import, ImportSpec, Module},
     pattern::Pattern,
     record::{Field, Record},
-    stmt::{Alternative, Arm, Binding, Statement},
+    stmt::{Alternative, Arm, Binding, LocalDef, Statement},
     tipo::{
         Annotation, Con, Parameter, Predicate, Qualified, Quantified, Signature, SimpleType, Type,
         Var,
@@ -800,6 +800,20 @@ where
             ) => this_pat.spanless_eq(that_pat) && this_expr.spanless_eq(that_expr),
             (Statement::Predicate(this), Statement::Predicate(that)) => this.spanless_eq(that),
             (Statement::JustLet(these), Statement::JustLet(those)) => these.spanless_eq(those),
+            _ => false,
+        }
+    }
+}
+
+impl<Id, T> SpanlessEq for LocalDef<Id, T>
+where
+    Id: SpanlessEq,
+    T: SpanlessEq,
+{
+    fn spanless_eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (LocalDef::Binder(this), LocalDef::Binder(that)) => this.spanless_eq(that),
+            (LocalDef::Match(this), LocalDef::Match(that)) => this.spanless_eq(that),
             _ => false,
         }
     }

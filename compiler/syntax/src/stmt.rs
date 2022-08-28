@@ -23,7 +23,7 @@ pub struct Arm<Id, V> {
     pub args: Vec<Pattern<Id, V>>,
     pub cond: Option<Expression<Id, V>>,
     pub body: Expression<Id, V>,
-    pub wher: Vec<Binding<Id, V>>,
+    pub wher: Vec<LocalDef<Id, V>>,
 }
 
 pub type RawArm = Arm<SpannedIdent, SpannedIdent>;
@@ -31,7 +31,7 @@ pub type RawArm = Arm<SpannedIdent, SpannedIdent>;
 wy_common::struct_field_iters! {
     |Id, V| Arm<Id, V>
     | args => args_iter :: Pattern<Id, V>
-    | wher => wher_iter :: Binding<Id, V>
+    | wher => wher_iter :: LocalDef<Id, V>
 }
 
 impl<Id, V> Arm<Id, V> {
@@ -45,7 +45,7 @@ impl<Id, V> Arm<Id, V> {
             wher: vec![],
         }
     }
-    pub fn caf(body: Expression<Id, V>, wher: Vec<Binding<Id, V>>) -> Self {
+    pub fn caf(body: Expression<Id, V>, wher: Vec<LocalDef<Id, V>>) -> Self {
         Self {
             args: vec![],
             cond: None,
@@ -68,6 +68,39 @@ impl<Id, V> Arm<Id, V> {
         ids.extend(self.body.bound_vars());
         self.wher_iter().for_each(|b| ids.extend(b.bound_vars()));
         ids
+    }
+
+    pub fn idents(&self) -> Set<&Id>
+    where
+        Id: Eq + std::hash::Hash,
+    {
+        self.bound_vars()
+    }
+
+    pub fn binders(&self) -> Vec<&Id>
+    where
+        Id: PartialEq,
+    {
+        self.args_iter().flat_map(Pattern::binders).collect()
+    }
+
+    pub fn free_vars(&self) -> Set<&Id>
+    where
+        Id: Eq + std::hash::Hash,
+    {
+        self.body
+            .free_vars()
+            .union(&self.wher.iter().flat_map(LocalDef::free_vars).collect())
+            .cloned()
+            .collect::<Set<_>>()
+            .difference(
+                &self
+                    .args_iter()
+                    .flat_map(Pattern::binders)
+                    .collect::<Set<_>>(),
+            )
+            .cloned()
+            .collect()
     }
 }
 
@@ -100,14 +133,14 @@ pub struct Alternative<Id, V> {
     pub pat: Pattern<Id, V>,
     pub cond: Option<Expression<Id, V>>,
     pub body: Expression<Id, V>,
-    pub wher: Vec<Binding<Id, V>>,
+    pub wher: Vec<LocalDef<Id, V>>,
 }
 
 pub type RawAlternative = Alternative<SpannedIdent, SpannedIdent>;
 
 wy_common::struct_field_iters! {
     |Id, V| Alternative<Id, V>
-    | wher => wher_iter :: Binding<Id, V>
+    | wher => wher_iter :: LocalDef<Id, V>
 }
 
 impl<Id, V> Alternative<Id, V> {
@@ -116,7 +149,10 @@ impl<Id, V> Alternative<Id, V> {
     }
 
     pub fn where_binder_names(&self) -> impl Iterator<Item = &Id> + '_ {
-        self.wher_iter().map(|b| b.get_name())
+        self.wher_iter().filter_map(|b| match b {
+            LocalDef::Binder(binder) => Some(binder.get_name()),
+            LocalDef::Match(_) => None,
+        })
     }
 
     /// Returns a vector of references to all the newly bound identifiers
@@ -137,7 +173,7 @@ impl<Id, V> Alternative<Id, V> {
             .into_iter()
             .chain(self.cond.as_ref().into_iter().flat_map(Expression::idents))
             .chain(self.body.idents())
-            .chain(self.wher_iter().flat_map(Binding::idents))
+            .chain(self.wher_iter().flat_map(LocalDef::idents))
             .collect()
     }
 
@@ -149,9 +185,11 @@ impl<Id, V> Alternative<Id, V> {
         if let Some(cond) = &self.cond {
             vars.extend(cond.free_vars());
         }
-        self.wher_iter().for_each(|binding| {
-            vars.insert(binding.get_name());
-            vars.extend(binding.free_vars())
+        self.wher_iter().for_each(|localdef| {
+            if let LocalDef::Binder(b) = localdef {
+                vars.insert(b.get_name());
+            }
+            vars.extend(localdef.free_vars())
         });
         self.pat.idents().into_iter().for_each(|id| {
             vars.remove(id);
@@ -163,7 +201,7 @@ impl<Id, V> Alternative<Id, V> {
 /// ```wysk
 /// ~{
 ///       `name`
-///         |          `tipo`   
+///         |          `tipo`
 ///         v     vvvvvvvvvvvvvvvv
 /// }~  fn foo :: a -> b -> (a, b)
 ///     | x y = (x, y);
@@ -249,12 +287,12 @@ impl<Id, V> Binding<Id, V> {
             }
             m.args_iter().for_each(|pat| {
                 pat.idents().iter().for_each(|id| {
-                    fvs.remove(id);
+                    fvs.shift_remove(id);
                 })
             });
             vars.extend(fvs)
         });
-        vars.remove(&self.name);
+        vars.shift_remove(&self.name);
         vars
     }
 }
@@ -267,7 +305,7 @@ pub enum Statement<Id, V> {
     Predicate(Expression<Id, V>),
     // `let` without the `in`;
     // let (<ID> <PAT>* = <EXPR>)+
-    JustLet(Vec<Binding<Id, V>>),
+    JustLet(Vec<LocalDef<Id, V>>),
 }
 
 pub type RawStatement = Statement<SpannedIdent, SpannedIdent>;
@@ -282,7 +320,7 @@ impl<Id, V> Statement<Id, V> {
         match self {
             Statement::Generator(p, x) => p.idents().into_iter().chain(x.idents()).collect(),
             Statement::Predicate(x) => x.idents(),
-            Statement::JustLet(bs) => bs.into_iter().flat_map(Binding::idents).collect(),
+            Statement::JustLet(bs) => bs.into_iter().flat_map(LocalDef::idents).collect(),
         }
     }
 
@@ -299,12 +337,12 @@ impl<Id, V> Statement<Id, V> {
                 .map(|id| *id)
                 .collect(),
             Statement::Predicate(x) => x.free_vars(),
-            Statement::JustLet(bs) => bs.into_iter().flat_map(Binding::free_vars).collect(),
+            Statement::JustLet(bs) => bs.into_iter().flat_map(LocalDef::free_vars).collect(),
         }
     }
 
     /// Returns a set of references to identifiers bound *within* the statement.
-    ///               
+    ///
     /// | BINDING                 | BOUND    | FREE                 |
     /// |:------------------------|:---------|:---------------------|
     /// |`((x, y):z) <- foo a 1`  | x, y, z  | foo, a               |
@@ -312,7 +350,7 @@ impl<Id, V> Statement<Id, V> {
     /// |`..., b = 2`             | --       | --                   |
     /// |`..., c = a b`           | --       | a, b, c*             |
     /// |`..., d = f print 0`;    | --       | f, print             |
-    ///  
+    ///
     pub fn bound_vars(&self) -> Set<&Id>
     where
         Id: Eq + std::hash::Hash,
@@ -321,8 +359,64 @@ impl<Id, V> Statement<Id, V> {
             Statement::Generator(p, _) => p.idents(),
             Statement::Predicate(x) => x.bound_vars(),
             Statement::JustLet(bindings) => {
-                bindings.into_iter().flat_map(Binding::binders).collect()
+                bindings.into_iter().flat_map(LocalDef::binders).collect()
             }
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LocalDef<Id, V> {
+    Binder(Binding<Id, V>),
+    Match(Arm<Id, V>),
+}
+
+pub type RawLocalDef = LocalDef<SpannedIdent, SpannedIdent>;
+
+wy_common::variant_preds! {
+    |Id, V| LocalDef[Id, V]
+    | is_binder => Binder(_)
+    | is_match => Match(_)
+}
+
+impl<Id, V> LocalDef<Id, V> {
+    pub fn binders(&self) -> Vec<&Id>
+    where
+        Id: PartialEq,
+    {
+        match self {
+            LocalDef::Binder(b) => b.binders(),
+            LocalDef::Match(a) => a.binders(),
+        }
+    }
+
+    pub fn idents(&self) -> Set<&Id>
+    where
+        Id: Eq + std::hash::Hash,
+    {
+        match self {
+            LocalDef::Binder(b) => b.idents(),
+            LocalDef::Match(a) => a.idents(),
+        }
+    }
+
+    pub fn free_vars(&self) -> Set<&Id>
+    where
+        Id: Eq + std::hash::Hash,
+    {
+        match self {
+            LocalDef::Binder(b) => b.free_vars(),
+            LocalDef::Match(a) => a.free_vars(),
+        }
+    }
+
+    pub fn bound_vars(&self) -> Set<&Id>
+    where
+        Id: Eq + std::hash::Hash,
+    {
+        match self {
+            LocalDef::Binder(b) => b.bound_vars(),
+            LocalDef::Match(a) => a.bound_vars(),
         }
     }
 }
