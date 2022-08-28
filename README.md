@@ -35,32 +35,42 @@ I get tired of handrolling my own Rust :).
 ## [WIP] Examples
 
 ### Hello world
-
 The entry point to every program, the function `main` operates within `IO`. The
 actual return type of `main` is generally irrelevant, but _must_ be contained
 within the `IO` type.
 
-```haskell,rust
+```ml
 fn main :: IO ()
   = printLine "Hello world!"
 ```
 
 ### Factorial
-
 _Wysk_ does not have traditional loops; instead it relies on recursion to
 achieve the same effect. With tail-call optimization, this _generally_ allows
 for fearless recursion (assuming convergent tail recursion). This can be
 exploited along with `case`-like syntax at the function definition level,
 allowing for branches to be predicated upon from a function's top-most scope.
 
-```haskell,rust
+```ml
 fn factorial :: Int -> Int
   | n if n < 2 = 1
   | n = n * factorial (n - 1)
 ```
 
-## Some reading
+### Fibonacci
+Functions may be matched on with either `case` or `match` expressions, where
+`match` expressions correspond to `function` in *OCaml* or `\case` in *Haskell*,
+i.e., are sugar for `\x -> match x { ... }`. *Wysk* additionally supports
+(nested) *or*-patterns, allowing for pattern matching to be written as concisely as
+necessary without repeated code.
+```ml
+fn fibs :: Int -> Int
+  = match
+  | (0 | 1) -> 1
+  | n -> fibs (n - 1) + fibs (n - 2)
+```
 
+## Some reading
 The following may not necessarily be directly involved within the development of
 this compiler, but have proven nonetheless to be valuable sources of
 information.
