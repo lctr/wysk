@@ -1,0 +1,7 @@
+~~> The `Error` module defines code for built-in error handling
+~~| functions whose types are treated specially by the compiler. 
+module Error where
+
+~~> Stops execution and displays an error message
+fn error :: Str -> a
+    | s = Prim.error s
