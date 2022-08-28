@@ -82,7 +82,12 @@ impl ProjectBuilder {
             atlas.filepaths_iter().for_each(|fp| {
                 if let Ok(file) = source_map.add_from_filepath(fp.clone()) {
                     let file_id = file.id();
-                    if !submodules.contains(&file_id) {
+                    if !submodules.contains(&file_id)
+                        && !({
+                            let fp = file.src_path();
+                            fp.is_lib() || fp.is_main()
+                        })
+                    {
                         submodules.push(file_id)
                     }
                 }
@@ -195,6 +200,7 @@ pub fn prelude_project() -> Project {
 #[cfg(test)]
 mod test {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn test_prelude_project() {
@@ -208,6 +214,6 @@ mod test {
         let man_lib = (&manifest[0]).library.as_ref().unwrap();
         assert!(man_lib.submodules.is_some());
         let submodules = man_lib.submodules.as_ref().unwrap();
-        assert!(project.submodules.len() == submodules.len());
+        assert_eq!(project.submodules.len(), submodules.len());
     }
 }
