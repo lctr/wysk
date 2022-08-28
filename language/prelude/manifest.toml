@@ -8,14 +8,15 @@ keywords = ["wysk lang", "prelude"]
 
 [lib]
 # [HEURISTIC}: libs, modules, packages have uppercase-initial names
-name = "Prelude" 
+name = "Prelude"
 # [HEURISTIC]: however, file names are (generally identical) in naming but
-# contain *lowercase*-initial names. 
+# contain *lowercase*-initial names.
 submodules = [
-    "predicate", 
-    "numeric", 
-    "function", 
-    "container", 
+    "boolean",
+    "error",
+    "numeric",
+    "function",
+    "container",
     "list"
 ]
 
