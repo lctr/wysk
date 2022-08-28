@@ -61,6 +61,10 @@ impl CfgPath {
     pub fn path(&self) -> &Path {
         self.path.as_path()
     }
+
+    pub fn read_manifest(&self) -> Option<Manifest> {
+        Manifest::from_path(self.path())
+    }
 }
 
 impl AsRef<Path> for CfgPath {
@@ -407,6 +411,19 @@ impl std::ops::Index<FileId> for Atlas {
 impl<P: AsRef<Path>> Extend<P> for Atlas {
     fn extend<T: IntoIterator<Item = P>>(&mut self, iter: T) {
         self.add_paths(iter);
+    }
+}
+
+impl Extend<Atlas> for Atlas {
+    fn extend<T: IntoIterator<Item = Atlas>>(&mut self, iter: T) {
+        for Atlas {
+            filepaths,
+            cfgpaths,
+        } in iter
+        {
+            self.add_paths(filepaths);
+            self.add_paths(cfgpaths);
+        }
     }
 }
 
