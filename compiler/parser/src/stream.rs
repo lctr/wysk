@@ -43,6 +43,10 @@ impl<'t> Report for Parser<'t> {
             .unwrap_or_else(|| self.lexer.eof_token())
     }
 
+    fn current_token(&mut self) -> Token {
+        Parser::current_token(self).unwrap_or_else(|_| self.lexer.eof_token())
+    }
+
     fn next_coord_span(&mut self) -> CoordSpan {
         CoordSpan {
             coord: self.get_coord(),
@@ -238,6 +242,28 @@ impl<'t> Parser<'t> {
         }
         self.eat(end)?;
         Ok(nodes)
+    }
+
+    #[allow(unused)]
+    pub fn delimited_or_layout<F, X>(
+        &mut self,
+        curly_sep: Lexeme,
+        bump_if: impl Lexlike + Copy,
+        peek_if: impl Lexlike + Copy,
+        f: F,
+    ) -> Parsed<Vec<X>>
+    where
+        F: FnMut(&mut Self) -> Parsed<X>,
+    {
+        if self.peek_on(Lexeme::CurlyL) {
+            self.delimited([Lexeme::CurlyL, curly_sep, Lexeme::CurlyR], f)
+        } else {
+            let col = self.get_col();
+            self.many_while(
+                |p| (p.get_col() == col) && p.bump_or_peek_on(bump_if, peek_if),
+                f,
+            )
+        }
     }
 }
 
