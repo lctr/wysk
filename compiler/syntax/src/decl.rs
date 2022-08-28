@@ -9,6 +9,24 @@ use wy_span::{Span, Spanned};
 
 use crate::{attr::*, fixity::*, module::ImportSpec, stmt::*, tipo::*, SpannedIdent};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Vis {
+    Private,
+    Public,
+}
+
+impl Default for Vis {
+    fn default() -> Self {
+        Self::Private
+    }
+}
+
+wy_common::variant_preds! {
+    Vis
+    | is_private => Private
+    | is_public => Public
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FixityDecl<Id = SpannedIdent> {
     pub span: Span,
@@ -177,6 +195,7 @@ impl From<&[FixityDecl<wy_name::Ident>]> for FixityTable<wy_name::Ident> {
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DataDecl<Id = SpannedIdent, V = SpannedIdent> {
+    pub visi: Vis,
     pub span: Span,
     pub prag: Vec<Pragma<Id, V>>,
     pub tdef: SimpleType<Id, V>,
@@ -323,6 +342,7 @@ wy_common::newtype!(Arity | usize | (+= usize |rhs| rhs) );
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AliasDecl<Id = SpannedIdent, V = SpannedIdent> {
+    pub visi: Vis,
     pub span: Span,
     pub prag: Vec<Pragma<Id, V>>,
     pub ldef: SimpleType<Id, V>,
@@ -337,6 +357,7 @@ pub struct AliasDecl<Id = SpannedIdent, V = SpannedIdent> {
 /// units, however this does not provide a safeguard against inconsistencies!
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NewtypeDecl<Id = SpannedIdent, V = SpannedIdent> {
+    pub visi: Vis,
     pub span: Span,
     pub prag: Vec<Pragma<Id, V>>,
     pub tdef: SimpleType<Id, V>,
@@ -357,6 +378,7 @@ impl<Id, V> NewtypeDecl<Id, V> {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClassDecl<Id = SpannedIdent, V = SpannedIdent> {
+    pub visi: Vis,
     pub span: Span,
     pub prag: Vec<Pragma<Id, V>>,
     pub cdef: SimpleType<Id, V>,
@@ -423,6 +445,7 @@ impl<Id, V> InstDecl<Id, V> {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FnDecl<Id = SpannedIdent, V = SpannedIdent> {
+    pub visi: Vis,
     pub span: Span,
     pub prag: Vec<Pragma<Id, V>>,
     pub name: Id,
@@ -550,4 +573,42 @@ impl<Id, V> Declaration<Id, V> {
             Declaration::Newtype(n) => n.prag.extend(pragmas),
         }
     }
+
+    /// Returns the visibility of a declaration in a `Some` variant if it is
+    /// able to have one, otherwise returns `None`.
+    pub fn visibility(&self) -> Option<Vis> {
+        match self {
+            Declaration::Data(d) => Some(d.visi),
+            Declaration::Alias(d) => Some(d.visi),
+            Declaration::Class(d) => Some(d.visi),
+            Declaration::Function(d) => Some(d.visi),
+            Declaration::Newtype(d) => Some(d.visi),
+            Declaration::Import(_) | Declaration::Fixity(_) | Declaration::Instance(_) => None,
+        }
+    }
+}
+
+macro_rules! fwd_decl_wrapper {
+    (
+        $($decl_ty:ty => $variant:ident),+
+    ) => {
+        $(
+            impl<Id, V> From<$decl_ty> for Declaration<Id, V> {
+                fn from(decl: $decl_ty) -> Self {
+                    Self::$variant(decl)
+                }
+            }
+        )+
+    }
+}
+
+fwd_decl_wrapper! {
+    DataDecl<Id, V> => Data,
+    AliasDecl<Id, V> => Alias,
+    ClassDecl<Id, V> => Class,
+    FnDecl<Id, V> => Function,
+    NewtypeDecl<Id, V> => Newtype,
+    ImportSpec<Id> => Import,
+    FixityDecl<Id> => Fixity,
+    InstDecl<Id, V> => Instance
 }

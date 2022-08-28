@@ -8,6 +8,7 @@ use wy_syntax::decl::MethodBody;
 use wy_syntax::decl::MethodImpl;
 use wy_syntax::decl::Selector;
 use wy_syntax::decl::TypeArgs;
+use wy_syntax::decl::Vis;
 use wy_syntax::decl::WithClause;
 use wy_syntax::decl::{
     AliasDecl, ClassDecl, DataDecl, Declaration, FixityDecl, FnDecl, InstDecl, MethodDef,
@@ -23,20 +24,49 @@ type DeclParser<'t> = Parser<'t>;
 impl<'t> DeclParser<'t> {
     pub fn declaration(&mut self) -> Parsed<Declaration> {
         use Declaration as D;
+        let pos = self.get_pos();
+        let vis = self.visibility()?;
+
         match self.peek() {
-            lexpat!(~[import]) => self.import_spec().map(D::Import),
-            lexpat!(maybe[infixl][infixr][infix]) => self.fixity_decl().map(D::Fixity),
-            lexpat!(~[data]) => self.data_decl().map(D::Data),
-            lexpat!(~[fn]) => self.function_decl().map(D::Function),
-            lexpat!(~[type]) => self.alias_decl().map(D::Alias),
-            lexpat!(~[class]) => self.class_decl().map(D::Class),
-            lexpat!(~[impl]) => self.inst_decl().map(D::Instance),
-            lexpat!(~[newtype]) => self.newtype_decl().map(D::Newtype),
+            lexpat!(~[import]) => self.reject_decl_vis((vis, pos), Self::import_spec),
+            lexpat!(maybe[infixl][infixr][infix]) => {
+                self.reject_decl_vis((vis, pos), Self::fixity_decl)
+            }
+            lexpat!(~[data]) => self.data_decl(vis).map(D::Data),
+            lexpat!(~[fn]) => self.function_decl(vis).map(D::Function),
+            lexpat!(~[type]) => self.alias_decl(vis).map(D::Alias),
+            lexpat!(~[class]) => self.class_decl(vis).map(D::Class),
+            lexpat!(~[impl]) => self.reject_decl_vis((vis, pos), Self::inst_decl),
+            lexpat!(~[newtype]) => self.newtype_decl(vis).map(D::Newtype),
             Some(t) => Err({
                 let t = *t;
                 self.expected(LexKind::Keyword, t)
             }),
             _ => self.unexpected_eof().err(),
+        }
+    }
+
+    pub(crate) fn visibility(&mut self) -> Parsed<Vis> {
+        if self.bump_on(Keyword::Pub) {
+            Ok(Vis::Public)
+        } else {
+            Ok(Vis::Private)
+        }
+    }
+
+    fn reject_decl_vis<A, B, X>(
+        &mut self,
+        (vis, pos): (Vis, wy_span::BytePos),
+        mut f: impl FnMut(&mut Self) -> Parsed<X>,
+    ) -> Parsed<Declaration<A, B>>
+    where
+        Declaration<A, B>: From<X>,
+    {
+        if vis.is_public() {
+            let kw_token = self.current_token()?;
+            self.unsupported_vis_modifier(pos, kw_token).err()
+        } else {
+            f(self).map(Declaration::from)
         }
     }
 
@@ -56,7 +86,7 @@ impl<'t> DeclParser<'t> {
         })
     }
 
-    fn data_decl(&mut self) -> Parsed<DataDecl> {
+    fn data_decl(&mut self, visi: Vis) -> Parsed<DataDecl> {
         use Keyword::Data;
         use Lexeme::{Equal, Semi};
         let mut prag = self.attr_before()?;
@@ -76,6 +106,7 @@ impl<'t> DeclParser<'t> {
         let span = Span(start, end);
         prag.extend(self.attr_after()?);
         Ok(DataDecl {
+            visi,
             span,
             prag,
             tdef,
@@ -106,7 +137,7 @@ impl<'t> DeclParser<'t> {
         }
     }
 
-    fn function_decl(&mut self) -> Parsed<FnDecl> {
+    fn function_decl(&mut self, visi: Vis) -> Parsed<FnDecl> {
         use Keyword::Fn;
         use Lexeme::Pipe;
         let mut prag = self.attr_before()?;
@@ -122,6 +153,7 @@ impl<'t> DeclParser<'t> {
         let span = Span(start, self.get_pos());
         prag.extend(self.attr_after()?);
         Ok(FnDecl {
+            visi,
             span,
             prag,
             name,
@@ -130,7 +162,7 @@ impl<'t> DeclParser<'t> {
         })
     }
 
-    fn alias_decl(&mut self) -> Parsed<AliasDecl> {
+    fn alias_decl(&mut self, visi: Vis) -> Parsed<AliasDecl> {
         use Keyword::Type;
         use Lexeme::Equal;
         let mut prag = self.attr_before()?;
@@ -142,6 +174,7 @@ impl<'t> DeclParser<'t> {
         let span = Span(start, self.get_pos());
         prag.extend(self.attr_after()?);
         Ok(AliasDecl {
+            visi,
             span,
             prag,
             ldef,
@@ -149,7 +182,7 @@ impl<'t> DeclParser<'t> {
         })
     }
 
-    fn class_decl(&mut self) -> Parsed<ClassDecl> {
+    fn class_decl(&mut self, visi: Vis) -> Parsed<ClassDecl> {
         let mut prag = self.attr_before()?;
         let start = self.get_pos();
         self.eat(Keyword::Class)?;
@@ -165,6 +198,7 @@ impl<'t> DeclParser<'t> {
         self.eat(Lexeme::CurlyR)?;
         let span = Span(start, self.get_pos());
         Ok(ClassDecl {
+            visi,
             span,
             prag,
             cdef,
@@ -269,7 +303,7 @@ impl<'t> DeclParser<'t> {
         })
     }
 
-    fn newtype_decl(&mut self) -> Parsed<NewtypeDecl<SpannedIdent, SpannedIdent>> {
+    fn newtype_decl(&mut self, visi: Vis) -> Parsed<NewtypeDecl<SpannedIdent, SpannedIdent>> {
         use Keyword::Newtype;
         use Lexeme::{CurlyL, CurlyR, Equal};
         let mut prag = self.attr_before()?;
@@ -298,6 +332,7 @@ impl<'t> DeclParser<'t> {
         let span = Span(start, end);
         prag.extend(self.attr_after()?);
         Ok(NewtypeDecl {
+            visi,
             span,
             prag,
             tdef,
@@ -370,7 +405,7 @@ mod test {
     fn inspect_data_decl_variant_spans() {
         let src =
             "data Foo a b = Foo a b | Bar a (Foo a b) | Baz { foo_a :: a, foo_b :: b } with Eq";
-        let data_decl = Parser::from_str(src).data_decl().unwrap();
+        let data_decl = Parser::from_str(src).data_decl(Default::default()).unwrap();
         println!("src[data_decl.span] = `{}`", &src[data_decl.span.range()]);
         data_decl
             .variants_iter()
@@ -394,7 +429,7 @@ mod test {
             [span_1, span_2, span_3]
         };
         let decl = Parser::from_str(src)
-            .data_decl()
+            .data_decl(Default::default())
             .map(|ty| {
                 ty.map_fst(&mut Func::New(Spanned::take_item))
                     .map_snd(&mut Func::New(Spanned::take_item))
@@ -406,6 +441,7 @@ mod test {
             Symbol::intern_many_with(["Foo", "Bar", "Baz", "Eq"], Ident::Upper);
         let expected = {
             DataDecl {
+                visi: Default::default(),
                 span: Span::of_str(src),
                 prag: vec![],
                 tdef: SimpleType(foo, vec![a, b]),
@@ -552,7 +588,7 @@ impl |Eq a| Eq [a] {
     fn test_newtype_decl() {
         let src = r#"newtype Parser a = Parser { parse :: String -> (a, String) }"#;
         let parsed = Parser::from_str(src)
-            .newtype_decl()
+            .newtype_decl(Default::default())
             .map(|ty| {
                 ty.map_fst(&mut Func::New(Spanned::take_item))
                     .map_snd(&mut Func::New(Spanned::take_item))
@@ -561,6 +597,7 @@ impl |Eq a| Eq [a] {
         let [parser_ty, a, parse, string_ty] =
             Symbol::intern_many(["Parser", "a", "parse", "String"]);
         let expected = NewtypeDecl {
+            visi: Default::default(),
             span: Span::of_str(src),
             prag: vec![],
             tdef: SimpleType(Ident::Upper(parser_ty), vec![Ident::Lower(a)]),
@@ -584,7 +621,11 @@ impl |Eq a| Eq [a] {
     fn test_caf() {
         let tests = ["fn womp :: |Num a| a =   3", "fn womp :: |Num a| a | = 3"]
             .into_iter()
-            .map(|s| Parser::from_str(s).function_decl().unwrap())
+            .map(|s| {
+                Parser::from_str(s)
+                    .function_decl(Default::default())
+                    .unwrap()
+            })
             .collect::<Vec<_>>();
         diff_assert_eq!(tests[0], tests[1]);
     }
@@ -599,7 +640,7 @@ impl |Eq a| Eq [a] {
         println!("{:?}", it.ty_atom());
         let src = "data NonEmpty a = NonEmpty a [a]";
         let mut parser = Parser::from_str(src);
-        let expr = parser.data_decl();
+        let expr = parser.data_decl(Default::default());
         match expr {
             Ok(decl) => println!("{:?}", decl),
             Err(e) => println!("{}", e),
@@ -625,13 +666,14 @@ fn some_record_function
         let [plus] = Symbol::intern_many_with(["+"], Ident::Infix);
         let mkint = Literal::simple_int;
         let actual = Parser::from_str(src)
-            .function_decl()
+            .function_decl(Default::default())
             .map(|ty| {
                 ty.map_fst(&mut Func::New(Spanned::take_item))
                     .map_snd(&mut Func::New(Spanned::take_item))
             })
             .unwrap();
         let expected = FnDecl {
+            visi: Default::default(),
             span: Span::of_str(src),
             prag: vec![],
             name: some_record_function,
@@ -730,7 +772,7 @@ class |Semigroup a| Monoid a {
     }
 ";
         let mut parser = Parser::from_str(src);
-        println!("{:?}", parser.class_decl());
+        println!("{:?}", parser.class_decl(Default::default()));
         println!("{:?}", &parser)
     }
 }

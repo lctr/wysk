@@ -201,6 +201,32 @@ impl<Id, T, P> Module<Id, T, P> {
             pragmas,
         }
     }
+
+    pub fn imported_modules<'id>(&'id self) -> impl Iterator<Item = Chain<&'id Id>> + '_ {
+        self.imports_iter().map(|spec| (&spec.name).into())
+    }
+
+    pub fn public_fns(&self) -> impl Iterator<Item = &FnDecl<Spanned<Id>, Spanned<T>>> + '_ {
+        self.fundefs_iter().filter(|decl| decl.visi.is_public())
+    }
+
+    pub fn public_aliases(&self) -> impl Iterator<Item = &AliasDecl<Spanned<Id>, Spanned<T>>> + '_ {
+        self.aliases_iter().filter(|decl| decl.visi.is_public())
+    }
+
+    pub fn public_datatys(&self) -> impl Iterator<Item = &DataDecl<Spanned<Id>, Spanned<T>>> + '_ {
+        self.datatys_iter().filter(|decl| decl.visi.is_public())
+    }
+
+    pub fn public_newtypes(
+        &self,
+    ) -> impl Iterator<Item = &NewtypeDecl<Spanned<Id>, Spanned<T>>> + '_ {
+        self.newtyps_iter().filter(|decl| decl.visi.is_public())
+    }
+
+    pub fn public_classes(&self) -> impl Iterator<Item = &ClassDecl<Spanned<Id>, Spanned<T>>> + '_ {
+        self.classes_iter().filter(|decl| decl.visi.is_public())
+    }
 }
 
 /// Same general structure as a `Module`, but without the identifier
