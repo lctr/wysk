@@ -28,12 +28,13 @@ use SyntaxError::*;
 
 pub trait Report: WithLoc {
     fn next_token(&mut self) -> Token;
+    fn current_token(&mut self) -> Token;
     fn next_coord_span(&mut self) -> CoordSpan;
     fn current_coord(&self) -> Coord {
         self.get_coord()
     }
     fn unexpected_eof(&mut self) -> ParseError {
-        let token = self.next_token();
+        let token = self.current_token();
         let coord = self.current_coord();
         ParseError::new(true, coord, token.span, UnexpectedEof, [])
     }
@@ -53,7 +54,7 @@ pub trait Report: WithLoc {
         )
     }
     fn expected_token(&mut self, expected: impl Into<Evidence>) -> ParseError {
-        let found = self.next_token();
+        let found = self.current_token();
         let coord = self.current_coord();
         ParseError::new(
             true,
@@ -71,7 +72,7 @@ pub trait Report: WithLoc {
             token.span,
             Custom,
             [
-                ("".into(), Evidence::Tok(token)),
+                ("invalid ".into(), Evidence::Tok(token)),
                 (message, Evidence::Empty),
             ],
         )
@@ -107,6 +108,22 @@ pub trait Expects: TakeEvidence {
             [("", lexkind.into()), ("", found.into())],
         )
     }
+    fn unsupported_vis_modifier(
+        &mut self,
+        modifier_pos: wy_span::BytePos,
+        kw_token: Token,
+    ) -> ParseError {
+        let coord = self.get_coord();
+        let span = Span(modifier_pos, kw_token.span.end());
+        ParseError::new(
+            true,
+            coord,
+            span,
+            UnsupportedVisibilityModifier,
+            [(("", kw_token.into()))],
+        )
+    }
+
     fn invalid_fn_ident(&mut self, token: Token) -> ParseError {
         let coord = self.get_coord();
         ParseError::new(
@@ -118,9 +135,30 @@ pub trait Expects: TakeEvidence {
         )
     }
 
+    fn invalid_local_def_start(&mut self, token: Token) -> ParseError {
+        let coord = self.get_coord();
+        ParseError::new(
+            true,
+            coord,
+            token.span,
+            InvalidLocalDefStart,
+            [("", token.into())],
+        )
+    }
+
     fn invalid_type_start(&mut self, token: Token) -> ParseError {
         let tok = Evidence::Tok(token);
         self.report_error(ExpectedTypeStart, token, [("", tok)])
+    }
+
+    fn invalid_expr_start(&mut self, token: Token) -> ParseError {
+        ParseError::new(
+            true,
+            self.get_coord(),
+            token.span,
+            ExpectedExprStart,
+            [("", token.into())],
+        )
     }
 
     fn unbalanced_delim(&mut self, delim: Lexeme, found: Token) -> ParseError {
@@ -219,9 +257,9 @@ pub enum SyntaxError {
     // bracket, e.g., foo:: [a, b] -> c
     InvalidListTypeComma,
 
-    // invalid binding identifier for bindings introduced in
-    // let-expressions or where-declarations
-    InvalidLocalBindingName,
+    // invalid beginning of local def in let-expressions or where-declarations,
+    // expected function binding name or pattern
+    InvalidLocalDefStart,
     InvalidModuleName,
     InvalidNegatedPattern,
     InvalidPattern,
@@ -309,6 +347,7 @@ pub enum SyntaxError {
     // a -> forall ...
     UniversalQuantifierWithinType,
     UnknownLexeme,
+    UnsupportedVisibilityModifier,
     UnterminatedPragma,
     // in variants/selectors:
     //  Foo { name }  <- invalid/misssing separator `::`
@@ -336,7 +375,7 @@ impl SyntaxError {
             ExpectedAsPatRhs => (2, &["expected a pattern for the `as` pattern right-hand side, but ", " does not begin a valid pattern"]),
             ExpectedClassName => (2, &["expected a class name, but found ", " which is not an uppercase-initial identifier"]),
             ExpectedDeclKeyword => (2, &["the token ", " does not begin a keyword: expected either `type`, `class`, `impl`, `fn`, `data`, or `newtype`"]),
-            ExpectedExprStart => (2, &["the token ", " does not begin an expression; expected an uppercase identifier, lowercase identifier, literal, `(`, `[`, `\\`, or one of the keywords `let`, `if`, `case`, or `do`"]),
+            ExpectedExprStart => (2, &["the token ", " does not begin an expression; expected an uppercase identifier, lowercase identifier, literal, `(`, `[`, `\\`, or one of the keywords `let`, `if`, `case`, `match`, or `do`"]),
             ExpectedFixityAssoc => (1, &["expected a valid fixity associativity value, but found "]),
             ExpectedFixityPrec => (1, &["expected a valid fixity precedence value between 0 and 10, but found "]),
             ExpectedListTailNotCompr => (1, &["unexpected vertical pipe `|` found in list"]),
@@ -357,7 +396,7 @@ impl SyntaxError {
             InvalidImportModuleAlias => (2, &["expected a single identifier beginning with an uppercase letter, but found ", " which is not a valid alias for an imported module"]),
             InvalidListTyConArity =>(1, &["the list type constructor `[]` only accepts up to one type argument"]),
             InvalidListTypeComma => (1, &["unexpected comma within list type"]),
-            InvalidLocalBindingName => (2, &["the token ", " does not form a valid identifier for a local (let/where) binding"]),
+            InvalidLocalDefStart => (2, &["the token ", " is not a valid binder name or pattern for left-hand side of local (let/where) binding"]),
             InvalidModuleName => (2, &["the token ", " is not a valid module name; module names must begin with a capital ascii character"]),
             InvalidNegatedPattern => (2, &["found unexpected `-` in pattern beginning with ", " without surrounding parentheses; only numeric literals and comma delimited patterns may be negated without being wrapped in parentheses"]),
             InvalidPattern => (2, &["expected either an uppercase identifier, lowercase identifier, literal, `_`, `(` or `[`, but found ", ", which does not begin a valid pattern"]),
@@ -402,6 +441,8 @@ impl SyntaxError {
             UnterminatedPragma => (1, &["pragma not terminated with `]`"]),
             UnterminatedRecordSelector => (2, &["expected `}` for record selector, but found "]),
             WithClauseNameInDerivePragma => (2, &["the identifier ", " has already been included in a `derive` pragma"]),
+            UnsupportedVisibilityModifier => (2, &["unexpected visibility modifier `pub` before ", " declaration; only type aliases, functions, class, data and newtype declarations may have their visibility modified"]),
+
         }
     }
 }
