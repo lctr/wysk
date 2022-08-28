@@ -177,7 +177,7 @@ impl<Id> Fixities<Id> {
     where
         Id: Clone,
     {
-        let base = Chain::new(prefix, [].into());
+        let base = Chain::new(prefix, []);
         self.into_iter()
             .map(|(id, fixity)| (base.with_suffix(id), fixity))
             .collect()
