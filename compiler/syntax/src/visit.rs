@@ -6,7 +6,7 @@ use crate::{
     expr::{Expression, Range, Section},
     pattern::Pattern,
     record::{Field, Record},
-    stmt::{Alternative, Arm, Binding, Statement},
+    stmt::{Alternative, Arm, Binding, LocalDef, Statement},
     tipo::{
         Annotation, Con, Parameter, Predicate, Qualified, Quantified, Signature, SimpleType, Type,
     },
@@ -77,7 +77,7 @@ pub trait Visit<Id, T = Id, E = VisitError> {
             }
             Expression::Let(binds, expr) => binds
                 .into_iter()
-                .fold(Ok(()), |a, c| a.and(self.visit_binding(c)))
+                .fold(Ok(()), |a, c| a.and(self.visit_local_def(c)))
                 .and(self.visit_expr(expr.as_ref())),
             Expression::App(f, arg) => {
                 self.visit_expr(f.as_ref())?;
@@ -94,6 +94,9 @@ pub trait Visit<Id, T = Id, E = VisitError> {
                 .fold(self.visit_expr(scrut.as_ref()), |a, c| {
                     a.and(self.visit_alt(c))
                 }),
+            Expression::Match(alts) => alts
+                .into_iter()
+                .fold(Ok(()), |a, c| a.and(self.visit_alt(c))),
             Expression::Cast(e, ty) => self.visit_expr(e.as_ref()).and(self.visit_ty(ty)),
             Expression::Do(stmts, ret) => stmts
                 .into_iter()
@@ -154,6 +157,13 @@ pub trait Visit<Id, T = Id, E = VisitError> {
         }
     }
 
+    fn visit_local_def(&mut self, local_def: &LocalDef<Id, T>) -> Result<(), E> {
+        match local_def {
+            LocalDef::Binder(b) => self.visit_binding(b),
+            LocalDef::Match(a) => self.visit_arm(a),
+        }
+    }
+
     fn visit_binding(&mut self, binding: &Binding<Id, T>) -> Result<(), E> {
         let Binding { name, tsig, arms } = binding;
         self.visit_ident(name)?;
@@ -177,7 +187,7 @@ pub trait Visit<Id, T = Id, E = VisitError> {
             wher,
         } = arm;
         wher.into_iter()
-            .fold(Ok(()), |a, c| a.and(self.visit_binding(c)))?;
+            .fold(Ok(()), |a, c| a.and(self.visit_local_def(c)))?;
         args.into_iter()
             .fold(Ok(()), |a, c| a.and(self.visit_pat(c)))?;
         if let Some(cond) = cond {
@@ -192,7 +202,7 @@ pub trait Visit<Id, T = Id, E = VisitError> {
             Statement::Predicate(expr) => self.visit_expr(expr),
             Statement::JustLet(binds) => binds
                 .into_iter()
-                .fold(Ok(()), |a, c| a.and(self.visit_binding(c))),
+                .fold(Ok(()), |a, c| a.and(self.visit_local_def(c))),
         }
     }
 
@@ -204,7 +214,7 @@ pub trait Visit<Id, T = Id, E = VisitError> {
             wher,
         } = alt;
         wher.into_iter()
-            .fold(Ok(()), |a, c| a.and(self.visit_binding(c)))?;
+            .fold(Ok(()), |a, c| a.and(self.visit_local_def(c)))?;
         self.visit_pat(pat)?;
         if let Some(cond) = cond {
             self.visit_expr(cond)?;
@@ -350,7 +360,7 @@ pub trait VisitMut<Id, T = Id, E = VisitError> {
                 .and(self.visit_expr_mut(expr.as_mut())),
             Expression::Let(binds, expr) => binds
                 .into_iter()
-                .fold(Ok(()), |a, c| a.and(self.visit_binding_mut(c)))
+                .fold(Ok(()), |a, c| a.and(self.visit_local_def_mut(c)))
                 .and(self.visit_expr_mut(expr.as_mut())),
             Expression::App(f, arg) => {
                 self.visit_expr_mut(f.as_mut())?;
@@ -367,6 +377,9 @@ pub trait VisitMut<Id, T = Id, E = VisitError> {
                 .fold(self.visit_expr_mut(scrut.as_mut()), |a, c| {
                     a.and(self.visit_alt_mut(c))
                 }),
+            Expression::Match(alts) => alts
+                .into_iter()
+                .fold(Ok(()), |a, c| a.and(self.visit_alt_mut(c))),
             Expression::Cast(e, ty) => self.visit_expr_mut(e.as_mut()).and(self.visit_ty_mut(ty)),
             Expression::Do(stmts, ret) => stmts
                 .into_iter()
@@ -427,6 +440,13 @@ pub trait VisitMut<Id, T = Id, E = VisitError> {
         }
     }
 
+    fn visit_local_def_mut(&mut self, local_def: &mut LocalDef<Id, T>) -> Result<(), E> {
+        match local_def {
+            LocalDef::Binder(b) => self.visit_binding_mut(b),
+            LocalDef::Match(a) => self.visit_arm_mut(a),
+        }
+    }
+
     fn visit_binding_mut(&mut self, binding: &mut Binding<Id, T>) -> Result<(), E> {
         let Binding { name, tsig, arms } = binding;
         self.visit_ident_mut(name)?;
@@ -450,7 +470,7 @@ pub trait VisitMut<Id, T = Id, E = VisitError> {
             wher,
         } = arm;
         wher.into_iter()
-            .fold(Ok(()), |a, c| a.and(self.visit_binding_mut(c)))?;
+            .fold(Ok(()), |a, c| a.and(self.visit_local_def_mut(c)))?;
         args.into_iter()
             .fold(Ok(()), |a, c| a.and(self.visit_pat_mut(c)))?;
         if let Some(cond) = cond {
@@ -467,7 +487,7 @@ pub trait VisitMut<Id, T = Id, E = VisitError> {
             Statement::Predicate(expr) => self.visit_expr_mut(expr),
             Statement::JustLet(binds) => binds
                 .into_iter()
-                .fold(Ok(()), |a, c| a.and(self.visit_binding_mut(c))),
+                .fold(Ok(()), |a, c| a.and(self.visit_local_def_mut(c))),
         }
     }
 
@@ -479,7 +499,7 @@ pub trait VisitMut<Id, T = Id, E = VisitError> {
             wher,
         } = alt;
         wher.into_iter()
-            .fold(Ok(()), |a, c| a.and(self.visit_binding_mut(c)))?;
+            .fold(Ok(()), |a, c| a.and(self.visit_local_def_mut(c)))?;
         self.visit_pat_mut(pat)?;
         if let Some(cond) = cond {
             self.visit_expr_mut(cond)?;
@@ -655,7 +675,7 @@ where
             }
             Expression::Let(binds, expr) => binds
                 .into_iter()
-                .fold(Ok(()), |a, c| a.and(self.visit_binding(c)))
+                .fold(Ok(()), |a, c| a.and(self.visit_local_def(c)))
                 .and(self.visit_expr(expr.as_ref())),
             Expression::App(f, arg) => {
                 self.visit_expr(f.as_ref())?;
@@ -672,6 +692,9 @@ where
                 .fold(self.visit_expr(scrut.as_ref()), |a, c| {
                     a.and(self.visit_alt(c))
                 }),
+            Expression::Match(alts) => alts
+                .into_iter()
+                .fold(Ok(()), |a, c| a.and(self.visit_alt(c))),
             Expression::Cast(e, ty) => self.visit_expr(e.as_ref()).and(self.visit_ty(ty)),
             Expression::Do(stmts, ret) => stmts
                 .into_iter()
@@ -759,7 +782,7 @@ where
             wher,
         } = arm;
         wher.into_iter()
-            .fold(Ok(()), |a, c| a.and(self.visit_binding(c)))?;
+            .fold(Ok(()), |a, c| a.and(self.visit_local_def(c)))?;
         args.into_iter()
             .fold(Ok(()), |a, c| a.and(self.visit_pat(c)))?;
         if let Some(cond) = cond {
@@ -774,7 +797,7 @@ where
             Statement::Predicate(expr) => self.visit_expr(expr),
             Statement::JustLet(binds) => binds
                 .into_iter()
-                .fold(Ok(()), |a, c| a.and(self.visit_binding(c))),
+                .fold(Ok(()), |a, c| a.and(self.visit_local_def(c))),
         }
     }
 
@@ -786,7 +809,7 @@ where
             wher,
         } = alt;
         wher.into_iter()
-            .fold(Ok(()), |a, c| a.and(self.visit_binding(c)))?;
+            .fold(Ok(()), |a, c| a.and(self.visit_local_def(c)))?;
         self.visit_pat(pat)?;
         if let Some(cond) = cond {
             self.visit_expr(cond)?;
