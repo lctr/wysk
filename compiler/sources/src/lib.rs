@@ -1,7 +1,7 @@
 //! This library deals with source files and exposes an API used to facilitate
 //! bookkeeping of file-related sources.
 
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use files::{File, SourceMap};
 use manifest::Manifest;
@@ -14,43 +14,51 @@ pub mod paths;
 pub struct ProjectBuilder {
     root_dir: Option<Directory>,
     atlas: Atlas,
-    manifest: Option<Manifest>,
+    manifests: Vec<Manifest>,
     submodules: Vec<FileId>,
 }
 
 impl ProjectBuilder {
     pub fn new(root_dir: Directory) -> Self {
         let (atlas, _) = Atlas::walk_dir(&root_dir);
-        let manifest = None;
+        let manifests = vec![];
         let submodules = vec![];
         ProjectBuilder {
             root_dir: Some(root_dir),
             atlas,
-            manifest,
+            manifests,
             submodules,
         }
     }
-    pub fn read_manifest(mut self) -> Self {
+    pub fn read_manifests(mut self) -> Self {
         if let Some(root_dir) = self.root_dir.take() {
-            self.manifest = root_dir.read_manifest();
+            if let Some(manifest) = root_dir.read_manifest() {
+                if !self.manifests.contains(&manifest) {
+                    self.manifests.push(manifest)
+                }
+            }
+            self.atlas.cfgpaths().into_iter().for_each(|p| {
+                if let Some(manifest) = p.read_manifest() {
+                    if !self.manifests.contains(&manifest) {
+                        self.manifests.push(manifest)
+                    }
+                }
+            });
             self.root_dir = Some(root_dir);
         }
         self
     }
 
     pub fn store_manifest_submodules(mut self) -> Self {
-        if let Some(manifest) = self.manifest.take() {
-            manifest
-                .workspaces()
+        self.manifests.iter().clone().for_each(|m| {
+            m.workspaces()
                 .flat_map(|p| self.atlas.add_filepath(p))
-                .for_each(|f| {
-                    if self.submodules.contains(&f) {
-                        self.submodules.push(f)
+                .for_each(|id| {
+                    if self.submodules.contains(&id) {
+                        self.submodules.push(id);
                     }
-                });
-
-            self.manifest = Some(manifest);
-        }
+                })
+        });
         self
     }
 
@@ -66,20 +74,22 @@ impl ProjectBuilder {
         let ProjectBuilder {
             root_dir,
             atlas,
-            manifest,
-            submodules: _,
+            manifests,
+            mut submodules,
         } = self;
         root_dir.map(|root_dir| {
             let mut source_map = SourceMap::new();
-            let mut submodules = vec![];
             atlas.filepaths_iter().for_each(|fp| {
                 if let Ok(file) = source_map.add_from_filepath(fp.clone()) {
-                    submodules.push(file.src_path().id())
+                    let file_id = file.id();
+                    if !submodules.contains(&file_id) {
+                        submodules.push(file_id)
+                    }
                 }
             });
             Project {
                 atlas,
-                manifest,
+                manifests,
                 source_map,
                 root_dir,
                 submodules,
@@ -91,7 +101,7 @@ impl ProjectBuilder {
 #[derive(Debug)]
 pub struct Project {
     atlas: Atlas,
-    manifest: Option<Manifest>,
+    manifests: Vec<Manifest>,
     source_map: SourceMap,
     root_dir: Directory,
     submodules: Vec<FileId>,
@@ -103,11 +113,12 @@ impl Project {
     /// `workspaces` field of the manifest file `manifest.toml`.
     pub fn new_from_dir(dir: Directory) -> Option<Project> {
         ProjectBuilder::new(dir)
-            .read_manifest()
+            .read_manifests()
             .store_manifest_submodules()
             .walk_root_dir()
             .build_project()
     }
+
     pub fn root_dir(&self) -> &Directory {
         &self.root_dir
     }
@@ -115,32 +126,58 @@ impl Project {
     pub fn atlas(&self) -> &Atlas {
         &self.atlas
     }
+
     pub fn atlas_mut(&mut self) -> &mut Atlas {
         &mut self.atlas
     }
-    pub fn manifest(&self) -> Option<&Manifest> {
-        self.manifest.as_ref()
+
+    pub fn manifests(&self) -> &[Manifest] {
+        self.manifests.as_slice()
     }
-    pub fn manifest_mut(&mut self) -> Option<&mut Manifest> {
-        self.manifest.as_mut()
+
+    pub fn manifests_mut(&mut self) -> &mut [Manifest] {
+        self.manifests.as_mut_slice()
     }
+
     pub fn filepaths(&self) -> std::slice::Iter<'_, FilePath> {
         self.atlas.filepaths_iter()
     }
+
     pub fn source_map(&self) -> &SourceMap {
         &self.source_map
     }
+
     pub fn source_map_mut(&mut self) -> &mut SourceMap {
         &mut self.source_map
     }
+
     pub fn stored_files(&self) -> std::slice::Iter<'_, std::sync::Arc<File>> {
         self.source_map.iter_files()
     }
+
     pub fn file_count(&self) -> usize {
         self.source_map.file_count()
     }
+
     pub fn submodule_ids(&self) -> &[FileId] {
         self.submodules.as_slice()
+    }
+
+    pub fn get_file_id_for_stored(&self, p: impl AsRef<Path>) -> Option<FileId> {
+        let path = p.as_ref();
+        self.stored_files().find_map(|file| {
+            if file.src_path().path() == path {
+                Some(file.id())
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn get_stored_file_by_path(&self, p: impl AsRef<Path>) -> Option<&Arc<File>> {
+        let path = p.as_ref();
+        self.stored_files()
+            .find(|file| file.src_path().path() == path)
     }
 }
 
@@ -160,9 +197,17 @@ mod test {
     use super::*;
 
     #[test]
-    fn inspect_prelude_project() {
+    fn test_prelude_project() {
         let dir = Directory::new(paths::PRELUDE_PATH);
         let project = new_project(dir);
-        println!("{:#?}", &project)
+        assert!(project.is_some());
+        let project = project.unwrap();
+        assert!(!project.manifests.is_empty());
+        let manifest = &project.manifests;
+        assert!(&manifest[0].library.is_some());
+        let man_lib = (&manifest[0]).library.as_ref().unwrap();
+        assert!(man_lib.submodules.is_some());
+        let submodules = man_lib.submodules.as_ref().unwrap();
+        assert!(project.submodules.len() == submodules.len());
     }
 }
