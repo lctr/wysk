@@ -1,20 +1,20 @@
-module Numeric where 
+module Numeric where
 
-import Predicate
+import Boolean
 import Function
 
-data Byte = Byte U'8 
+data Byte = Byte U'8
 data Int = Int I'32 with Eq
-data Float = Float F'32 
+data Float = Float F'32
 data Double = Double F'64
 
 data Nat = Zero | Succ Nat
 
-impl Eq Nat where {
-    (==) 
-        | Zero Zero = True 
-        | Zero _ = False 
-        | _ Zero = False 
+impl Eq Nat {
+    (==)
+        | Zero Zero = True
+        | Zero _ = False
+        | _ Zero = False
         | (Succ n) (Succ m) = n == m
 }
 
@@ -40,83 +40,51 @@ impl |Eq a| Eq [a] {
 }
 
 class Num a {
-   abs :: a -> a;
-   negate :: a -> a;
-   signum :: a -> a;
-   fromInt :: Int -> a;
-   intoInt :: a -> Int;
-   
+   fn abs :: a -> a;
+   fn negate :: a -> a;
+   fn signum :: a -> a;
+   fn fromInt :: Int -> a;
+   fn intoInt :: a -> Int;
+
    ~~> TODO: bigints
-   fromInteger :: Integer -> a;
-   integerFrom :: a -> Integer;
+   fn fromInteger :: Integer -> a;
+   fn integerFrom :: a -> Integer;
 }
 
-class Enum a {
-   succ :: a -> a;
-   pred :: a -> a;
-   intoEnum :: Int -> a;
-   fromEnum :: a -> Int;
-   enumFrom :: a -> [a];
-   ~~ 
-   enumFromThen :: a -> a -> [a];
-   enumFromTo :: a -> a -> [a];
-   enumFromThenTo :: a -> a -> a -> [a];
-}
-
-impl Enum Nat {
-    succ = Succ;
-    pred
-        | Zero = Zero
-        | (Succ n) = n;
-    intoEnum 0 = Zero | n = Succ (intoEnum (abs n - 1));
-    fromEnum Zero = 0 | (Succ n) = 1 + fromEnum n;
-    enumFrom n = n : enumFrom (succ n)
-}
-
-impl Enum Int {
-   succ n = n + 1;
-   pred n = if n == 0 then 0 else n - 1;
-   intoEnum = identity;
-   fromEnum = identity;
-   enumFrom n = [n..];
-   enumFromThen a b = todo;
-   enumFromTo = todo;
-   enumFromThenTo = todo;
-}
 
 infixl 6 + -
 ~~> Addition
-class |Num a| Add a { 
-   (+) :: a -> a -> a 
+class |Num a| Add a {
+   fn (+) :: a -> a -> a
 }
 
 ~~> Subtraction
-class |Num a| Sub a { 
-   (-) :: a -> a -> a 
+class |Num a| Sub a {
+   fn (-) :: a -> a -> a
 }
 
 infixl 7 * /
 ~~> Multiplication
-class |Num a| Mul a { 
-   (*) :: a -> a -> a 
+class |Num a| Mul a {
+   fn (*) :: a -> a -> a
 }
 
-class |Num a| Div a { 
-   (/) :: a -> a -> a 
+class |Num a| Div a {
+   fn (/) :: a -> a -> a
 }
 
 class |Num a, Ord a| Real a {
-   intoRational :: a -> Rational
+   fn intoRational :: a -> Rational
 }
 
 class |Real a, Enum a| Integral a {
-   quotient :: a -> a -> a;
-   rem :: a -> a -> a;
-   div :: a -> a -> a;
-   mod :: a -> a -> a;
-   quotRem :: a -> a -> (a, a);
-   divMod :: a -> a -> (a, a);
-   intoInteger :: a -> Integer;
+   fn quotient :: a -> a -> a;
+   fn rem :: a -> a -> a;
+   fn div :: a -> a -> a;
+   fn mod :: a -> a -> a;
+   fn quotRem :: a -> a -> (a, a);
+   fn divMod :: a -> a -> (a, a);
+   fn intoInteger :: a -> Integer;
 }
 
 impl Add Int { (+) = prim'AddInt }
@@ -128,9 +96,47 @@ impl Num Int {
     fromInt = identity;
     intoInt = identity;
     abs n = if n > 0 then n else -n;
-    signum 
-        | 0 = 0 
-        | n if n > 0 = 1 
+    signum
+        | 0 = 0
+        | n if n > 0 = 1
         | _ = 1;
+}
+
+class Enum a {
+   fn succ :: a -> a;
+   fn pred :: a -> a;
+   fn intoEnum :: Int -> a;
+   fn fromEnum :: a -> Int;
+   fn enumFrom :: a -> [a];
+   ~~
+   fn enumFromThen :: a -> a -> [a];
+   fn enumFromTo :: a -> a -> [a];
+   fn enumFromThenTo :: a -> a -> a -> [a];
+}
+
+impl Enum Nat {
+    succ = Succ;
+    pred
+      | Zero = panic "Prelude.Numeric.Enum.pred called on Zero"
+      | (Succ n) = n;
+    intoEnum
+      | 0 = Zero
+      | n = Succ (intoEnum (abs n - 1));
+    fromEnum
+      | Zero = 0
+      | (Succ n) = 1 + fromEnum n;
+    enumFrom n = n : enumFrom (succ n)
+}
+
+impl Enum Int {
+   succ n = n + 1;
+   pred n = if n == 0 then 0 else n - 1;
+   intoEnum = identity;
+   fromEnum = identity;
+   enumFrom n = [n..];
+   enumFromThen a b = a : go b (b - a)
+      where go x dx = x : go (x + dx) dx;
+   enumFromTo a b = [a..b];
+   enumFromThenTo = todo;
 }
 
