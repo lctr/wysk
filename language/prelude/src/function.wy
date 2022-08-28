@@ -1,18 +1,18 @@
 module Function where
 
-fn identity :: a -> a 
+fn identity :: a -> a
     | x = x
 
-fn const :: a -> b -> a 
+fn const :: a -> b -> a
     | x _ = x
 
 fn flip :: (a -> b -> c) -> b -> a -> c
     | f y x = f x y
 
-fn fst :: (a, b) -> a 
+fn fst :: (a, b) -> a
     | (x, _) = x
 
-fn snd :: (a, b) -> b 
+fn snd :: (a, b) -> b
     | (_, y) = y
 
 fn curry :: ((a, b) -> c) -> a -> b -> c
@@ -22,18 +22,18 @@ fn uncurry :: (a -> b -> c) -> (a, b) -> c
     | f = \(x, y) -> f x y
 
 fn swap :: (a, b) -> (b, a)
-    | (a, b) = (b, a) 
+    | (a, b) = (b, a)
 
 ~~ same as (.) in Haskell
-infixr 9 \>
+#[infixr 9]
 fn (\>) :: (b -> c) -> (a -> b) -> a -> c
-    | f g = \x -> f (g x) 
+    | f g = \x -> f (g x)
 
-~~> Forward application operator, equivalent to ($) in Haskell. 
+~~> Forward application operator, equivalent to ($) in Haskell.
 ~~| Note that this operator definition is included here for
 ~~| documentation purposes but has special semantic meaning
 ~~| internally.
-infixr 0 <|
+#[infixr 0]
 fn (<|) :: (a -> b) -> a -> b
     | f x = f x
 
@@ -41,31 +41,31 @@ fn (<|) :: (a -> b) -> a -> b
 ~~| that it has a precedence value that is one higher than that of
 ~~| the forward application operator `<|`, thus allowing `|>` to be
 ~~| nested in `|>`
-infixl 1 |>
+#[infixl 1]
 fn (|>) :: a -> (a -> b) -> b
     | x f = f x
 
-infixl 9 </
+#[infixl 9]
 fn (</) :: (a -> b) -> (b -> c) -> a -> c
     | f g x = g (f x)
 
 ~~> The least fixed point operator is the least defined value `x` for
 ~~| a function `f` such that `f x = x`.
-~~| 
-~~| A prototypical example of the usage of this function is in the 
+~~|
+~~| A prototypical example of the usage of this function is in the
 ~~| factorial function in a lambda calculus without (implicitly)
 ~~| recursive `let` expressions: the expression below, which uses
 ~~| implicit recursive `let`
 ~~| ```
-~~| >> let fac n = if n <= 1 then 1 else n * fac (n - 1) in fac 5` 
+~~| >> let fac n = if n <= 1 then 1 else n * fac (n - 1) in fac 5`
 ~~| => 120
 ~~| ```
 ~~| is equivalent to the following formulation using `fix`, where
-~~| we introduce a dummy parameter `rec` 
+~~| we introduce a dummy parameter `rec`
 ~~| ```
 ~~| >> fix (\rec n -> if n <= 1 then 1 else n * rec (n - 1)) 5
 ~~| => 120
-~~| ``` 
+~~| ```
 fn fix :: (a -> a) -> a
-    | f = let x = f x in x 
+    | f = let x = f x in x
 
