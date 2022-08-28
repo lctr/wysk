@@ -1,12 +1,6 @@
-use attr::Pragma;
 use module::{ImportSpec, Module};
 use serde::{Deserialize, Serialize};
-use wy_common::{
-    deque,
-    functor::{MapFst, MapSnd},
-    struct_field_iters, HashMap,
-};
-use wy_failure::SrcPath;
+
 use wy_intern::symbol::Symbol;
 use wy_name::{Chain, Ident};
 
@@ -37,7 +31,7 @@ use stmt::*;
 #[allow(unused)]
 use node::*;
 
-use wy_span::{Spanned, Unspan};
+use wy_span::Spanned;
 
 pub type SpannedIdent = Spanned<Ident>;
 pub type VecIter<'a, X> = std::slice::Iter<'a, X>;

@@ -1,8 +1,9 @@
 // #![allow(unused)]
-use crate::visit::SpannedVisitor;
-
 use super::*;
 use serde::{Deserialize, Serialize};
+use wy_common::HashMap;
+
+use visit::SpannedVisitor;
 use visit::VisitMut;
 
 /// Precedence are internally represented with values greater than declared in
