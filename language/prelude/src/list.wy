@@ -1,38 +1,38 @@
 module List where
 
-import Boolean 
+import Boolean
 import Numeric
 import Function
 import Container
 
-impl Functor [a] {
-   fmap
+impl Functor [] {
+   map
       | f [] = []
-      | f (x:xs) = f x : fmap f xs;
+      | f (x:xs) = f x : map f xs;
 
    (/>)
       | y xs = fmap (const y) xs
 }
 
-
-
-fn map :: (a -> b) -> [a] -> [b]
-   | [] = []
-   | (x:xs) = f x : map f xs
+impl Foldable [] {
+   foldr
+      | f a [] = a
+      | f a (x:xs) = foldr f (f x a) xs
+}
 
 fn head :: [a] -> Option a
    | [] = None
    | (x:_) = Some x
 
-fn tail :: [a] -> [a]
-   | [] = []
-   | [_] = []
-   | (_:xs) = xs
+fn tail :: [a] -> Option [a]
+   | [] = None
+   | [_] = Some []
+   | (_:xs) = Some xs
 
-fn inits :: [a] -> [a]
-   | [] = []
-   | [_] = []
-   | (x:xs) = x : inits xs
+fn init :: [a] -> Option [a]
+   | [] = None
+   | [_] = Some []
+   | (x:xs) = Some (x : init xs)
 
 fn last :: [a] -> Option a
    | [] = None
@@ -41,39 +41,80 @@ fn last :: [a] -> Option a
 
 fn find :: (a -> Bool) -> [a] -> Option a
    | f [] = None
-   | f (x:xs) if f x = Some x 
+   | f (x:xs) if f x = Some x
    | f (_:xs) = find f xs
 
 fn position :: (a -> Bool) -> [a] -> Option Int
     | f = go 0
-      where go 
-        | n [] = None 
-        | n (a:as) if f a = Some n 
+      where go
+        | n [] = None
+        | n (a:as) if f a = Some n
         | n (_:as) = go (n + 1) as
 
 fn filter :: (a -> Bool) -> [a] -> [a]
    | f [] = []
-   | f (x:xs) if f x = x : filter f xs 
-   | f (_:xs) = filter f xs 
+   | f (x:xs) if f x = x : filter f xs
+   | f (_:xs) = filter f xs
+
+fn enumerate :: [a] -> [(Int, a)]
+   = zip [0..]
+
+#[infixr 6]
+fn (++) :: [a] -> [a] -> [a]
+   | xs [] = xs
+   | [] ys = ys
+   | (x:xs) ys = x:(xs ++ ys)
+
+
+fn partition :: (a -> Bool) -> [a] -> ([a], [a])
+   | f [] = ([], [])
+   | f xs = go [] [] \> reverse
+   where go
+      | l r = match
+         [] -> (l, r)
+         (x:xs) if f x -> go (x:l) r xs
+
+fn take :: Int -> [a] -> [a]
+   | n _ if n <= 0 = []
+   | _ [] = []
+   | n (x:xs) = x : take (n - 1) xs
+
+fn takeWhile :: (a -> Bool) -> [a] -> [a]
+   | _ [] = []
+   | p (x:xs) if p x = x : takeWhile p xs
+   | _ _ = []
+
+fn drop :: Int -> [a] -> [a]
+   | n xs if n <= 0 = xs
+   | _ [] = []
+   | n (_:xs) = drop (n - 1) xs
+
+fn dropWhile :: (a -> Bool) -> [a] -> [a]
+   | _ [] = []
+   | p xs@(x:xs') = if p x then dropWhile p xs' else xs
+
+fn repeat :: a -> [a]
+   | x = xs where xs = x : xs
+
+fn replicate :: Int -> a -> [a]
+   | n x = take n (repeat x)
+
+fn cycle :: [a] -> Option [a]
+   | xs = [ x | x <- xs ]
 
 fn reverse :: [a] -> [a]
-   | [] = [] 
-   | (x:xs) = reverse xs ++ [x]
-
-~~ compare performance with `reverse`
-fn reverse' :: [a] -> [a]
    = foldl (flip (:)) []
 
 fn nth :: Int -> [a] -> Option a
-   = go 
+   = go
       where go
         | _ [] = None
         | n xs if n > 0 = go (n - 1) xs
         | 0 (x:_) = Some x
 
 fn zip :: [a] -> [b] -> [(a, b)]
-   | [] _ = [] 
-   | _ [] = [] 
+   | [] _ = []
+   | _ [] = []
    | (x:xs) (y:ys) = (x, y) : zip xs ys
 
 fn zipWith :: (a -> b -> c) -> [a] -> [b] -> [c]
@@ -108,56 +149,26 @@ fn zip6 :: [a] -> [b] -> [c] -> [d] -> [e] -> [f] -> [(a, b, c, d, e, f)]
    | _ _ [] _ _ _ = []
    | _ _ _ [] _ _ = []
    | _ _ _ _ [] _ = []
-   | (x:xs) (y:ys) (z:zs) 
+   | (x:xs) (y:ys) (z:zs)
      (u:us) (v:vs) (w:ws) = (x, y, z, u, v, w) : zip6 xs ys zs us vs ws
 
-infixr 6 ++
-fn (++) :: [a] -> [a] -> [a]
-   | xs [] = xs 
-   | [] ys = ys 
-   | (x:xs) ys = x:(xs ++ ys) 
-
 fn push :: [a] -> a -> [a]
-   | xs x = (++) \> (:[])
+   | xs x = xs ++ [x]
 
+#[inline]
 fn unzip :: [(a, b)] -> ([a], [b])
-   = go [] [] 
-      where go
-         | xs ys [] = (xs, ys)
-         | xs ys ((a, b):cs) = go (xs ++ [a]) (ys ++ [b]) cs
+   = foldr (\(a, b) (as, bs) -> (a:as, b:bs)) ([], [])
 
+#[inline]
 fn unzip3 :: [(a, b, c)] -> ([a], [b], [c])
-   = go [] [] []
-        where go 
-            :: [a] -> [b] -> [c] -> [(a, b, c)] -> ([a], [b], [c])
-            | xs ys zs [] = (xs, ys, zs)
-            | xs ys zs ((x, y, z):vs) = 
-                go (push xs x) (push ys y) (push zs z) vs
+   = foldr (\(a, b, c) (as, bs, cs) -> (a:as, b:bs, c:cs)) ([], [], [])
 
+#[inline]
 fn unzip4 :: [(a, b, c, d)] -> ([a], [b], [c], [d])
-    = go [] [] [] []
-        where go
-            | xs ys zs us [] = (xs, ys, zs, us)
-            | xs ys zs us ((x, y, z, u):vs) = 
-                go (push xs x) (push ys y) (push zs zs) (push us u) vs
+    = foldr (\(a, b, c, d) (as, bs, cs, ds) -> (a:as, b:bs, c:cs, d:ds)) ([], [], [])
 
-fn unzip5 :: [(a, b, c, d, e)] -> ([a], [b], [c], [d], [e])
-    = go [] [] [] [] []
-        where go
-            | xs ys zs us vs [] = (xs, ys, zs, us, vs)
-            | xs ys zs us vs ((x, y, z, u, v):ws) = 
-                go (push xs x) (push ys y) (push zs z) 
-                   (push us u) (push vs v) ws
-
-fn unzip6 :: [(a, b, c, d, e, f)] -> ([a], [b], [c], [d], [e], [f])
-    = go [] [] [] [] [] [] 
-        where go 
-            | x1s x2s x3s x4s x5s x6s [] 
-                = (x1s, x2s, x3s, x4s, x5s, x6s)
-            | x1s x2s x3s x4s x5s x6s ((x1, x2, x3, x4, x5, x6):xs) 
-                = go (push x1s x1) (push x2s x2) (push x3s x3) 
-                     (push x4a x4) (push x5s x5) (push x6s x6) xs
-
-fn enumerate :: [a] -> [(Int, a)]
-   = zip [0..]
-
+fn span :: (a -> Bool) -> [a] -> ([a], [a])
+   | _ [] = ([], [])
+   | p xs@(x:xs') = if p x
+      then let (ys, zs) = span p xs' in (x:ys, zs)
+      else ([], xs)
